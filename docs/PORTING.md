@@ -28,6 +28,8 @@ um emulador de Dreamcast em Xbox 360.
   integração de um emulador com Vulkan PS5 e cache de shaders.
 - [ProsperoEden](https://github.com/blackbearreloaded/ProsperoEden): link RADV,
   superfície `VK_KHR_display`, frontend e persistência.
+  Comparação atualizada dos adapters e limites de reaproveitamento em
+  [PROSPEROEDEN_REFERENCE.md](PROSPEROEDEN_REFERENCE.md).
 - [PS5CEMU](https://github.com/premohq/PS5CEMU): organização dos adapters de
   plataforma e separação entre build de verificação e app com driver real.
   O README consultado declara que o aplicativo ainda não foi testado em hardware.
