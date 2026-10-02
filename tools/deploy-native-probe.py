@@ -95,23 +95,24 @@ def main():
             if source.is_dir():
                 mkdir(ftp, target)
                 continue
-            expected = source.read_bytes()
             with source.open("rb") as stream:
-                ftp.storbinary("STOR " + target, stream)
-            actual = bytearray()
-            ftp.retrbinary("RETR " + target, actual.extend)
-            if relative == "eboot.bin":
-                detail = verify_eboot(bytes(actual), expected,
-                    (image_dir / "eboot.elf").read_bytes())
-            elif relative == "sce_module/libc.prx":
-                detail = verify_eboot(bytes(actual), expected,
-                    (image_dir / "libc.elf").read_bytes())
+                ftp.storbinary("STOR " + target, stream, blocksize=1024 * 1024)
+            if relative in ("eboot.bin", "sce_module/libc.prx"):
+                actual = bytearray()
+                ftp.retrbinary("RETR " + target, actual.extend, blocksize=1024 * 1024)
+                elf_name = "eboot.elf" if relative == "eboot.bin" else "libc.elf"
+                detail = verify_eboot(bytes(actual), source.read_bytes(),
+                    (image_dir / elf_name).read_bytes())
             else:
-                if actual != expected:
+                remote_hash = hashlib.sha256()
+                ftp.retrbinary("RETR " + target, remote_hash.update, blocksize=1024 * 1024)
+                with source.open("rb") as stream:
+                    local_hash = hashlib.file_digest(stream, "sha256")
+                if remote_hash.digest() != local_hash.digest():
                     raise RuntimeError(f"Remote bytes differ: {relative}")
-                detail = "SHA256 " + hashlib.sha256(actual).hexdigest()
+                detail = "SHA256 " + remote_hash.hexdigest()
             verified[relative] = detail
-            print(relative, detail)
+            print(relative, detail, flush=True)
         # Atomic publication of a new, previously absent title folder.
         if exists(ftp, destination):
             raise RuntimeError("Destination appeared while uploading; staging retained")
