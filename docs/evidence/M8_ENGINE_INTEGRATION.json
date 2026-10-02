@@ -1,0 +1,120 @@
+{
+  "milestone": "M8",
+  "recorded_at": "2026-10-02T15:44:20.4547749Z",
+  "hardware_tested": false,
+  "game_executed": false,
+  "native_package": {
+    "title": "PPSA50011",
+    "hardware_tested": false,
+    "game_executed": false,
+    "experimental": true,
+    "host_suites": 16,
+    "files": {
+      "TEST_STATUS.txt": {
+        "bytes": 294,
+        "sha256": "170faaf4c030038ab1f601b6186865ad2fcc0b7ffe0706fc2fdb2208e5ce2061"
+      },
+      "assets/roms/README.txt": {
+        "bytes": 232,
+        "sha256": "5d09d79f958ecc54295ae65fbb2820da5cead12b41967c007b9a56fd3c92bfd5"
+      },
+      "eboot.bin": {
+        "bytes": 27908437,
+        "sha256": "5b6df3be5b8961f50177b9d5de8635ef5054b792193f8a0417e7dbf0278a7bfe"
+      },
+      "sce_module/libc.prx": {
+        "bytes": 1284674,
+        "sha256": "e6ff45d16adf687855cc3b33b0c8a4132b6504360b221e0a34c7e99fb3ba0036"
+      },
+      "sce_sys/icon0.png": {
+        "bytes": 5851,
+        "sha256": "a7be0c67a92c13afac0159fb22918ffc233479265460984a327e2f15961b6ada"
+      },
+      "sce_sys/param.json": {
+        "bytes": 869,
+        "sha256": "e6003dbf0e6dad692d9850c75df20b26115f2d39332e371ccfdf340edd74665d"
+      }
+    },
+    "dependencies": {
+      "xenia": {
+        "url": "https://github.com/xenia-project/xenia.git",
+        "revision": "95a5c3ee250f80c3b9d139658649d9ffb6db3eec",
+        "submodules": [
+          "third_party/fmt",
+          "third_party/cpptoml",
+          "third_party/cxxopts",
+          "third_party/date",
+          "third_party/xbyak",
+          "third_party/capstone",
+          "third_party/utfcpp",
+          "third_party/Vulkan-Headers",
+          "third_party/aes_128",
+          "third_party/imgui",
+          "third_party/disruptorplus",
+          "third_party/glslang",
+          "third_party/SPIRV-Tools",
+          "third_party/VulkanMemoryAllocator",
+          "third_party/xxhash",
+          "third_party/snappy",
+          "third_party/FFmpeg"
+        ]
+      },
+      "native_runtime": {
+        "local_repository": "../Castation/native-ps5",
+        "revision": "94dfef7",
+        "renderer_repository": "https://github.com/blackbearreloaded/ps5-native-app-boilerplate",
+        "renderer_revision": "470695e0c557f99ff2df0e36e4df713c5e636526"
+      },
+      "references": [
+        "https://github.com/Swordpdf/PS5SX2",
+        "https://github.com/blackbearreloaded/ProsperoEden",
+        "https://github.com/premohq/PS5CEMU",
+        "https://github.com/klortekhq/NATIVE-EMUS-PS5"
+      ]
+    },
+    "radv_sha256": "445f4d08db52d58318b3724e273e9f9761bfdbe8a51113670230f13b65eb37a1",
+    "elfs": {
+      "llvm-pie.elf": "8c8f88c381acfb11fe4ce7b51b5e795dc3db530ba6be0d561b73114c5dc35f27",
+      "eboot.elf": "ac856deb9e6b63384ba342905f2672ef7623c522bb55b7a3231afc38f64c6a57"
+    }
+  },
+  "zip": {
+    "path": "dist/Xbox360PS5-M8-experimental-game-test.zip",
+    "sha256": "3cd8a7efe24a4d0245299e2a3163494c0671b8385e54a7624d51da32e828f781"
+  },
+  "host_tests": {
+    "python_tests": 16,
+    "failures": 0,
+    "suites": 16
+  },
+  "actual_game_module": {
+    "entry": "82537ae0",
+    "loaded": true,
+    "executed": false,
+    "read_only_game_files": true,
+    "source_log_sha256": "8e1d48bccf3786e564a4361b17e72a58d2ccc4872225eb781af15cbe4e9b74a1"
+  },
+  "unimplemented_game_imports": [
+    "XamShowMessageBoxUIEx",
+    "RtlUnwind",
+    "RtlCaptureContext",
+    "ExThreadObjectType",
+    "__C_specific_handler"
+  ],
+  "console": [
+    {
+      "ip": "192.168.0.19",
+      "port": 2121,
+      "connected": false,
+      "error": "Nenhuma conexão pôde ser feita porque a máquina de destino as recusou ativamente.",
+      "checked_at": "2026-10-02T15:35:49.0092551Z"
+    },
+    {
+      "ip": "192.168.0.19",
+      "port": 10101,
+      "connected": false,
+      "error": "Nenhuma conexão pôde ser feita porque a máquina de destino as recusou ativamente.",
+      "checked_at": "2026-10-02T15:35:51.0629987Z"
+    }
+  ]
+}

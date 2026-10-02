@@ -79,7 +79,16 @@ bool VulkanPlatform::Fail(const std::string &message) {
 
 bool VulkanPlatform::CreateSurface(VkPhysicalDevice physical, uint32_t width,
                                    uint32_t height, uint32_t refresh) {
-#define LOAD(name) auto name = InstanceFunction<PFN_##name>(#name)
+  return CreateDisplaySurface(gipa_, instance_, physical, width, height, refresh,
+                              surface_, extent_, refresh_, error_);
+}
+bool CreateDisplaySurface(PFN_vkGetInstanceProcAddr driver, VkInstance instance_,
+                          VkPhysicalDevice physical, uint32_t width, uint32_t height,
+                          uint32_t refresh, VkSurfaceKHR& surface_, VkExtent2D& extent_,
+                          uint32_t& refresh_, std::string& error_) {
+  surface_ = VK_NULL_HANDLE; extent_ = {}; refresh_ = 0; error_.clear();
+  if (!driver || !instance_ || !physical) { error_ = "invalid display surface owner"; return false; }
+#define LOAD(name) auto name = reinterpret_cast<PFN_##name>(driver(instance_, #name))
   LOAD(vkGetPhysicalDeviceDisplayPropertiesKHR);
   LOAD(vkGetDisplayModePropertiesKHR);
   LOAD(vkGetPhysicalDeviceDisplayPlanePropertiesKHR);

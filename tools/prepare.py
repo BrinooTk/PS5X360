@@ -163,6 +163,108 @@ def main():
             return head + "(" + re.sub(r"(__m128i|__m128d|__m128) (\w+)", r"XE_STASHED_VECTOR(\1) \2", params)
         data = re.sub(r"(?:static )?(?:void|__m128i|__m128d|__m128) (?:Emulate|Trace)\w+\([^)]*\)", vector_params, data)
         overlay(prefix + name, data.replace("namespace xe {", '#include "xenia/base/platform.h"\n' + macro + "\nnamespace xe {", 1), name.endswith(".h"))
+    # Real VFS adapters must preserve mixed read/write permissions, file size
+    # and bounded error counts. Keep these fixes as generated overlays.
+    data = (ROOT / "build/generated-sources/filesystem_posix.cc").read_text()
+    start = data.index("  int open_access = 0;", data.index("FileHandle::OpenExisting"))
+    end = data.index("  int handle = open(", start)
+    data = data[:start] + '''  const bool read = desired_access & (FileAccess::kGenericRead | FileAccess::kGenericExecute | FileAccess::kGenericAll | FileAccess::kFileReadData);
+  const bool write = desired_access & (FileAccess::kGenericWrite | FileAccess::kGenericAll | FileAccess::kFileWriteData | FileAccess::kFileAppendData);
+  int open_access = read && write ? O_RDWR : write ? O_WRONLY : O_RDONLY;
+  if (desired_access & FileAccess::kFileAppendData) open_access |= O_APPEND;
+''' + data[end:]
+    data = data.replace("    *out_bytes_read = out;", "    *out_bytes_read = out < 0 ? 0 : static_cast<size_t>(out);")
+    data = data.replace("    *out_bytes_written = out;", "    *out_bytes_written = out < 0 ? 0 : static_cast<size_t>(out);")
+    marker = "    out_info->create_timestamp = convertUnixtimeToWinFiletime(st.st_ctime);"
+    assert data.count(marker) == 1
+    data = data.replace(marker, "    out_info->total_size = static_cast<uint64_t>(st.st_size);\n" + marker)
+    overlay("filesystem_posix.cc", data)
+    data = (source / "src/xenia/vfs/devices/host_path_entry.cc").read_text()
+    marker = "FileAccess::kFileAppendData)))"
+    assert data.count(marker) == 1
+    data = data.replace(marker, "FileAccess::kFileAppendData | FileAccess::kGenericWrite | FileAccess::kGenericAll)))")
+    marker = "  return MappedMemory::Open(host_path_, mode, offset, length);"
+    assert data.count(marker) == 1
+    data = data.replace(marker, "  if (is_read_only() && mode != MappedMemory::Mode::kRead) return nullptr;\n" + marker)
+    overlay("host_path_entry.cc", data)
+    from prepare_threads import generate_threads
+    generate_threads(source, ROOT)
+    data = (source / "src/xenia/ui/vulkan/vulkan_instance.cc").read_text()
+    data = data.replace('#include "xenia/ui/vulkan/vulkan_instance.h"', '#include "xenia/ui/vulkan/vulkan_instance.h"\n#if XE_PLATFORM_PS5\n#include "xbox360ps5/radv_dispatch.hpp"\n#endif', 1)
+    marker = "#else\n#error No Vulkan loader library loading provided for the target platform."
+    assert data.count(marker) == 1
+    data = data.replace(marker, '#elif XE_PLATFORM_PS5\n#define XE_VULKAN_LOAD_LOADER_FUNCTION(name) functions_loaded &= (ifn.name = PFN_##name(xbox360ps5::RadvLoaderProc(#name))) != nullptr;\n#else\n#error No Vulkan loader library loading provided for the target platform.')
+    overlay("vulkan_instance.cc", data)
+    data = (source / "src/xenia/kernel/xam/xam_net.cc").read_text()
+    data = data.replace("#elif XE_PLATFORM_LINUX", "#elif XE_PLATFORM_LINUX || XE_PLATFORM_PS5")
+    overlay("xam_net.cc", data)
+    data = (source / "src/xenia/kernel/xsocket.cc").read_text()
+    data = data.replace("#elif XE_PLATFORM_LINUX", "#elif XE_PLATFORM_LINUX || XE_PLATFORM_PS5")
+    data = data.replace("#include <unistd.h>", "#include <unistd.h>\n#if XE_PLATFORM_PS5\n#undef IPPROTO_UDP\n#endif", 1)
+    overlay("xsocket.cc", data)
+    overlay("endian.h", '''#pragma once
+#if defined(__FreeBSD__)
+#include <sys/endian.h>
+#define __BYTE_ORDER _BYTE_ORDER
+#define __BIG_ENDIAN _BIG_ENDIAN
+#define __LITTLE_ENDIAN _LITTLE_ENDIAN
+#else
+#include_next <endian.h>
+#endif
+''', True)
+    overlay("build/version.h", '#pragma once\n#define XE_BUILD_COMMIT "' + actual + '"\n', True)
+    data = (source / "src/xenia/emulator.cc").read_text()
+    marker = "  if (!memory_->Initialize()) {\n    return false;\n  }"
+    assert data.count(marker) == 1
+    data = data.replace(marker, "  if (!memory_->Initialize()) {\n    return X_STATUS_UNSUCCESSFUL;\n  }")
+    overlay("emulator.cc", data)
+    data = (source / "src/xenia/gpu/vulkan/vulkan_graphics_system.cc").read_text()
+    marker = "  provider_ = xe::ui::vulkan::VulkanProvider::Create(true, with_presentation);"
+    assert data.count(marker) == 1
+    data = data.replace(marker, marker + "\n  if (!provider_) return X_STATUS_UNSUCCESSFUL;")
+    overlay("vulkan_graphics_system.cc", data)
+    data = (source / "third_party/renderdoc/renderdoc_app.h").read_text()
+    marker = "#elif defined(__linux__)"
+    assert data.count(marker) == 1
+    data = data.replace(marker, "#elif defined(__linux__) || defined(__FreeBSD__)")
+    overlay("third_party/renderdoc/renderdoc_app.h", data, True)
+    from prepare_display import generate_display
+    generate_display(source, ROOT)
+    data = (source / "src/xenia/ui/vulkan/spirv_tools_context.h").read_text()
+    data = data.replace("#if XE_PLATFORM_LINUX\n  void* library_", "#if XE_PLATFORM_LINUX || XE_PLATFORM_PS5\n  void* library_")
+    marker = "#else\n#error No SPIRV-Tools LoadLibraryFunction provided for the target platform."
+    assert data.count(marker) == 1
+    data = data.replace(marker, "#elif XE_PLATFORM_PS5\n    function = nullptr;  // Optional validator is not linked on this target.\n#else\n#error No SPIRV-Tools LoadLibraryFunction provided for the target platform.")
+    overlay("xenia/ui/vulkan/spirv_tools_context.h", data, True)
+    data = (source / "src/xenia/ui/vulkan/spirv_tools_context.cc").read_text()
+    marker = "#else\n#error No SPIRV-Tools library loading provided for the target platform."
+    assert data.count(marker) == 1
+    data = data.replace(marker, '#elif XE_PLATFORM_PS5\n  XELOGE("SPIRV-Tools: optional validator not linked in PS5 title");\n  return false;\n#else\n#error No SPIRV-Tools library loading provided for the target platform.')
+    overlay("spirv_tools_context.cc", data)
+    data = (source / "src/xenia/base/profiling.cc").read_text()
+    # Match upstream's release-mode profiling.h: no optional MicroProfile
+    # implementation is needed when the profiling interface is disabled.
+    data = data.replace("#define MICROPROFILE_ENABLED 1", "#ifndef NDEBUG\n#define MICROPROFILE_ENABLED 1", 1)
+    data = data.replace('#include "third_party/microprofile/microprofile.h"', '#include "third_party/microprofile/microprofile.h"\n#endif', 1)
+    overlay("profiling.cc", data)
+    data = (source / "src/xenia/apu/xma_decoder.cc").read_text()
+    marker = "    if (context.Setup(i, memory(), guest_ptr)) {\n      assert_always();\n    }"
+    assert data.count(marker) == 1
+    data = data.replace(marker, "    if (context.Setup(i, memory(), guest_ptr)) {\n      return X_STATUS_UNSUCCESSFUL;\n    }")
+    overlay("xma_decoder.cc", data)
+    data = (source / "src/xenia/apu/xma_context.cc").read_text()
+    marker = "XmaContext::~XmaContext() {"
+    assert data.count(marker) == 1
+    data = data.replace(marker, marker + "\n  av_packet_free(&av_packet_);")
+    overlay("xma_context.cc", data)
+    data = (source / "src/xenia/cpu/thread.h").read_text()
+    marker = "thread_local static Thread* current_thread_;"
+    assert data.count(marker) == 1
+    # Its upstream definition is initialized with nullptr. Publish that fact
+    # across translation units so Clang doesn't emit an absent weak TLS-init
+    # function that the native module converter would mistake for an import.
+    data = data.replace(marker, "constinit thread_local static Thread* current_thread_;")
+    overlay("xenia/cpu/thread.h", data, True)
     print(f"Pinned Xenia {actual}; PS5 overlay generated")
 
 

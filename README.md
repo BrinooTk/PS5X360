@@ -3,12 +3,14 @@
 Port experimental do Xenia para PS5, iniciado em 2026-10-01. Projeto separado
 do Castation. O núcleo vem do Xenia; o trabalho aqui adapta a plataforma PS5.
 
-**Ainda não executa jogos.** O runtime real PPC/x64 já executa programas
-sintéticos no host; seus testes foram compilados para PS5, mas essa execução
-JIT ainda não foi validada no console. A etapa M6 acrescenta a conexão Vulkan
-com seleção de dispositivo, fila e superfície KHR_display. Ela ainda não está
-ligada ao renderizador Xenos nem inclui o driver RADV. A análise dos cinco
-emuladores de referência, builds e limites está em
+**Execução de jogos no PS5 ainda não validada.** M8 integra o kernel real,
+VFS, threads/APCs, entrada DualSense/XInput, áudio XMAFRAMES e o renderizador
+Xenos/Vulkan. O driver RADV foi compilado para PS5. No PC, 16 suítes passaram,
+incluindo inicialização e encerramento conjuntos do núcleo, e o módulo do
+Sonic foi carregado no kernel com resolução de imports, sem executar o jogo.
+A entrada nativa de jogo conecta essas fábricas à apresentação KHR_display.
+Builds e limites em [docs/ENGINE_INTEGRATION.md](docs/ENGINE_INTEGRATION.md).
+A análise dos cinco emuladores de referência está em
 [docs/PS5_REFERENCES.md](docs/PS5_REFERENCES.md).
 
 M7 gera **Xbox360PS5 Actual CPU Runtime Test**, PPSA50010, em pasta nativa,

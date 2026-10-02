@@ -52,6 +52,7 @@ execucao tambem termina. Registrar os hashes do eboot/libc juntamente com o
 resultado. Nao registrar validacao no hardware somente porque o FSELF foi
 gerado ou o upload terminou.
 
-Ainda faltam kernel guest, VFS/XEX completo, driver RADV, command processor
+Na etapa M7 ainda faltavam kernel guest, VFS/XEX completo, driver RADV, command processor
 Xenos, audio e input guest para um teste de Sonic. O teste M7 nao executa o
 XEX fornecido, nao inicia Vulkan e nao afirma compatibilidade ou desempenho.
+Para a integracao posterior M8, consultar [ENGINE_INTEGRATION.md](ENGINE_INTEGRATION.md).

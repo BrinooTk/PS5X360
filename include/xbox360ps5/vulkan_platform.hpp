@@ -7,6 +7,12 @@
 #include <vulkan/vulkan.h>
 
 namespace xbox360ps5 {
+// Create only a surface on an existing Xenia instance and physical device.
+// The caller owns the surface; this function never creates a second device.
+bool CreateDisplaySurface(PFN_vkGetInstanceProcAddr driver, VkInstance instance,
+                          VkPhysicalDevice physical, uint32_t width, uint32_t height,
+                          uint32_t refresh, VkSurfaceKHR& surface, VkExtent2D& extent,
+                          uint32_t& selected_refresh, std::string& error);
 // A linked RADV ICD and a host Vulkan loader expose the same GIPA contract.
 // The driver must outlive this object. No desktop window system is required.
 class VulkanPlatform {

@@ -2,7 +2,7 @@
   "xenia": {
     "url": "https://github.com/xenia-project/xenia.git",
     "revision": "95a5c3ee250f80c3b9d139658649d9ffb6db3eec",
-    "submodules": ["third_party/fmt", "third_party/cpptoml", "third_party/cxxopts", "third_party/date", "third_party/xbyak", "third_party/capstone", "third_party/utfcpp", "third_party/Vulkan-Headers"]
+    "submodules": ["third_party/fmt", "third_party/cpptoml", "third_party/cxxopts", "third_party/date", "third_party/xbyak", "third_party/capstone", "third_party/utfcpp", "third_party/Vulkan-Headers", "third_party/aes_128", "third_party/imgui", "third_party/disruptorplus", "third_party/glslang", "third_party/SPIRV-Tools", "third_party/VulkanMemoryAllocator", "third_party/xxhash", "third_party/snappy", "third_party/FFmpeg"]
   },
   "native_runtime": {
     "local_repository": "../Castation/native-ps5",

@@ -1,0 +1,5 @@
+/* Internal bridges are not module exports. The application has an ELF entry. */
+{
+    local:
+        __wrap_*;
+};

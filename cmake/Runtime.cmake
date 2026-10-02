@@ -23,7 +23,14 @@ target_compile_options(xenia_cpu_runtime PRIVATE
 add_library(xenia_platform_memory STATIC platform/ps5/memory.cpp)
 target_link_libraries(xenia_platform_memory PUBLIC xenia_ppc_decoder)
 target_compile_options(xenia_platform_memory PRIVATE -ffunction-sections -fdata-sections)
-set(XENIA_BASE_RUNTIME_SOURCES platform/ps5/logging.cpp platform/ps5/thread_primitives.cpp)
+set(XENIA_BASE_RUNTIME_SOURCES platform/ps5/logging.cpp)
+if(XBOX360PS5_BUILD_KERNEL)
+  list(APPEND XENIA_BASE_RUNTIME_SOURCES
+    "${CMAKE_CURRENT_SOURCE_DIR}/build/generated-sources/threading_posix.cc"
+    "${XENIA_SOURCE}/src/xenia/base/threading_timer_queue.cc")
+else()
+  list(APPEND XENIA_BASE_RUNTIME_SOURCES platform/ps5/thread_primitives.cpp)
+endif()
 if(CMAKE_CROSSCOMPILING)
   list(APPEND XENIA_BASE_RUNTIME_SOURCES platform/ps5/exception_handler.cpp)
 else()

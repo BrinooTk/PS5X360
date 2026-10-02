@@ -22,6 +22,10 @@ probes = {
     "xenia-memory-contract": ("guest memory contract", "memory-receipt.json"),
     "xenia-runtime-link": ("PPC/x64 runtime contract", "runtime-receipt.json"),
     "vulkan-platform-contract": ("Vulkan API contract (mock dispatch)", "vulkan-receipt.json"),
+    "xenia-thread-contract": ("actual POSIX waits, threads and APCs", "thread-receipt.json"),
+    "xenia-vfs-contract": ("actual guest VFS", "vfs-receipt.json"),
+    "xenia-input-contract": ("actual Xenia input routing", "input-receipt.json"),
+    "xenia-audio-codec-contract": ("actual XMA registration and PCM conversion", "audio-receipt.json"),
 }
 if artifact not in probes:
     raise SystemExit("Unknown probe artifact")
