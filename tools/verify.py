@@ -13,6 +13,7 @@ probes = {
     "xenia-atomic-smoke": ("PS5 atomic semantics", "atomic-receipt.json"),
     "xenia-compiler-smoke": ("optimizer semantics", "compiler-receipt.json"),
     "xenia-codegen-smoke": ("x64 encoding/decoding", "codegen-receipt.json"),
+    "xenia-ppc-translation-smoke": ("PPC emitter/HIR oracle", "translation-receipt.json"),
 }
 if artifact not in probes:
     raise SystemExit("Unknown probe artifact")

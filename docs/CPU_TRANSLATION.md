@@ -1,5 +1,15 @@
 # CPU: componentes HIR iniciais
 
+## Continuação M4: tradução de instruções sintéticas
+
+Emissores PowerPC originais agora estão ligados em um probe com ADDI, ORI,
+LWZ e STW. Um programa sintético de nove palavras passa por esses emissores;
+24 verificações no host comparam registradores e bytes guest, sinal de imediato,
+RA=0, deslocamento negativo e estados antes/depois da otimização. A sexta suite
+passou, totalizando 98 casos de host. Ver [CPU_NATIVE_TEST.md](CPU_NATIVE_TEST.md)
+para o teste nativo separado. Esse caminho não inicia o frontend/Processor
+completo nem executa JIT.
+
 ## Continuação M3: frontend e backend compilados
 
 O build agora também produz `libxenia_ppc_frontend.a`,

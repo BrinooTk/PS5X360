@@ -57,17 +57,23 @@ def verify_eboot(actual, fself, elf):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--host", required=True)
+    parser.add_argument("--cpu-translation", action="store_true")
     args = parser.parse_args()
-    app = ROOT / "build/native-stage/dist/PPSA50008"
-    destination = "/data/homebrew/PPSA50008"
-    staging = "/data/Xbox360PS5/M1-upload-" + uuid.uuid4().hex[:8]
+    title_id = "PPSA50009" if args.cpu_translation else "PPSA50008"
+    stage = ROOT / ("build/native-cpu-stage" if args.cpu_translation else "build/native-stage")
+    app = stage / "dist" / title_id
+    param = json.loads((app / "sce_sys/param.json").read_text())
+    if param["titleId"] != title_id:
+        raise RuntimeError("Probe identity mismatch")
+    destination = "/data/homebrew/" + title_id
+    staging = "/data/Xbox360PS5/" + ("M4" if args.cpu_translation else "M1") + "-upload-" + uuid.uuid4().hex[:8]
     ftp = ftplib.FTP()
     ftp.connect(args.host, 2121, timeout=25)
     ftp.login()
     verified = {}
     try:
         if exists(ftp, destination):
-            raise RuntimeError("PPSA50008 already exists; refusing overwrite")
+            raise RuntimeError(f"{title_id} already exists; refusing overwrite")
         mkdir(ftp, "/data/Xbox360PS5")
         mkdir(ftp, staging)
         for source in sorted(app.rglob("*")):
@@ -83,10 +89,10 @@ def main():
             ftp.retrbinary("RETR " + target, actual.extend)
             if relative == "eboot.bin":
                 detail = verify_eboot(bytes(actual), expected,
-                    (ROOT / "build/native-stage/build/eboot.elf").read_bytes())
+                    (stage / "build/eboot.elf").read_bytes())
             elif relative == "sce_module/libc.prx":
                 detail = verify_eboot(bytes(actual), expected,
-                    (ROOT / "build/native-stage/build/libc.elf").read_bytes())
+                    (stage / "build/libc.elf").read_bytes())
             else:
                 if actual != expected:
                     raise RuntimeError(f"Remote bytes differ: {relative}")
@@ -104,9 +110,9 @@ def main():
                       data=b'{"reset_attempts":true}', headers={"Content-Type":"application/json"})
     with urlopen(request, timeout=15) as response:
         scan = json.load(response)
-    receipt = {"host": args.host, "title_id": "PPSA50008", "folder": destination,
+    receipt = {"host": args.host, "title_id": title_id, "folder": destination,
                "verified": verified, "scan": scan, "hardware_tested": False}
-    (ROOT / "dist/deployment-receipt.json").write_text(json.dumps(receipt, indent=2) + "\n")
+    (ROOT / "dist" / ("cpu-deployment-receipt.json" if args.cpu_translation else "deployment-receipt.json")).write_text(json.dumps(receipt, indent=2) + "\n")
     if scan.get("status") != 0:
         raise RuntimeError(f"ShadowMount scan rejected: {scan}")
     print("ShadowMount scan queued:", scan)

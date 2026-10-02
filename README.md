@@ -23,6 +23,7 @@ python tools/prepare.py --fetch
 ./build.ps1 Host
 ./build.ps1 PS5
 ./build.ps1 Native
+./build.ps1 NativeCPU
 ```
 
 O script PS5 usa o SDK já presente no workspace. Pode-se indicar outro caminho
@@ -56,6 +57,14 @@ Incluem testes dos atômicos PS5 e comparação Xbyak/Capstone; ainda não há
 execução guest/JIT. O pacote de desenvolvimento pode ser gerado com
 `python tools/package-cpu-probe.py`, após os builds Host e PS5.
 
+M4 acrescenta uma sexta suite, com 24 verificações de tradução dos emissores
+PPC originais e comparação por avaliador HIR de teste (98 casos de host no
+total). `NativeCPU` gera **Xbox360PS5 CPU Translation Test**, PPSA50009,
+separado do M1. Instruções e limites em [docs/CPU_NATIVE_TEST.md](docs/CPU_NATIVE_TEST.md).
+O M4 também foi confirmado no PS5: o log recolhido registra 41 execuções com
+24 casos de tradução e zero falhas. A evidência fixa os hashes do executável
+e do módulo libc. A execução x64 gerada e o renderer Vulkan seguem pendentes.
+
 O ELF é um probe de componentes, não um pacote instalável nem um emulador
 jogável. O ELF isolado M0 não foi executado no console.
 
@@ -85,6 +94,7 @@ precisam ser medidas depois de CPU e GPU funcionarem corretamente.
 
 Código original deste projeto: MIT. Xenia: BSD de três cláusulas; fmt: licença
 MIT e exceção indicada em sua licença. O renderer e as ferramentas do runtime
-nativo mantêm GPL-3.0-or-later; o aplicativo M1 combinado é distribuído sob
+nativo mantêm GPL-3.0-or-later; os aplicativos M1 e M4 combinados são distribuídos sob
 essa licença, mantendo os avisos de seus componentes. As cópias dos avisos
-estão em `licenses/`. Nenhum jogo, BIOS ou chave é distribuído.
+estão em `licenses/`, incluindo a licença LLVM do runtime C++ do SDK usado no
+M4. Nenhum jogo, BIOS ou chave é distribuído.

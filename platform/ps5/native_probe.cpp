@@ -22,6 +22,9 @@ namespace {
 int pad = -1;
 unsigned previous_buttons = 0, cross_presses = 0, runs = 0, failures = 0;
 std::array<bool, xbox360ps5::decoder_case_count> results{};
+#ifdef XBOX360PS5_TRANSLATION_PROBE
+unsigned translation_cases = 0, translation_failures = 0;
+#endif
 
 void trace(const char* text) noexcept {
   const int fd = open("/download0/xbox360ps5-m1.log", O_CREAT | O_WRONLY | O_APPEND, 0644);
@@ -44,6 +47,13 @@ void run_decoder() noexcept {
   std::snprintf(line, sizeof(line), "M1 decoder runs=%u cases=%u failures=%u",
                 runs, xbox360ps5::decoder_case_count, failures);
   trace(line);
+#ifdef XBOX360PS5_TRANSLATION_PROBE
+  extern unsigned translation_run(unsigned&);
+  translation_failures = translation_run(translation_cases);
+  std::snprintf(line, sizeof(line), "M4 translation runs=%u cases=%u failures=%u",
+                runs, translation_cases, translation_failures);
+  trace(line);
+#endif
 }
 
 int open_pad() noexcept {
@@ -96,10 +106,23 @@ void draw(ps5::demo::Canvas& canvas) noexcept {
   canvas.text(950, 475, summary, 3, Color::white);
   std::snprintf(summary, sizeof(summary), "LEFT STICK %u %u", sample[4], sample[5]);
   canvas.text(950, 535, summary, 3, Color::white);
+#ifdef XBOX360PS5_TRANSLATION_PROBE
+  std::snprintf(summary, sizeof(summary), "PPC HIR CASES %u", translation_cases);
+  canvas.text(950, 615, summary, 3, Color::cyan);
+  std::snprintf(summary, sizeof(summary), "PPC FAILURES %u", translation_failures);
+  canvas.text(950, 675, summary, 3, translation_failures ? Color::yellow : Color::cyan);
+#endif
   canvas.text(130, 825, "PRESS X TO RUN THE DECODER TESTS AGAIN", 3, Color::white);
   canvas.text(130, 900, "CLOSE THIS TEST FROM THE PS5 HOME SCREEN", 3, Color::white);
 }
 }  // namespace
+
+#ifdef XBOX360PS5_TRANSLATION_PROBE
+unsigned run_ppc_translation_probe(unsigned&);
+namespace {
+unsigned translation_run(unsigned& cases) { return run_ppc_translation_probe(cases); }
+}
+#endif
 
 int main() {
   trace("M1 start native title PPSA50008; no JIT or Vulkan initialization");

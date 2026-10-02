@@ -55,6 +55,17 @@ add_library(xenia_ppc_frontend STATIC
 target_link_libraries(xenia_ppc_frontend PUBLIC xenia_hir_values)
 target_include_directories(xenia_ppc_frontend PUBLIC "${XENIA_SOURCE}/third_party/llvm/include")
 target_compile_definitions(xenia_ppc_frontend PRIVATE NDEBUG)
+target_compile_options(xenia_ppc_frontend PRIVATE -ffunction-sections -fdata-sections)
+
+add_library(xenia_cpu_config STATIC
+  "${XENIA_SOURCE}/src/xenia/base/cvar.cc"
+  "${XENIA_SOURCE}/src/xenia/base/utf8.cc")
+target_link_libraries(xenia_cpu_config PUBLIC xenia_ppc_decoder)
+target_compile_definitions(xenia_cpu_config PRIVATE NDEBUG)
+target_compile_options(xenia_cpu_config PRIVATE -ffunction-sections -fdata-sections -fno-char8_t)
+add_executable(xenia-ppc-translation-smoke src/ppc_translation_smoke.cpp)
+target_link_libraries(xenia-ppc-translation-smoke PRIVATE xenia_ppc_frontend xenia_cpu_config)
+target_link_options(xenia-ppc-translation-smoke PRIVATE -Wl,--gc-sections)
 
 file(GLOB XENIA_COMPILER_SOURCES CONFIGURE_DEPENDS
   "${XENIA_SOURCE}/src/xenia/cpu/compiler/*.cc"
@@ -65,6 +76,7 @@ target_include_directories(xenia_cpu_compiler PUBLIC "${XENIA_SOURCE}/third_part
 target_compile_definitions(xenia_cpu_compiler PRIVATE NDEBUG)
 add_executable(xenia-compiler-smoke src/compiler_smoke.cpp)
 target_link_libraries(xenia-compiler-smoke PRIVATE xenia_cpu_compiler)
+target_link_libraries(xenia-ppc-translation-smoke PRIVATE xenia_cpu_compiler)
 
 file(GLOB XENIA_X64_SOURCES CONFIGURE_DEPENDS
   "${XENIA_SOURCE}/src/xenia/cpu/backend/x64/*.cc")
@@ -111,4 +123,5 @@ if(NOT CMAKE_CROSSCOMPILING)
   add_test(NAME ps5_atomic_semantics COMMAND xenia-atomic-smoke)
   add_test(NAME xenon_optimizer_semantics COMMAND xenia-compiler-smoke)
   add_test(NAME x64_codegen_decode COMMAND xenia-codegen-smoke)
+  add_test(NAME ppc_instruction_translation COMMAND xenia-ppc-translation-smoke)
 endif()

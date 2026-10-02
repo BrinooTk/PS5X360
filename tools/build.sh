@@ -21,6 +21,7 @@ case "$mode" in
     python3 tools/verify.py xenia-atomic-smoke
     python3 tools/verify.py xenia-compiler-smoke
     python3 tools/verify.py xenia-codegen-smoke
+    python3 tools/verify.py xenia-ppc-translation-smoke
     ;;
   *) echo 'usage: tools/build.sh [host|ps5]' >&2; exit 2 ;;
 esac

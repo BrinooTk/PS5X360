@@ -50,6 +50,17 @@ def main():
     target = ROOT / "build/generated/xenia/base/atomic.h"
     if not target.exists() or target.read_text() != atomic:
         target.write_text(atomic)
+    # Narrow test seam: use real instruction emitters without constructing
+    # Processor/guest memory. Mirrors the reset done by Emit before each word.
+    builder = (source / "src/xenia/cpu/ppc/ppc_hir_builder.h").read_text()
+    marker = "  GuestFunction* function() const { return function_; }"
+    if builder.count(marker) != 1:
+        raise SystemExit("PPC probe seam anchor changed")
+    builder = builder.replace(marker, "  void BeginProbeInstruction() { trace_info_.dest_count = 0; }\n\n" + marker)
+    target = ROOT / "build/generated/xenia/cpu/ppc/ppc_hir_builder.h"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if not target.exists() or target.read_text() != builder:
+        target.write_text(builder)
     print(f"Pinned Xenia {actual}; PS5 overlay generated")
 
 

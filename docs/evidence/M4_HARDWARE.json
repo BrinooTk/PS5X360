@@ -1,0 +1,16 @@
+{
+  "date": "2026-10-01",
+  "title_id": "PPSA50009",
+  "eboot_sha256": "54add0af3e7834b7f7ee19ac38bed69d6afe4ef6a94545936108287a18ef22fc",
+  "log_sha256": "1b121be9ab6e14ba5f7ce95877bd36fb39807be51d68b1da41a5bf2496ed9421",
+  "translation_runs_observed": 41,
+  "highest_run": 41,
+  "translation_cases": 24,
+  "failures": 0,
+  "user_confirmed": "24 cases, zero failures, RUNS increases on X",
+  "scope": "Original Xenia PPC emitters and optimizer evaluated by synthetic HIR oracle; native video and input",
+  "plays_games": false,
+  "jit_execution": false,
+  "vulkan_initialized": false,
+  "deliberate_exception_unwind_tested": false
+}

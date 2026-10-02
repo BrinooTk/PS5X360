@@ -1,5 +1,5 @@
 param(
-    [ValidateSet('Host', 'PS5', 'Native')][string]$Target = 'Host',
+    [ValidateSet('Host', 'PS5', 'Native', 'NativeCPU')][string]$Target = 'Host',
     [string]$Sdk = ''
 )
 $ErrorActionPreference = 'Stop'
@@ -15,7 +15,9 @@ if ($Target -ne 'Host') {
         throw 'The SDK must be inside the mounted workspace.'
     }
     $taskSdkContainer = '/ws/' + ($taskSdkResolved.Substring($taskWorkspacePrefix.Length) -replace '\\', '/')
-    if ($Target -eq 'Native') {
+    if ($Target -eq 'NativeCPU') {
+        & docker run --rm -v $taskMount -w /ws/Xbox360PS5 -e "PS5_PAYLOAD_SDK=$taskSdkContainer" castation-buildenv bash tools/build-native-cpu-probe.sh
+    } elseif ($Target -eq 'Native') {
         & docker run --rm -v $taskMount -w /ws/Xbox360PS5 -e "PS5_PAYLOAD_SDK=$taskSdkContainer" castation-buildenv bash tools/build-native-probe.sh
     } else {
         & docker run --rm -v $taskMount -w /ws/Xbox360PS5 -e "PS5_PAYLOAD_SDK=$taskSdkContainer" castation-buildenv bash tools/build.sh ps5
