@@ -63,7 +63,15 @@ total). `NativeCPU` gera **Xbox360PS5 CPU Translation Test**, PPSA50009,
 separado do M1. Instruções e limites em [docs/CPU_NATIVE_TEST.md](docs/CPU_NATIVE_TEST.md).
 O M4 também foi confirmado no PS5: o log recolhido registra 41 execuções com
 24 casos de tradução e zero falhas. A evidência fixa os hashes do executável
-e do módulo libc. A execução x64 gerada e o renderer Vulkan seguem pendentes.
+e do módulo libc. Nesse aplicativo M4 não há execução x64 gerada nem renderer Vulkan.
+
+M5 integra o runtime CPU original e corrige as fronteiras System V do
+recompilador. Oito suites de host passaram: 98 verificações anteriores,
+39 de memória/arquivos e 50 de execução real PPC/x64. O runtime também foi compilado
+e ligado para PS5, mas ainda não foi executado no console nem inicia jogos.
+`RuntimeHost` e `RuntimePS5` reproduzem os builds; veja
+[docs/RUNTIME_INTEGRATION.md](docs/RUNTIME_INTEGRATION.md) para evidências,
+artefatos, inspeção do Sonic e dependências ainda necessárias.
 
 O ELF é um probe de componentes, não um pacote instalável nem um emulador
 jogável. O ELF isolado M0 não foi executado no console.

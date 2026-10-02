@@ -4,9 +4,14 @@ import json
 from pathlib import Path
 import struct
 import sys
+import argparse
 
 root = Path(__file__).resolve().parents[1]
-artifact = sys.argv[1] if len(sys.argv) > 1 else "xenia-platform-smoke"
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument("artifact", nargs="?", default="xenia-platform-smoke")
+parser.add_argument("--build-dir", type=Path, default=Path("build/ps5"))
+args = parser.parse_args()
+artifact = args.artifact
 probes = {
     "xenia-platform-smoke": ("instruction-decoder", "receipt.json"),
     "xenia-hir-smoke": ("HIR semantics", "hir-receipt.json"),
@@ -14,10 +19,12 @@ probes = {
     "xenia-compiler-smoke": ("optimizer semantics", "compiler-receipt.json"),
     "xenia-codegen-smoke": ("x64 encoding/decoding", "codegen-receipt.json"),
     "xenia-ppc-translation-smoke": ("PPC emitter/HIR oracle", "translation-receipt.json"),
+    "xenia-memory-contract": ("guest memory contract", "memory-receipt.json"),
+    "xenia-runtime-link": ("PPC/x64 runtime contract", "runtime-receipt.json"),
 }
 if artifact not in probes:
     raise SystemExit("Unknown probe artifact")
-path = root / "build/ps5" / artifact
+path = root / args.build_dir / artifact
 raw = path.read_bytes()
 if raw[:7] != b"\x7fELF\x02\x01\x01":
     raise SystemExit("Expected a little-endian ELF64")

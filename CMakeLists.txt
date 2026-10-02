@@ -1,5 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 project(Xbox360PS5 LANGUAGES C CXX)
+option(XBOX360PS5_BUILD_RUNTIME "Compile full CPU, guest memory and executable loaders" OFF)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
@@ -81,6 +82,15 @@ target_link_libraries(xenia-ppc-translation-smoke PRIVATE xenia_cpu_compiler)
 file(GLOB XENIA_X64_SOURCES CONFIGURE_DEPENDS
   "${XENIA_SOURCE}/src/xenia/cpu/backend/x64/*.cc")
 list(FILTER XENIA_X64_SOURCES EXCLUDE REGEX "_win\\.cc$")
+foreach(name IN ITEMS x64_backend x64_emitter x64_sequences x64_seq_vector x64_tracers)
+  list(REMOVE_ITEM XENIA_X64_SOURCES "${XENIA_SOURCE}/src/xenia/cpu/backend/x64/${name}.cc")
+  list(APPEND XENIA_X64_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/build/generated-sources/xenia/cpu/backend/x64/${name}.cc")
+endforeach()
+# Explicit dependencies also invalidate objects built before an overlay header
+# first existed (compiler depfiles otherwise still point to upstream headers).
+set_property(SOURCE ${XENIA_X64_SOURCES} APPEND PROPERTY OBJECT_DEPENDS
+  "${CMAKE_CURRENT_SOURCE_DIR}/build/generated/xenia/cpu/backend/x64/x64_stack_layout.h"
+  "${CMAKE_CURRENT_SOURCE_DIR}/build/generated/xenia/cpu/backend/x64/x64_tracers.h")
 add_library(xenia_x64_backend STATIC ${XENIA_X64_SOURCES})
 target_link_libraries(xenia_x64_backend PUBLIC xenia_cpu_compiler)
 target_include_directories(xenia_x64_backend PRIVATE "${XENIA_SOURCE}/third_party/capstone/include")
@@ -114,6 +124,10 @@ target_link_libraries(xenia-atomic-smoke PRIVATE xenia_ppc_decoder)
 target_compile_definitions(xenia-atomic-smoke PRIVATE XE_PLATFORM_PS5=1)
 if(NOT CMAKE_CROSSCOMPILING)
   target_link_libraries(xenia-atomic-smoke PRIVATE pthread)
+endif()
+
+if(XBOX360PS5_BUILD_RUNTIME)
+  include(cmake/Runtime.cmake)
 endif()
 
 if(NOT CMAKE_CROSSCOMPILING)

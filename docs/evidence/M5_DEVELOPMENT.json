@@ -1,0 +1,106 @@
+{
+  "stage": "M5 actual CPU runtime development gate",
+  "host_test_suites": 8,
+  "host_internal_cases": 187,
+  "host_jit_cases": 50,
+  "host_memory_cases": 39,
+  "hardware_tested": false,
+  "game_executed": false,
+  "kernel_guest_integrated": false,
+  "vulkan_integrated": false,
+  "installable_title": false,
+  "archives": {
+    "libxenia_cpu_runtime.a": {
+      "objects": 20,
+      "bytes": 6401952,
+      "sha256": "d02b22d3a701fb2e1364ffc05e7513c81e86f43a94bdfc40d414380f782df8a4"
+    },
+    "libxenia_platform_memory.a": {
+      "objects": 1,
+      "bytes": 41498,
+      "sha256": "f1ccda9c5d3ffaeb18a42fc1df732bbe8bfbeeb616e78a6c6e1fb78a5c1020d1"
+    },
+    "libxenia_base_runtime.a": {
+      "objects": 15,
+      "bytes": 2581784,
+      "sha256": "3e7256ced87252169922fcbbd5717e7f315b77d26d4feabf126789c04922ee81"
+    },
+    "libxenia_x64_backend.a": {
+      "objects": 11,
+      "bytes": 6169988,
+      "sha256": "2fb7c3476f21c25f40f7d3b0c0a7575142e3ce8c4d8651e030db4b5a34f25f33"
+    },
+    "libxenia_cpu_compiler.a": {
+      "objects": 16,
+      "bytes": 2724436,
+      "sha256": "fda5c712062305ae8ed84f545189d993c74f88a0115ca6265dae26041e5af365"
+    },
+    "libxenia_ppc_frontend.a": {
+      "objects": 9,
+      "bytes": 3862472,
+      "sha256": "1632b4801ac07391ce7de2b69240ea39d8c9355ca1c5b98d4907817fb20c23a0"
+    },
+    "libxenia_hir_values.a": {
+      "objects": 6,
+      "bytes": 485900,
+      "sha256": "5b2ad97bc0c5578f113bfbf25702b6c906dc0051558e4de6db8f13fd42ada326"
+    },
+    "libxenia_cpu_config.a": {
+      "objects": 2,
+      "bytes": 739090,
+      "sha256": "bb8c8b801f48e2051af9bed292ab6c2130d8acbff32f04d03546b6163b02b5d7"
+    },
+    "libxenia_ppc_decoder.a": {
+      "objects": 7,
+      "bytes": 1967174,
+      "sha256": "55f2dfcddcefee991fafaf35433ef829171237ee45ec0a6e753e7d5a3d464f56"
+    },
+    "libxenia_capstone.a": {
+      "objects": 11,
+      "bytes": 1636446,
+      "sha256": "3313aca8ddf56a22106cbb550e86b05571e2f1312b4dc700548cbcf13afd0fe9"
+    }
+  },
+  "dependencies": {
+    "xenia": {
+      "url": "https://github.com/xenia-project/xenia.git",
+      "revision": "95a5c3ee250f80c3b9d139658649d9ffb6db3eec",
+      "submodules": [
+        "third_party/fmt",
+        "third_party/cpptoml",
+        "third_party/cxxopts",
+        "third_party/date",
+        "third_party/xbyak",
+        "third_party/capstone",
+        "third_party/utfcpp"
+      ]
+    },
+    "native_runtime": {
+      "local_repository": "../Castation/native-ps5",
+      "revision": "94dfef7",
+      "renderer_repository": "https://github.com/blackbearreloaded/ps5-native-app-boilerplate",
+      "renderer_revision": "470695e0c557f99ff2df0e36e4df713c5e636526"
+    },
+    "references": [
+      "https://github.com/Swordpdf/PS5SX2",
+      "https://github.com/blackbearreloaded/ProsperoEden",
+      "https://github.com/premohq/PS5CEMU",
+      "https://github.com/klortekhq/NATIVE-EMUS-PS5"
+    ]
+  },
+  "source_sha256": {
+    "CMakeLists.txt": "9ee4065143bd1096c2995a0ad56e667ed1fe34ec20a3bb5e29e2eaf62bde1a31",
+    "cmake/Runtime.cmake": "059015bf884ca7b95b7c04caaa52cdcb7a0b3cc33f7427766d4c33d7229eb2bc",
+    "tools/prepare.py": "5da3d9df9bf20ee63ae1fd39b76eae086e58bca88c807ddda647f3371593facb",
+    "src/runtime_link_gate.cpp": "2f4ab718b1f1fe1360b24b5fdb04bd99d903c03dbdf0e3fcfdb2e8af77c8d84d",
+    "src/memory_contract_test.cpp": "5d103619ad2ca9d05858760eacacdb84f1bc47071830487fb59e8fb839ecde48",
+    "platform/ps5/memory.cpp": "ea84d21b56b2c2821e1e7f047ad993773b62eeb357a0c6a72dc55fe3b3b2b7d1",
+    "platform/ps5/logging.cpp": "b9a4fe93f9af6e2da6ec8f1a446980d181b964d4eee52f6838afa9e38d068e76",
+    "platform/ps5/thread_primitives.cpp": "7a46c47cedc7f5059aa231adee1c34a3ab7ff42f731dca49ba400b40193a218f",
+    "platform/ps5/exception_handler.cpp": "4526f40c0bb816e9d2337bc615abe585cec2ad9e29c56613fd873c308b9399ca"
+  },
+  "python_tests_passed": 12,
+  "runtime_elf_sha256": "266530975da5bbdb4a9af44d02dce5f9c5d88af73c0b3119581f63fc26709ccd",
+  "memory_elf_sha256": "2a468a7e1d609165d909519d1fa1b8eecb09a178237c5b380184537208b4aa68",
+  "package_sha256": "aa295d0868930245510ea828da31a536b23cecbf029819f23c9b09e2b36d2946"
+}

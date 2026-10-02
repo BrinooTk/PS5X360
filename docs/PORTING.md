@@ -12,8 +12,8 @@ um emulador de Dreamcast em Xbox 360.
 | Área | Código do Xenia | Trabalho PS5 |
 |---|---|---|
 | Identidade da plataforma | `base/platform.h` | Overlay PS5 explícito, já implementado |
-| Xenon PowerPC | `cpu/ppc/`, `cpu/hir/` | Decoder/HIR, frontend PPC e passes compilados como bibliotecas; ligação de runtime pendente |
-| Recompilador x64 | `cpu/backend/x64/` | Biblioteca compilada; portar/validar cache de código, proteção de memória e contexto de exceções |
+| Xenon PowerPC | `cpu/ppc/`, `cpu/hir/` | Runtime CPU ligado; execução sintética PPC/x64 validada no host; teste PS5 pendente |
+| Recompilador x64 | `cpu/backend/x64/` | Fronteiras System V e helpers vetoriais corrigidos; validar cache e exceções no console |
 | Memória | `memory.cc`, `base/memory_posix.cc` | Layout guest, aliases, reservas e faults; não presumir compatibilidade POSIX |
 | Xenos | `gpu/vulkan/`, `gpu/spirv_shader_translator*` | Driver Vulkan PS5, recursos exigidos e apresentação nativa |
 | Áudio | `apu/`, backend de áudio | XMA/FFmpeg e AudioOut; confirmar formato e ritmo |
