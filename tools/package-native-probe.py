@@ -25,7 +25,7 @@ receipt = {
     "purpose": "Native Xenia decoder, VideoOut and DualSense hardware probe",
     "hardware_tested": False, "plays_games": False,
     "build": json.loads((stage / "stage-receipt.json").read_text()),
-    "files": {str(p.relative_to(app)): hashlib.sha256(p.read_bytes()).hexdigest()
+    "files": {p.relative_to(app).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
               for p in app.rglob("*") if p.is_file()},
 }
 output = root / "dist/Xbox360PS5-M1-native-platform-test.zip"

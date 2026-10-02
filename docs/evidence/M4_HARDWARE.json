@@ -12,5 +12,6 @@
   "plays_games": false,
   "jit_execution": false,
   "vulkan_initialized": false,
-  "deliberate_exception_unwind_tested": false
+  "deliberate_exception_unwind_tested": false,
+  "libc_sha256": "e6ff45d16adf687855cc3b33b0c8a4132b6504360b221e0a34c7e99fb3ba0036"
 }
