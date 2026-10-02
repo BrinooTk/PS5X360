@@ -1,0 +1,13 @@
+{
+  "xenia": {
+    "url": "https://github.com/xenia-project/xenia.git",
+    "revision": "95a5c3ee250f80c3b9d139658649d9ffb6db3eec",
+    "submodules": ["third_party/fmt"]
+  },
+  "references": [
+    "https://github.com/Swordpdf/PS5SX2",
+    "https://github.com/blackbearreloaded/ProsperoEden",
+    "https://github.com/premohq/PS5CEMU",
+    "https://github.com/klortekhq/NATIVE-EMUS-PS5"
+  ]
+}
