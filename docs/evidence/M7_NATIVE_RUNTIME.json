@@ -1,0 +1,40 @@
+{
+  "stage": "M7 actual CPU native runtime",
+  "title_id": "PPSA50010",
+  "hardware_tested": false,
+  "plays_games": false,
+  "vulkan_initialized": false,
+  "host_jit_runs": 2,
+  "host_jit_checks_per_run": 50,
+  "native_bridge_checks": 7,
+  "files": {
+    "eboot.bin": "5fab9831a82d0ab3752a6e40b5ad1b91833e03573f61c06528088ee2d78aa2ea",
+    "sce_module/libc.prx": "e6ff45d16adf687855cc3b33b0c8a4132b6504360b221e0a34c7e99fb3ba0036",
+    "sce_sys/icon0.png": "a7be0c67a92c13afac0159fb22918ffc233479265460984a327e2f15961b6ada",
+    "sce_sys/param.json": "13d5a9e1d9f25df52db95c7d4b2184593bb85985836d857e038fb6da70841019"
+  },
+  "sources": {
+    "src/runtime_link_gate.cpp": "aec4c84b86e2c20d3fbf86dc99ac4c87a89902b39992139714d1f032a96b4a72",
+    "platform/ps5/native_runtime_probe.cpp": "98762ef2400dffb9ffe752e78a33035c68a80663aa041d2574d3efd5ccb5251f",
+    "platform/ps5/native_memory_calls.cpp": "112b4f22a259c9fad52f34291db62ee1d5615d9c9acf1fbdadb702f91da94ce8",
+    "src/native_memory_bridge_contract.cpp": "411f3d5df64afba905748c9aba8b11c56385cf32087571826440d94e0db0d41d",
+    "tools/native-stage.py": "c2243def7d5a444a7f993cfdee99cfd451c2f6701cc9580906bfcc60a824bb40",
+    "tools/build-native-runtime-probe.sh": "44dcca6cd3f2113c13ca3167594164ebab4a679a9107af7056cdbd97bc35f4b3"
+  },
+  "build": {
+    "runtime": "94dfef79479266c66d51b2d57314557c606dc1ce",
+    "boilerplate_renderer": "470695e0c557f99ff2df0e36e4df713c5e636526",
+    "native_main_sha256": "98762ef2400dffb9ffe752e78a33035c68a80663aa041d2574d3efd5ccb5251f",
+    "title_id": "PPSA50010",
+    "staged_main_sha256": "98762ef2400dffb9ffe752e78a33035c68a80663aa041d2574d3efd5ccb5251f",
+    "runtime_probe_sha256": "aec4c84b86e2c20d3fbf86dc99ac4c87a89902b39992139714d1f032a96b4a72",
+    "cpp_runtime": {
+      "libcpp.a": "b1480e6edcb7cffba5ea999cb13da0d40b0def4c215ead442649bba71d32414f",
+      "libcppabi.a": "fe074aba4cfd2d81025d05c248d4468a954b5b8e2eaef82c8da99d36c4cbbcc5",
+      "libunwind.a": "d5942a5ffb6585952855160d9230f6e597df1851e5f3dda1b338e08e24b2f2d0",
+      "libc_helpers.a": "17b22ab7baec2107ee4ce4189257abbd773a9bb9ce854203e08e0581e10b72b3"
+    },
+    "linker_sha256": "d8380a264c1eb43b9d383851cf8b268b6311678ff4047d522f2d5735a82fbaff",
+    "build_script_sha256": "b65a537962e3189d1f93baa9060bf26f073c060fdbcbd33b25b6139150f7b6fb"
+  }
+}

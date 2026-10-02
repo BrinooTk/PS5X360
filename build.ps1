@@ -1,5 +1,5 @@
 param(
-    [ValidateSet('Host', 'PS5', 'Native', 'NativeCPU', 'RuntimeHost', 'RuntimePS5', 'VulkanHost', 'VulkanPS5')][string]$Target = 'Host',
+    [ValidateSet('Host', 'PS5', 'Native', 'NativeCPU', 'NativeRuntime', 'RuntimeHost', 'RuntimePS5', 'VulkanHost', 'VulkanPS5')][string]$Target = 'Host',
     [string]$Sdk = ''
 )
 $ErrorActionPreference = 'Stop'
@@ -15,7 +15,11 @@ if ($Target -notin @('Host', 'RuntimeHost', 'VulkanHost')) {
         throw 'The SDK must be inside the mounted workspace.'
     }
     $taskSdkContainer = '/ws/' + ($taskSdkResolved.Substring($taskWorkspacePrefix.Length) -replace '\\', '/')
-    if ($Target -eq 'VulkanPS5') {
+    if ($Target -eq 'NativeRuntime') {
+        & docker run --rm -v $taskMount -w /ws/Xbox360PS5 -e "PS5_PAYLOAD_SDK=$taskSdkContainer" castation-buildenv bash tools/build-native-runtime-probe.sh
+        if ($LASTEXITCODE -ne 0) { throw 'Native runtime build failed' }
+        & docker run --rm -v $taskMount -w /ws/Xbox360PS5 castation-buildenv python3 tools/package-native-runtime.py
+    } elseif ($Target -eq 'VulkanPS5') {
         & docker run --rm -v $taskMount -w /ws/Xbox360PS5 -e "PS5_PAYLOAD_SDK=$taskSdkContainer" castation-buildenv bash tools/build-vulkan-platform.sh ps5
     } elseif ($Target -eq 'RuntimePS5') {
         & docker run --rm -v $taskMount -w /ws/Xbox360PS5 -e "PS5_PAYLOAD_SDK=$taskSdkContainer" castation-buildenv bash tools/build-runtime.sh ps5

@@ -11,6 +11,14 @@ ligada ao renderizador Xenos nem inclui o driver RADV. A análise dos cinco
 emuladores de referência, builds e limites está em
 [docs/PS5_REFERENCES.md](docs/PS5_REFERENCES.md).
 
+M7 gera **Xbox360PS5 Actual CPU Runtime Test**, PPSA50010, em pasta nativa,
+com o runtime PPC/x64 real e logs persistentes. Corrige a ligação de memória
+do título para usar APIs normais do próprio processo. No host, os 50 casos
+executam duas vezes com limpeza e reinicialização. O aplicativo ainda aguarda
+validação no PS5 e não carrega jogos. Build: `./build.ps1 NativeRuntime`, depois
+de `./build.ps1 RuntimeHost`. Consulte
+[docs/ACTUAL_CPU_NATIVE_TEST.md](docs/ACTUAL_CPU_NATIVE_TEST.md).
+
 O núcleo está fixado em `95a5c3ee250f80c3b9d139658649d9ffb6db3eec`.
 `tools/prepare.py` gera um overlay de `platform.h` que reconhece
 `__PROSPERO__` como `XE_PLATFORM_PS5`. A plataforma não se apresenta como Linux.

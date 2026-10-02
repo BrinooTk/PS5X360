@@ -58,15 +58,18 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--host", required=True)
     parser.add_argument("--cpu-translation", action="store_true")
+    parser.add_argument("--runtime", action="store_true")
     args = parser.parse_args()
-    title_id = "PPSA50009" if args.cpu_translation else "PPSA50008"
-    stage = ROOT / ("build/native-cpu-stage" if args.cpu_translation else "build/native-stage")
+    if args.runtime and args.cpu_translation:
+        raise RuntimeError("Choose one native stage")
+    title_id = "PPSA50010" if args.runtime else "PPSA50009" if args.cpu_translation else "PPSA50008"
+    stage = ROOT / ("build/native-runtime-stage" if args.runtime else "build/native-cpu-stage" if args.cpu_translation else "build/native-stage")
     app = stage / "dist" / title_id
     param = json.loads((app / "sce_sys/param.json").read_text())
     if param["titleId"] != title_id:
         raise RuntimeError("Probe identity mismatch")
     destination = "/data/homebrew/" + title_id
-    staging = "/data/Xbox360PS5/" + ("M4" if args.cpu_translation else "M1") + "-upload-" + uuid.uuid4().hex[:8]
+    staging = "/data/Xbox360PS5/" + ("M7" if args.runtime else "M4" if args.cpu_translation else "M1") + "-upload-" + uuid.uuid4().hex[:8]
     ftp = ftplib.FTP()
     ftp.connect(args.host, 2121, timeout=25)
     ftp.login()
@@ -112,7 +115,7 @@ def main():
         scan = json.load(response)
     receipt = {"host": args.host, "title_id": title_id, "folder": destination,
                "verified": verified, "scan": scan, "hardware_tested": False}
-    (ROOT / "dist" / ("cpu-deployment-receipt.json" if args.cpu_translation else "deployment-receipt.json")).write_text(json.dumps(receipt, indent=2) + "\n")
+    (ROOT / "dist" / ("runtime-deployment-receipt.json" if args.runtime else "cpu-deployment-receipt.json" if args.cpu_translation else "deployment-receipt.json")).write_text(json.dumps(receipt, indent=2) + "\n")
     if scan.get("status") != 0:
         raise RuntimeError(f"ShadowMount scan rejected: {scan}")
     print("ShadowMount scan queued:", scan)

@@ -17,7 +17,9 @@ void native_contract(xe::cpu::ppc::PPCContext* ctx, xe::kernel::KernelState* ker
   ctx->r[3] = ctx->r[4] + 19;
 }
 }
-int main() {
+int RunActualRuntimeProbe(unsigned& cases, unsigned& failures) {
+  cases = failures = 0;
+  state = {};
   std::setvbuf(stdout, nullptr, _IONBF, 0);
   // Force the vector fallback used by Zen 2 (no GFNI/AVX512 shortcuts).
   cvars::x64_extension_mask = 127;
@@ -62,7 +64,7 @@ int main() {
       xe::load_and_swap<uint32_t>(memory.TranslateVirtual(stack_address + 32)) == 0x8005;
   std::printf("Actual PPC -> x64 JIT execution: %s; no game executed\n", pass ? "PASS" : "FAIL");
   if (!pass) return 5;
-  unsigned cases = 1, failures = 0;
+  cases = 1;
   auto check = [&](const char* name, bool result) {
     ++cases; failures += !result;
     std::printf("%s %s\n", result ? "PASS" : "FAIL", name);
@@ -130,3 +132,15 @@ int main() {
   if (failures) return 7;
   return 0;
 }
+#ifndef XBOX360PS5_PROBE_EMBEDDED
+int main() {
+  unsigned cases = 0, failures = 0;
+  for (unsigned run = 0; run < 2; ++run) {
+    const int status = RunActualRuntimeProbe(cases, failures);
+    if (status) return status;
+    if (cases != 50 || failures) return 10;
+  }
+  std::puts("RUNTIME REINITIALIZATION RUNS 2 FAILURES 0");
+  return 0;
+}
+#endif
