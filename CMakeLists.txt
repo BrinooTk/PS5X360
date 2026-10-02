@@ -25,6 +25,7 @@ target_compile_definitions(xenia_ppc_decoder PRIVATE NDEBUG)
 target_compile_options(xenia_ppc_decoder PRIVATE -Wall -Wextra)
 
 add_executable(xenia-platform-smoke src/platform_smoke.cpp)
+target_include_directories(xenia-platform-smoke PRIVATE include)
 target_link_libraries(xenia-platform-smoke PRIVATE xenia_ppc_decoder)
 
 if(NOT CMAKE_CROSSCOMPILING)

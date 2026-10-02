@@ -1,0 +1,14 @@
+{
+  "date_local": "2026-10-01",
+  "timezone": "America/Sao_Paulo",
+  "title_id": "PPSA50008",
+  "eboot_sha256": "834e9805a38cff2c60723a60dfe101dc38002b63d5d2cf7ccfad812f8c2c6488",
+  "observed": {
+    "decoder_runs": 53,
+    "cases_per_run": 9,
+    "failures": 0,
+    "video": "user confirmed",
+    "controller": "user confirmed buttons and left stick; native log shows successful pad handle"
+  },
+  "scope": "Xenia instruction decoder, native VideoOut and DualSense only; no guest execution/JIT/Vulkan/gameplay"
+}

@@ -22,6 +22,7 @@ No Windows, com Docker e a imagem local `castation-buildenv`:
 python tools/prepare.py --fetch
 ./build.ps1 Host
 ./build.ps1 PS5
+./build.ps1 Native
 ```
 
 O script PS5 usa o SDK já presente no workspace. Pode-se indicar outro caminho
@@ -41,7 +42,15 @@ Saídas:
 - `build/ps5/receipt.json`: hash, revisão, formato e status de validação.
 
 O ELF é um probe de componentes, não um pacote instalável nem um emulador
-jogável. Não há validação de hardware nesta etapa.
+jogável. O ELF isolado M0 não foi executado no console.
+
+O target `Native` produz o primeiro teste de hardware em
+`dist/Xbox360PS5-M1-native-platform-test.zip`, com uma pasta `PPSA50008`
+registrável no ShadowMountPlus. Ele apresenta os resultados do decoder do
+Xenia e os valores do DualSense na TV. Ver [docs/FIRST_TEST.md](docs/FIRST_TEST.md).
+O runtime de título é gerado a partir do toolchain local do Castation na
+revisão `94dfef7`; a tela usa o renderer mínimo do PS5 Native App Boilerplate
+na revisão `470695e0c557f99ff2df0e36e4df713c5e636526`, com atualização dos buffers.
 
 ## Arquitetura e próximos marcos
 
@@ -49,6 +58,9 @@ Ver [docs/PORTING.md](docs/PORTING.md). Cada componente entra no build com
 validação própria antes da integração ao aplicativo. O objetivo gráfico é
 usar o renderizador Vulkan do Xenia no driver PS5, com AudioOut e DualSense
 como serviços nativos.
+O teste nativo M1 foi validado no PS5: imagem e controle confirmados pelo
+usuário; o log registrou 53 execuções de nove casos com zero falhas. Isso
+valida os componentes iniciais, não a emulação de jogos.
 
 Xenia é experimental e sua compatibilidade varia entre jogos. A potência do
 PS5 por si só não garante compatibilidade, resolução ou 60 FPS. Essas métricas
@@ -57,5 +69,7 @@ precisam ser medidas depois de CPU e GPU funcionarem corretamente.
 ## Licenças
 
 Código original deste projeto: MIT. Xenia: BSD de três cláusulas; fmt: licença
-MIT e exceção indicada em sua licença. As cópias dos avisos estão em
-`licenses/`. Nenhum jogo, BIOS ou chave é distribuído.
+MIT e exceção indicada em sua licença. O renderer e as ferramentas do runtime
+nativo mantêm GPL-3.0-or-later; o aplicativo M1 combinado é distribuído sob
+essa licença, mantendo os avisos de seus componentes. As cópias dos avisos
+estão em `licenses/`. Nenhum jogo, BIOS ou chave é distribuído.
