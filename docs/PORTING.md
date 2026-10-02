@@ -24,6 +24,10 @@ um emulador de Dreamcast em Xbox 360.
 
 ## Referências fornecidas
 
+- [Mihawk PS5_Vulkan](https://github.com/mihawk-99/PS5_Vulkan): driver RADV,
+  winsys e apresentação PS5; comparação com o provider do Xenia em
+  [PS5_VULKAN_REFERENCE.md](PS5_VULKAN_REFERENCE.md).
+
 - [PS5SX2](https://github.com/Swordpdf/PS5SX2): estrutura de app nativo,
   integração de um emulador com Vulkan PS5 e cache de shaders.
 - [ProsperoEden](https://github.com/blackbearreloaded/ProsperoEden): link RADV,
