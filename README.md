@@ -50,6 +50,12 @@ Os mesmos componentes e o teste foram compilados e ligados para PS5.
 Esse teste HIR ainda não foi executado no console. Ver
 [docs/CPU_TRANSLATION.md](docs/CPU_TRANSLATION.md).
 
+A continuação M3 compila frontend PPC, passes de otimização e backend x64
+como bibliotecas para PS5. Cinco suites de host (74 casos ao todo) passaram.
+Incluem testes dos atômicos PS5 e comparação Xbyak/Capstone; ainda não há
+execução guest/JIT. O pacote de desenvolvimento pode ser gerado com
+`python tools/package-cpu-probe.py`, após os builds Host e PS5.
+
 O ELF é um probe de componentes, não um pacote instalável nem um emulador
 jogável. O ELF isolado M0 não foi executado no console.
 

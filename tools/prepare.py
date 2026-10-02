@@ -41,6 +41,15 @@ def main():
     target.parent.mkdir(parents=True, exist_ok=True)
     if not target.exists() or target.read_text() != platform:
         target.write_text(platform)
+    atomic = (source / "src/xenia/base/atomic.h").read_text()
+    marker = "#elif XE_PLATFORM_LINUX || XE_PLATFORM_MAC"
+    if atomic.count(marker) != 1:
+        raise SystemExit("Atomic overlay anchor changed")
+    primitives = (ROOT / "platform/ps5/atomic_primitives.inc").read_text()
+    atomic = atomic.replace(marker, "#elif XE_PLATFORM_PS5\n\n" + primitives + "\n" + marker)
+    target = ROOT / "build/generated/xenia/base/atomic.h"
+    if not target.exists() or target.read_text() != atomic:
+        target.write_text(atomic)
     print(f"Pinned Xenia {actual}; PS5 overlay generated")
 
 

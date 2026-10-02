@@ -1,5 +1,48 @@
 # CPU: componentes HIR iniciais
 
+## Continuação M3: frontend e backend compilados
+
+O build agora também produz `libxenia_ppc_frontend.a`,
+`libxenia_cpu_compiler.a`, `libxenia_x64_backend.a` e `libxenia_capstone.a`,
+tanto no host quanto no alvo Prospero. O frontend inclui scanner, tradutor,
+builder PPC e as cinco categorias de emissores. Os passes de compilador e
+os arquivos comuns/POSIX do backend x64 entram como componentes upstream.
+O cache POSIX compilado não é ainda um adapter de memória PS5 validado.
+
+O bloqueio de `base/atomic.h` foi resolvido com um overlay PS5 explícito:
+operações Clang `__atomic` com consistência sequencial, exchange/fetch-add
+retornando o valor anterior e CAS forte. Nenhuma outra plataforma foi alterada.
+O ramo PS5 é exercitado no host por definição explícita no target de teste.
+
+Foram executadas cinco suites no host com zero falhas:
+
+| Suite | Casos | O que verifica |
+|---|---:|---|
+| Decoder PowerPC | 9 | Instruções escalares/VMX/VMX128 e opcode inválido |
+| HIR | 20 | Valores, blocos, operandos e montagem de operações |
+| Atômicos PS5 | 13 | Retornos, CAS, wrappers e atualizações concorrentes |
+| Otimizador | 24 | Três construções/otimizações, swaps redundantes e código morto, preservando store e seu operando |
+| Xbyak/Capstone | 8 | Geração e decodificação x64, imediato e resolução de label |
+
+O teste Xbyak usa buffer de dados fornecido pelo chamador e não executa o
+código gerado. Não reserva memória executável. Todos os cinco probes foram
+ligados para PS5 e tiveram estrutura ELF verificada; os novos probes não foram
+executados no console. `build/host/cpu-tests.xml` guarda o resultado de host.
+
+`python tools/package-cpu-probe.py` valida os objetos ELF64 x86-64 dentro das
+seis bibliotecas, gera hashes/revisões em `build/ps5/cpu-receipt.json` e cria
+`dist/Xbox360PS5-M3-CPU-development-probe.zip` com os probes, arquivos e avisos.
+É um pacote de desenvolvimento, não um aplicativo instalável.
+
+Compilar um arquivo estático não resolve sua ligação completa. O levantamento
+de símbolos mostra dependências de Processor, memória guest/host, config/logs,
+thread state e exception handling. Elas precisam de implementações reais antes
+de iniciar o frontend ou o JIT. Não foram ocultadas por stubs. Próximo passo:
+integrar esses serviços e ligar um teste sintético PPC -> HIR, depois validar
+a execução x64 dentro do runtime nativo.
+
+## Evidência anterior M2
+
 Atualizado em 2026-10-01. O título M1 validado no console continua separado.
 
 Entraram no build os arquivos upstream `arena.cc`, `hir_builder.cc`,

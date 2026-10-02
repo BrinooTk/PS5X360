@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(Xbox360PS5 LANGUAGES CXX)
+project(Xbox360PS5 LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
@@ -41,8 +41,74 @@ target_compile_definitions(xenia_hir_values PRIVATE NDEBUG)
 add_executable(xenia-hir-smoke src/hir_smoke.cpp)
 target_link_libraries(xenia-hir-smoke PRIVATE xenia_hir_values)
 
+# Compilation gate only: runtime dependencies remain unresolved in this archive.
+add_library(xenia_ppc_frontend STATIC
+  "${XENIA_SOURCE}/src/xenia/cpu/ppc/ppc_frontend.cc"
+  "${XENIA_SOURCE}/src/xenia/cpu/ppc/ppc_scanner.cc"
+  "${XENIA_SOURCE}/src/xenia/cpu/ppc/ppc_translator.cc"
+  "${XENIA_SOURCE}/src/xenia/cpu/ppc/ppc_hir_builder.cc"
+  "${XENIA_SOURCE}/src/xenia/cpu/ppc/ppc_emit_alu.cc"
+  "${XENIA_SOURCE}/src/xenia/cpu/ppc/ppc_emit_altivec.cc"
+  "${XENIA_SOURCE}/src/xenia/cpu/ppc/ppc_emit_control.cc"
+  "${XENIA_SOURCE}/src/xenia/cpu/ppc/ppc_emit_fpu.cc"
+  "${XENIA_SOURCE}/src/xenia/cpu/ppc/ppc_emit_memory.cc")
+target_link_libraries(xenia_ppc_frontend PUBLIC xenia_hir_values)
+target_include_directories(xenia_ppc_frontend PUBLIC "${XENIA_SOURCE}/third_party/llvm/include")
+target_compile_definitions(xenia_ppc_frontend PRIVATE NDEBUG)
+
+file(GLOB XENIA_COMPILER_SOURCES CONFIGURE_DEPENDS
+  "${XENIA_SOURCE}/src/xenia/cpu/compiler/*.cc"
+  "${XENIA_SOURCE}/src/xenia/cpu/compiler/passes/*.cc")
+add_library(xenia_cpu_compiler STATIC ${XENIA_COMPILER_SOURCES})
+target_link_libraries(xenia_cpu_compiler PUBLIC xenia_hir_values)
+target_include_directories(xenia_cpu_compiler PUBLIC "${XENIA_SOURCE}/third_party/llvm/include")
+target_compile_definitions(xenia_cpu_compiler PRIVATE NDEBUG)
+add_executable(xenia-compiler-smoke src/compiler_smoke.cpp)
+target_link_libraries(xenia-compiler-smoke PRIVATE xenia_cpu_compiler)
+
+file(GLOB XENIA_X64_SOURCES CONFIGURE_DEPENDS
+  "${XENIA_SOURCE}/src/xenia/cpu/backend/x64/*.cc")
+list(FILTER XENIA_X64_SOURCES EXCLUDE REGEX "_win\\.cc$")
+add_library(xenia_x64_backend STATIC ${XENIA_X64_SOURCES})
+target_link_libraries(xenia_x64_backend PUBLIC xenia_cpu_compiler)
+target_include_directories(xenia_x64_backend PRIVATE "${XENIA_SOURCE}/third_party/capstone/include")
+target_compile_definitions(xenia_x64_backend PRIVATE NDEBUG
+  CAPSTONE_X86_ATT_DISABLE CAPSTONE_DIET_NO CAPSTONE_X86_REDUCE_NO
+  CAPSTONE_HAS_X86 CAPSTONE_USE_SYS_DYN_MEM
+  XBYAK_NO_OP_NAMES XBYAK_ENABLE_OMITTED_OPERAND)
+
+set(CAPSTONE_SOURCE "${XENIA_SOURCE}/third_party/capstone")
+add_library(xenia_capstone STATIC
+  "${CAPSTONE_SOURCE}/cs.c" "${CAPSTONE_SOURCE}/MCInst.c"
+  "${CAPSTONE_SOURCE}/MCInstrDesc.c" "${CAPSTONE_SOURCE}/MCRegisterInfo.c"
+  "${CAPSTONE_SOURCE}/SStream.c" "${CAPSTONE_SOURCE}/utils.c"
+  "${CAPSTONE_SOURCE}/arch/X86/X86Disassembler.c"
+  "${CAPSTONE_SOURCE}/arch/X86/X86DisassemblerDecoder.c"
+  "${CAPSTONE_SOURCE}/arch/X86/X86IntelInstPrinter.c"
+  "${CAPSTONE_SOURCE}/arch/X86/X86Mapping.c"
+  "${CAPSTONE_SOURCE}/arch/X86/X86Module.c")
+target_include_directories(xenia_capstone PUBLIC "${CAPSTONE_SOURCE}/include")
+target_compile_definitions(xenia_capstone PRIVATE CAPSTONE_HAS_X86
+  CAPSTONE_USE_SYS_DYN_MEM CAPSTONE_X86_ATT_DISABLE)
+target_link_libraries(xenia_x64_backend PUBLIC xenia_capstone)
+add_executable(xenia-codegen-smoke src/codegen_smoke.cpp)
+target_include_directories(xenia-codegen-smoke PRIVATE "${XENIA_SOURCE}")
+target_compile_definitions(xenia-codegen-smoke PRIVATE XBYAK_NO_OP_NAMES XBYAK_ENABLE_OMITTED_OPERAND)
+target_link_libraries(xenia-codegen-smoke PRIVATE xenia_capstone)
+
+add_executable(xenia-atomic-smoke src/atomic_smoke.cpp)
+target_link_libraries(xenia-atomic-smoke PRIVATE xenia_ppc_decoder)
+# Exercise the PS5 branch on the host as well as with the target SDK.
+target_compile_definitions(xenia-atomic-smoke PRIVATE XE_PLATFORM_PS5=1)
+if(NOT CMAKE_CROSSCOMPILING)
+  target_link_libraries(xenia-atomic-smoke PRIVATE pthread)
+endif()
+
 if(NOT CMAKE_CROSSCOMPILING)
   enable_testing()
   add_test(NAME xenon_opcode_decoder COMMAND xenia-platform-smoke)
   add_test(NAME xenon_hir_semantics COMMAND xenia-hir-smoke)
+  add_test(NAME ps5_atomic_semantics COMMAND xenia-atomic-smoke)
+  add_test(NAME xenon_optimizer_semantics COMMAND xenia-compiler-smoke)
+  add_test(NAME x64_codegen_decode COMMAND xenia-codegen-smoke)
 endif()
