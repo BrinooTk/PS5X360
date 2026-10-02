@@ -3,9 +3,13 @@ import hashlib
 import json
 from pathlib import Path
 import struct
+import sys
 
 root = Path(__file__).resolve().parents[1]
-path = root / "build/ps5/xenia-platform-smoke"
+artifact = sys.argv[1] if len(sys.argv) > 1 else "xenia-platform-smoke"
+if artifact not in ("xenia-platform-smoke", "xenia-hir-smoke"):
+    raise SystemExit("Unknown probe artifact")
+path = root / "build/ps5" / artifact
 raw = path.read_bytes()
 if raw[:7] != b"\x7fELF\x02\x01\x01":
     raise SystemExit("Expected a little-endian ELF64")
@@ -35,10 +39,10 @@ receipt = {
     "sha256": hashlib.sha256(raw).hexdigest(),
     "bytes": len(raw),
     "dependencies": json.loads((root / "deps.json").read_text()),
-    "status": "PS5 cross-built instruction-decoder probe; not a playable emulator",
+    "status": "PS5 cross-built " + ("HIR semantics" if artifact == "xenia-hir-smoke" else "instruction-decoder") + " probe; not a playable emulator",
     "hardware_tested": False,
     "format": "public payload SDK ELF; not a registered native title/FSELF",
     "load_segments": segments,
 }
-(path.parent / "receipt.json").write_text(json.dumps(receipt, indent=2) + "\n")
+(path.parent / ("hir-receipt.json" if artifact == "xenia-hir-smoke" else "receipt.json")).write_text(json.dumps(receipt, indent=2) + "\n")
 print(json.dumps({key: receipt[key] for key in ("artifact", "bytes", "sha256", "status")}))

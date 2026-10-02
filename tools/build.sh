@@ -17,6 +17,7 @@ case "$mode" in
       -DCMAKE_CXX_FLAGS='-O3 -march=znver2 -fno-stack-protector'
     cmake --build build/ps5
     python3 tools/verify.py
+    python3 tools/verify.py xenia-hir-smoke
     ;;
   *) echo 'usage: tools/build.sh [host|ps5]' >&2; exit 2 ;;
 esac

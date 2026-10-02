@@ -28,7 +28,21 @@ add_executable(xenia-platform-smoke src/platform_smoke.cpp)
 target_include_directories(xenia-platform-smoke PRIVATE include)
 target_link_libraries(xenia-platform-smoke PRIVATE xenia_ppc_decoder)
 
+# Actual upstream constant evaluator used by the CPU translation pipeline.
+add_library(xenia_hir_values STATIC
+  "${XENIA_SOURCE}/src/xenia/base/arena.cc"
+  "${XENIA_SOURCE}/src/xenia/cpu/hir/hir_builder.cc"
+  "${XENIA_SOURCE}/src/xenia/cpu/hir/block.cc"
+  "${XENIA_SOURCE}/src/xenia/cpu/hir/instr.cc"
+  "${XENIA_SOURCE}/src/xenia/cpu/hir/opcodes.cc"
+  "${XENIA_SOURCE}/src/xenia/cpu/hir/value.cc")
+target_link_libraries(xenia_hir_values PUBLIC xenia_ppc_decoder)
+target_compile_definitions(xenia_hir_values PRIVATE NDEBUG)
+add_executable(xenia-hir-smoke src/hir_smoke.cpp)
+target_link_libraries(xenia-hir-smoke PRIVATE xenia_hir_values)
+
 if(NOT CMAKE_CROSSCOMPILING)
   enable_testing()
   add_test(NAME xenon_opcode_decoder COMMAND xenia-platform-smoke)
+  add_test(NAME xenon_hir_semantics COMMAND xenia-hir-smoke)
 endif()

@@ -40,6 +40,15 @@ Saídas:
 - `build/ps5/libxenia_ppc_decoder.a`: primeiros componentes reais do núcleo.
 - `build/ps5/xenia-platform-smoke`: ELF de teste do SDK PS5.
 - `build/ps5/receipt.json`: hash, revisão, formato e status de validação.
+- `build/ps5/libxenia_hir_values.a`: builder, blocos, instruções e valores HIR upstream.
+- `build/ps5/xenia-hir-smoke`: teste de desenvolvimento desses componentes.
+- `build/ps5/hir-receipt.json`: validação estrutural e hash do novo ELF.
+
+O teste HIR tem 20 casos aprovados no host: aritmética, ordem dos bytes,
+vetores, gestão de operandos, construção e limpeza de blocos de tradução.
+Os mesmos componentes e o teste foram compilados e ligados para PS5.
+Esse teste HIR ainda não foi executado no console. Ver
+[docs/CPU_TRANSLATION.md](docs/CPU_TRANSLATION.md).
 
 O ELF é um probe de componentes, não um pacote instalável nem um emulador
 jogável. O ELF isolado M0 não foi executado no console.
