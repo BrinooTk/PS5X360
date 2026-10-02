@@ -1,0 +1,4 @@
+HOST DEVICE llvmpipe (LLVM 20.1.2, 256 bits) TYPE 4 API 1.4 (hardware validation: false)
+VULKAN TRANSFER WORDS 1024 FAILURES 0 (host driver, not PS5)
+Ran 12 tests in 0.006s
+OK

@@ -1,6 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 project(Xbox360PS5 LANGUAGES C CXX)
 option(XBOX360PS5_BUILD_RUNTIME "Compile full CPU, guest memory and executable loaders" OFF)
+option(XBOX360PS5_BUILD_VULKAN_PLATFORM "Build the driver-neutral Vulkan platform boundary" OFF)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
@@ -128,6 +129,10 @@ endif()
 
 if(XBOX360PS5_BUILD_RUNTIME)
   include(cmake/Runtime.cmake)
+endif()
+
+if(XBOX360PS5_BUILD_VULKAN_PLATFORM)
+  include(cmake/VulkanPlatform.cmake)
 endif()
 
 if(NOT CMAKE_CROSSCOMPILING)

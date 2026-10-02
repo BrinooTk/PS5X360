@@ -1,0 +1,86 @@
+{
+  "stage": "M6 Vulkan platform boundary",
+  "host_suites": 9,
+  "host_internal_checks": 211,
+  "vulkan_contract_checks": 24,
+  "host_driver": "Lavapipe software Vulkan",
+  "host_transfer_words_checked": 1024,
+  "python_tests": 12,
+  "hardware_tested": false,
+  "game_executed": false,
+  "radv_linked": false,
+  "xenos_integrated": false,
+  "installable_title": false,
+  "archive": {
+    "objects": 1,
+    "bytes": 44342,
+    "sha256": "a5ea51b1edb068926935a6c76801acb0062d6ee364bf01335ce7f6620dbd6e3a"
+  },
+  "elf": {
+    "artifact": "vulkan-platform-contract",
+    "sha256": "c96699d57ca8b4785d27adb2b2c13544f94ae653431d1853553c4a0aa484ea0d",
+    "bytes": 610848,
+    "dependencies": {
+      "xenia": {
+        "url": "https://github.com/xenia-project/xenia.git",
+        "revision": "95a5c3ee250f80c3b9d139658649d9ffb6db3eec",
+        "submodules": [
+          "third_party/fmt",
+          "third_party/cpptoml",
+          "third_party/cxxopts",
+          "third_party/date",
+          "third_party/xbyak",
+          "third_party/capstone",
+          "third_party/utfcpp",
+          "third_party/Vulkan-Headers"
+        ]
+      },
+      "native_runtime": {
+        "local_repository": "../Castation/native-ps5",
+        "revision": "94dfef7",
+        "renderer_repository": "https://github.com/blackbearreloaded/ps5-native-app-boilerplate",
+        "renderer_revision": "470695e0c557f99ff2df0e36e4df713c5e636526"
+      },
+      "references": [
+        "https://github.com/Swordpdf/PS5SX2",
+        "https://github.com/blackbearreloaded/ProsperoEden",
+        "https://github.com/premohq/PS5CEMU",
+        "https://github.com/klortekhq/NATIVE-EMUS-PS5"
+      ]
+    },
+    "status": "PS5 cross-built Vulkan API contract (mock dispatch) probe; not a playable emulator",
+    "hardware_tested": false,
+    "format": "public payload SDK ELF; not a registered native title/FSELF",
+    "load_segments": [
+      {
+        "flags": 7,
+        "bytes": 260421
+      },
+      {
+        "flags": 6,
+        "bytes": 164176
+      },
+      {
+        "flags": 6,
+        "bytes": 5128
+      }
+    ]
+  },
+  "sources": {
+    "CMakeLists.txt": "9d35e89859963119a70d5cba34d21fe6d6cab8554338e44b25ffe67ab8b708f6",
+    "cmake/VulkanPlatform.cmake": "2f87bc01d0645c9f15b7663892462029f3552d07b5a0ae7590f2b139a8cc8a37",
+    "build.ps1": "4f5d78385c8db29ec862369bb5f194eb66c9d3183dfa5c057b12a18f6302dbf1",
+    "deps.json": "34a8374bcd642347e7ef037890fd41bc1ad2dce366c172bcceaae3b061ca866b",
+    "include/xbox360ps5/vulkan_platform.hpp": "1866bc8a9204a896935a366a4811cfc81270db6e6365f33a32607e14048a6bce",
+    "platform/ps5/vulkan_platform.cpp": "40fcb74c50383916e7fd3488fa71f90cb089b5e31af1198ed5be3fadc5cf7d92",
+    "src/vulkan_platform_contract.cpp": "918614b7812ce6f2f03143bb1af9f2115b93454b3d5ce3ec57dda99a64917079",
+    "src/vulkan_transfer_probe.cpp": "d10bc417930b894e8c30a4a9f9632b3b98144580240c498eb47f2dcd769438e4",
+    "tools/build-vulkan-platform.sh": "4b6c52371f905c95b3827e18e9cd1f9e02eb63fc2404075f9ce7015970f95cb0",
+    "tools/package-vulkan-platform.py": "b5e924cd92acbe0378482e97757755099119f15aaf203a3a513f4d094e18239e",
+    "tools/verify.py": "2933045788835a024403b36db6330ba84215307cb43712634c9602ea58e940c5",
+    "tools/artifact_contracts.py": "b721363da38e2d50b44172e9894f35d1846277085aca1773cf769075fddac0f1",
+    "tooling/docker/Dockerfile.vulkan": "d4b378b478cc119c0a3c13c35bc79e6c2257273392aab3724a78475f04306cf0",
+    "docs/PS5_REFERENCES.md": "592b26cce7657184fcfd7fa8dd18e6b405fb8cf936d5912e1b246b5c078c475e"
+  },
+  "vulkan_headers_revision": "31aa7f634b052d87ede4664053e85f3f4d1d50d3"
+}

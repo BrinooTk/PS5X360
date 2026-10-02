@@ -3,11 +3,13 @@
 Port experimental do Xenia para PS5, iniciado em 2026-10-01. Projeto separado
 do Castation. O núcleo vem do Xenia; o trabalho aqui adapta a plataforma PS5.
 
-**Ainda não executa jogos.** O primeiro marco compila o decodificador PowerPC,
-as tabelas de instruções, o disassembler e o suporte de strings do Xenia para
-o alvo `x86_64-sie-ps5`. Um teste de host verifica instruções de controle,
-memória, VMX, VMX128 e uma instrução inválida. O mesmo teste é ligado em um ELF
-com o SDK público do PS5, sem executar qualquer teste de JIT ou GPU.
+**Ainda não executa jogos.** O runtime real PPC/x64 já executa programas
+sintéticos no host; seus testes foram compilados para PS5, mas essa execução
+JIT ainda não foi validada no console. A etapa M6 acrescenta a conexão Vulkan
+com seleção de dispositivo, fila e superfície KHR_display. Ela ainda não está
+ligada ao renderizador Xenos nem inclui o driver RADV. A análise dos cinco
+emuladores de referência, builds e limites está em
+[docs/PS5_REFERENCES.md](docs/PS5_REFERENCES.md).
 
 O núcleo está fixado em `95a5c3ee250f80c3b9d139658649d9ffb6db3eec`.
 `tools/prepare.py` gera um overlay de `platform.h` que reconhece

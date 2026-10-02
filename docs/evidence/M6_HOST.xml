@@ -1,0 +1,276 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="(empty)"
+	tests="9"
+	failures="0"
+	disabled="0"
+	skipped="0"
+	hostname=""
+	time="1"
+	timestamp="2026-10-02T13:28:04"
+	>
+	<testcase name="guest_memory_contract" classname="guest_memory_contract" time="0.00620799" status="run">
+		<properties/>
+		<system-out>PASS reserve returns owned region
+PASS reserve is uncommitted
+PASS commit owned pages
+PASS commit preserves prior bytes
+PASS collision never overwrites existing region
+PASS query stops at access boundary
+PASS protect reports previous access
+PASS unaligned query covers containing page
+PASS mixed previous protections rejected
+PASS restore writable access
+PASS commit outside reservation rejected
+PASS unaligned reservation rejected
+PASS decommit anonymous page
+PASS recommit decommitted page
+PASS decommitted page is zero
+PASS partial release rejected
+PASS zero-length release frees whole region
+PASS released region no longer tracked
+PASS zero reservation rejected
+PASS overflow reservation rejected
+PASS create shared backing file
+PASS existing backing file never truncated
+PASS file views map successfully
+PASS file offset alias sees writes
+PASS alias writes reach primary view
+PASS commit preserves alias backing
+PASS file decommit explicitly rejected
+PASS wrong view length rejected
+PASS mapping beyond file rejected
+PASS unaligned file offset rejected
+PASS mapped file reads remaining bytes from offset
+PASS explicit file range retains size and shared contents
+PASS file mapping cannot extend past EOF
+PASS empty mapping at EOF rejected
+PASS overflow file offset rejected
+PASS unaligned mapped file offset rejected
+PASS unmap first alias
+PASS unmap second alias
+PASS close removes owned backing file
+MEMORY CASES 39 FAILURES 0
+</system-out>
+	</testcase>
+	<testcase name="actual_ppc_x64_execution" classname="actual_ppc_x64_execution" time="1.28314" status="run">
+		<properties/>
+		<system-out>Runtime gate: memory initialization
+Runtime gate: processor setup
+Runtime gate: guest code and stack allocation
+Runtime gate: synthetic PPC execution
+Actual PPC -&gt; x64 JIT execution: PASS; no game executed
+Runtime gate: native ABI calls
+PASS translated PPC calls host handler and continues
+PASS translated PPC calls host handler and continues
+PASS translated PPC calls host handler and continues
+PASS translated PPC calls host handler and continues
+PASS translated PPC calls host handler and continues
+PASS translated PPC calls host handler and continues
+PASS translated PPC calls host handler and continues
+PASS translated PPC calls host handler and continues
+PASS translated PPC calls host handler and continues
+PASS translated PPC calls host handler and continues
+PASS translated PPC calls host handler and continues
+PASS translated PPC calls host handler and continues
+PASS translated PPC calls host handler and continues
+PASS translated PPC calls host handler and continues
+PASS translated PPC calls host handler and continues
+PASS translated PPC calls host handler and continues
+PASS translated PPC calls host handler and continues
+PASS translated PPC calls host handler and continues
+PASS translated PPC calls host handler and continues
+PASS translated PPC calls host handler and continues
+PASS translated PPC calls host handler and continues
+PASS translated PPC calls host handler and continues
+PASS translated PPC calls host handler and continues
+PASS translated PPC calls host handler and continues
+PASS translated PPC calls host handler and continues
+PASS translated PPC calls host handler and continues
+PASS translated PPC calls host handler and continues
+PASS translated PPC calls host handler and continues
+PASS translated PPC calls host handler and continues
+PASS translated PPC calls host handler and continues
+PASS translated PPC calls host handler and continues
+PASS translated PPC calls host handler and continues
+Runtime gate: unresolved guest function call
+PASS lazy function resolver and nested guest return
+Runtime gate: native vector fallback
+PASS VMX128 shift uses stashed vector arguments
+PASS VMX128 shift uses stashed vector arguments
+PASS VMX128 shift uses stashed vector arguments
+PASS VMX128 shift uses stashed vector arguments
+PASS VMX128 shift uses stashed vector arguments
+PASS VMX128 shift uses stashed vector arguments
+PASS VMX128 shift uses stashed vector arguments
+PASS VMX128 shift uses stashed vector arguments
+PASS fifteen live vectors survive the System V helper
+PASS fifteen live vectors survive the System V helper
+PASS fifteen live vectors survive the System V helper
+PASS fifteen live vectors survive the System V helper
+PASS fifteen live vectors survive the System V helper
+PASS fifteen live vectors survive the System V helper
+PASS fifteen live vectors survive the System V helper
+PASS fifteen live vectors survive the System V helper
+JIT RUNTIME CASES 50 FAILURES 0 (synthetic programs, no game)
+</system-out>
+	</testcase>
+	<testcase name="vulkan_platform_contract" classname="vulkan_platform_contract" time="0.00557357" status="run">
+		<properties/>
+		<system-out>PASS reject missing driver
+PASS reject invalid extent
+PASS reject missing WSI before allocating instance
+PASS bound driver enumeration allocation
+PASS bound VK_INCOMPLETE retries
+PASS recover from VK_INCOMPLETE
+PASS select second GPU with display
+PASS respect compatible plane and current stack
+PASS choose 59.94Hz rather than 120Hz
+PASS retain actual selected extent
+PASS select graphics compute and presentation queue
+PASS release device surface and instance once
+PASS reset is idempotent
+PASS select requested 720p mode
+PASS empty GPU list releases instance
+PASS reject unsupported opaque alpha
+PASS do not steal another display plane
+PASS surface failure releases instance
+PASS reject queue without presentation and release surface
+PASS reject graphics-only queue
+PASS device allocation failure releases surface
+PASS partial device dispatch cleanup
+PASS offscreen initialization requires no WSI
+PASS reinitialization releases old session
+VULKAN PLATFORM CASES 24 FAILURES 0 (mock dispatch, no hardware)
+</system-out>
+	</testcase>
+	<testcase name="xenon_opcode_decoder" classname="xenon_opcode_decoder" time="0.00785979" status="run">
+		<properties/>
+		<system-out>PASS 3860002a LI R3 42
+PASS 4e800020 BLR
+PASS 48000004 BRANCH
+PASS 80640000 LOAD WORD
+PASS 90640000 STORE WORD
+PASS 60000000 NOP
+PASS 10000000 VMX ADD
+PASS 14000310 VMX128 XOR
+PASS 00000000 INVALID OPCODE
+PASS upstream disassembly: addi       r3, r0, 0x2A
+Target: host test; this does not validate PS5 execution
+Decoder cases: 9; failures: 0
+</system-out>
+	</testcase>
+	<testcase name="xenon_hir_semantics" classname="xenon_hir_semantics" time="0.00767912" status="run">
+		<properties/>
+		<system-out>PASS 32-bit addition wraps
+PASS signed extension
+PASS unsigned extension
+PASS guest byte order
+PASS arithmetic right shift
+PASS logical right shift
+PASS signed comparison
+PASS unsigned comparison
+PASS float arithmetic
+PASS 128-bit vector xor
+PASS HIR value alignment
+PASS arena reuse across translation blocks
+PASS HIR tracks multiple consumers
+PASS operand replacement updates use chains
+PASS instruction removal updates block and uses
+PASS empty block after cleanup
+PASS builder folds constant expression
+PASS builder finalizes register computation
+PASS translation contains runtime add
+PASS translation reset discards previous blocks
+HIR CASES 20 FAILURES 0 (no guest execution)
+</system-out>
+	</testcase>
+	<testcase name="ps5_atomic_semantics" classname="ps5_atomic_semantics" time="0.00658639" status="run">
+		<properties/>
+		<system-out>PASS increment returns new value
+PASS decrement returns new value
+PASS 32-bit exchange returns previous value
+PASS 32-bit fetch-add returns previous value
+PASS failed CAS leaves value intact
+PASS successful CAS stores new value
+PASS 64-bit exchange
+PASS 64-bit fetch-add
+PASS 64-bit CAS failure
+PASS 64-bit CAS success
+PASS unsigned wrapper wraps at 32 bits
+PASS concurrent 32-bit updates
+PASS concurrent 64-bit updates
+ATOMIC CASES 13 FAILURES 0
+</system-out>
+	</testcase>
+	<testcase name="xenon_optimizer_semantics" classname="xenon_optimizer_semantics" time="0.00746188" status="run">
+		<properties/>
+		<system-out>PASS finalize synthetic HIR
+PASS test contains redundant byte swaps
+PASS test contains unused multiply
+PASS optimizer pipeline succeeds
+PASS redundant swaps removed
+PASS unused arithmetic removed
+PASS observable register store preserved
+PASS stored operand retains original meaning
+PASS finalize synthetic HIR
+PASS test contains redundant byte swaps
+PASS test contains unused multiply
+PASS optimizer pipeline succeeds
+PASS redundant swaps removed
+PASS unused arithmetic removed
+PASS observable register store preserved
+PASS stored operand retains original meaning
+PASS finalize synthetic HIR
+PASS test contains redundant byte swaps
+PASS test contains unused multiply
+PASS optimizer pipeline succeeds
+PASS redundant swaps removed
+PASS unused arithmetic removed
+PASS observable register store preserved
+PASS stored operand retains original meaning
+COMPILER CASES 24 FAILURES 0 (no guest execution)
+</system-out>
+	</testcase>
+	<testcase name="x64_codegen_decode" classname="x64_codegen_decode" time="0.0156769" status="run">
+		<properties/>
+		<system-out>PASS generator uses caller buffer
+PASS 32-bit immediate encoding
+PASS all four instructions decoded
+PASS immediate semantics
+PASS arithmetic instruction
+PASS byte order instruction
+PASS return instruction
+PASS forward label resolves
+CODEGEN CASES 8 FAILURES 0 (encoding only)
+</system-out>
+	</testcase>
+	<testcase name="ppc_instruction_translation" classname="ppc_instruction_translation" time="0.0123184" status="run">
+		<properties/>
+		<system-out>PASS upstream PPC emitter accepts word
+PASS upstream PPC emitter accepts word
+PASS upstream PPC emitter accepts word
+PASS upstream PPC emitter accepts word
+PASS upstream PPC emitter accepts word
+PASS upstream PPC emitter accepts word
+PASS upstream PPC emitter accepts word
+PASS upstream PPC emitter accepts word
+PASS upstream PPC emitter accepts word
+PASS PPC-derived HIR finalizes
+PASS r0 written independently
+PASS signed immediate and RA zero semantics
+PASS dependent register arithmetic
+PASS ORI immediate is unsigned
+PASS big-endian word in guest memory
+PASS load restores word with zero extension
+PASS negative displacement addresses correct word
+PASS real optimizer accepts PPC-derived HIR
+PASS optimized register state is identical
+PASS optimized guest memory is identical
+PASS unsupported opcode rejected by probe
+PASS builder reused for new program
+PASS second program finalizes
+PASS second program produces 42
+PPC TRANSLATION CASES 24 FAILURES 0 (HIR oracle, no JIT)
+</system-out>
+	</testcase>
+</testsuite>

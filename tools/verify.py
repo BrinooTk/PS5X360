@@ -21,6 +21,7 @@ probes = {
     "xenia-ppc-translation-smoke": ("PPC emitter/HIR oracle", "translation-receipt.json"),
     "xenia-memory-contract": ("guest memory contract", "memory-receipt.json"),
     "xenia-runtime-link": ("PPC/x64 runtime contract", "runtime-receipt.json"),
+    "vulkan-platform-contract": ("Vulkan API contract (mock dispatch)", "vulkan-receipt.json"),
 }
 if artifact not in probes:
     raise SystemExit("Unknown probe artifact")

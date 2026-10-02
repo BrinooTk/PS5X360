@@ -1,0 +1,5 @@
+FROM castation-buildenv
+RUN apt-get update && apt-get install -y --no-install-recommends libvulkan1 mesa-vulkan-drivers && rm -rf /var/lib/apt/lists/*
+# Host-only software driver for reproducible tests. Never shipped to the PS5.
+RUN mkdir -p /opt/xbox360ps5 && if test -f /usr/share/vulkan/icd.d/lvp_icd.json; then ln -s /usr/share/vulkan/icd.d/lvp_icd.json /opt/xbox360ps5/lavapipe.json; else ln -s /usr/share/vulkan/icd.d/lvp_icd.x86_64.json /opt/xbox360ps5/lavapipe.json; fi && test -f /opt/xbox360ps5/lavapipe.json
+ENV VK_ICD_FILENAMES=/opt/xbox360ps5/lavapipe.json
