@@ -1,0 +1,16 @@
+{
+  "checked_at": "2026-10-02T16:01:25.2554308Z",
+  "host": "192.168.0.19",
+  "title_id": "PPSA50011",
+  "title_name": "Xbox360PS5 Experimental Game Test",
+  "installed": true,
+  "source_available": true,
+  "remote_folder": "/data/homebrew/PPSA50011",
+  "remote_size_bytes": 5536855187,
+  "verified_files": 5006,
+  "game_files": 5000,
+  "game_default_xex_sha256": "373689b7c8bc839fbc00f55f756da7a1ff55d786d043423606db8bf7f3905c94",
+  "deployment_receipt_sha256": "9366357638e6ed7ba44e72afc37792cbc1c16345664eed5e1fd2257c68c2110f",
+  "hardware_execution_tested": false,
+  "game_executed": false
+}
