@@ -38,8 +38,21 @@ void forward(int number, siginfo_t* info, void* context) {
   else old.sa_handler(number);
 }
 void callback(int number, siginfo_t* info, void* raw_context) {
+#if XE_PLATFORM_PS5
+  // The console's ucontext has 48 bytes between uc_sigmask and uc_mcontext that
+  // the upstream payload SDK header omits; the SDK fork's header has them.
+  auto& mc = *reinterpret_cast<mcontext_t*>(static_cast<char*>(raw_context) + 64);
+#else
   auto& mc = static_cast<ucontext_t*>(raw_context)->uc_mcontext;
-  if (mc.mc_len != sizeof(mcontext_t)) {
+#endif
+#if XE_PLATFORM_PS5
+  // The console's general registers follow FreeBSD's layout (measured), but
+  // its context length need not equal this SDK's structure size.
+  const bool known_layout = true;
+#else
+  const bool known_layout = mc.mc_len == sizeof(mcontext_t);
+#endif
+  if (!known_layout) {
     constexpr char message[] = "Xenia: unsupported native signal context ABI\n";
     (void)write(STDERR_FILENO, message, sizeof(message) - 1);
     forward(number, info, raw_context); return;

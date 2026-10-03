@@ -1,0 +1,10 @@
+FROM xbox360ps5-hostdebug
+RUN apt-get update -qq && apt-get install -y -qq --no-install-recommends pkg-config libgtk-3-dev liblz4-dev libx11-xcb-dev libxcb1-dev xvfb xauth libsdl2-dev libvulkan-dev mesa-vulkan-drivers xdotool imagemagick x11-apps glslang-tools spirv-tools && rm -rf /var/lib/apt/lists/*
+# Canary's shader script needs a current spirv-opt (--canonicalize-ids).
+RUN git clone --depth 1 https://github.com/KhronosGroup/SPIRV-Tools.git /tmp/spirv-tools && \
+    git clone --depth 1 https://github.com/KhronosGroup/SPIRV-Headers.git /tmp/spirv-tools/external/spirv-headers && \
+    cmake -S /tmp/spirv-tools -B /tmp/spirv-tools/build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+      -DSPIRV_SKIP_TESTS=ON -DSPIRV_SKIP_EXECUTABLES=OFF -DCMAKE_C_COMPILER=clang-18 -DCMAKE_CXX_COMPILER=clang++-18 && \
+    cmake --build /tmp/spirv-tools/build --target spirv-opt spirv-dis -j16 && \
+    cp /tmp/spirv-tools/build/tools/spirv-opt /tmp/spirv-tools/build/tools/spirv-dis /usr/local/bin/ && \
+    rm -rf /tmp/spirv-tools

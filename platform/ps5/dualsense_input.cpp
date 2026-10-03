@@ -15,7 +15,7 @@ constexpr Button buttons[] = {
  {0x80, X_INPUT_GAMEPAD_DPAD_LEFT, xe::ui::VirtualKey::kXInputPadDpadLeft},
  {0x20, X_INPUT_GAMEPAD_DPAD_RIGHT, xe::ui::VirtualKey::kXInputPadDpadRight},
  {0x08, X_INPUT_GAMEPAD_START, xe::ui::VirtualKey::kXInputPadStart},
- {0x01, X_INPUT_GAMEPAD_BACK, xe::ui::VirtualKey::kXInputPadBack},
+ {0x100000, X_INPUT_GAMEPAD_BACK, xe::ui::VirtualKey::kXInputPadBack},  // Touchpad click.
  {0x02, X_INPUT_GAMEPAD_LEFT_THUMB, xe::ui::VirtualKey::kXInputPadLThumbPress},
  {0x04, X_INPUT_GAMEPAD_RIGHT_THUMB, xe::ui::VirtualKey::kXInputPadRThumbPress},
  {0x400, X_INPUT_GAMEPAD_LEFT_SHOULDER, xe::ui::VirtualKey::kXInputPadLShoulder},
@@ -65,7 +65,9 @@ X_RESULT DualSenseInput::GetState(uint32_t user, X_INPUT_STATE* out) {
   std::lock_guard<std::mutex> lock(mutex_);
   if (user || !connected_) return X_ERROR_DEVICE_NOT_CONNECTED;
   *out = state_;
+#if !XBOX360PS5_CANARY  // Canary has no window focus gate for input drivers.
   if (!is_active()) out->gamepad = {};
+#endif
   return X_ERROR_SUCCESS;
 }
 X_RESULT DualSenseInput::GetCapabilities(uint32_t user, uint32_t flags, X_INPUT_CAPABILITIES* out) {
@@ -93,7 +95,11 @@ X_RESULT DualSenseInput::GetKeystroke(uint32_t user, uint32_t, X_INPUT_KEYSTROKE
   if (!out) return X_ERROR_BAD_ARGUMENTS;
   std::lock_guard<std::mutex> lock(mutex_);
   if ((user && user != 255) || !connected_) return X_ERROR_DEVICE_NOT_CONNECTED;
+#if XBOX360PS5_CANARY
+  if (keys_.empty()) return X_ERROR_EMPTY;
+#else
   if (!is_active() || keys_.empty()) return X_ERROR_EMPTY;
+#endif
   *out = keys_.front(); keys_.pop_front();
   return X_ERROR_SUCCESS;
 }

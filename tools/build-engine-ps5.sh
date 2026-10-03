@@ -17,5 +17,6 @@ for pair in 'libSceAgc:agc_canary_link_stub.c' 'libSceAgcDriver:agc_driver_canar
     -o "build/radv-stubs/$library.so" "build/radv-stubs/$library.o"
 done
 bash tools/build-integration.sh ps5
-cmake --build build/kernel-ps5 --target xenia-native-game-objects -j4
+# Every archive the title links, not only those the contract probes pull in.
+cmake --build build/kernel-ps5 --target xenia-native-game-objects xenia_ui_core xenia_xex_support -j4
 bash tools/build-native-game.sh

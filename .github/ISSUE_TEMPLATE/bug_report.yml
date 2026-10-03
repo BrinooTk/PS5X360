@@ -1,0 +1,42 @@
+name: Game compatibility or emulator bug
+description: Report a reproducible crash, black screen, graphics, audio or launcher problem.
+title: "[Bug] "
+body:
+  - type: input
+    id: release
+    attributes:
+      label: Release version
+      placeholder: preview-2026.10.03
+    validations:
+      required: true
+  - type: input
+    id: system
+    attributes:
+      label: PS5 firmware and homebrew setup
+    validations:
+      required: true
+  - type: input
+    id: game
+    attributes:
+      label: Game, title ID, region and executable version
+      description: For launcher-only issues, enter N/A.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: Include the exact scene and any enabled patches.
+    validations:
+      required: true
+  - type: textarea
+    id: result
+    attributes:
+      label: Expected and actual result
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Logs, screenshots or video
+      description: Attach a relevant engine.log excerpt or short video. Do not upload game files.

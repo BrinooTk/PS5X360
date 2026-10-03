@@ -21,7 +21,7 @@ add_library(xenia_ui_core STATIC
   "${XENIA_SOURCE}/src/xenia/ui/windowed_app_context.cc"
   "${XENIA_SOURCE}/src/xenia/ui/menu_item.cc"
   "${XENIA_SOURCE}/src/xenia/ui/imgui_dialog.cc"
-  "${XENIA_SOURCE}/src/xenia/ui/imgui_drawer.cc"
+  "${CMAKE_CURRENT_SOURCE_DIR}/build/generated-sources/imgui_drawer.cc"
   "${XENIA_SOURCE}/src/xenia/ui/immediate_drawer.cc"
   "${XENIA_SOURCE}/src/xenia/ui/graphics_util.cc"
   "${XENIA_SOURCE}/src/xenia/ui/graphics_upload_buffer_pool.cc"
@@ -48,10 +48,12 @@ target_link_options(xenia-engine-integration PRIVATE -Wl,--gc-sections -Wl,--err
   set_tests_properties(actual_engine_lifecycle PROPERTIES TIMEOUT 60)
 else()
   # Final linking uses the native title CRT, not the payload SDK's startup.
-  add_library(xenia-native-game-objects OBJECT src/native_game_main.cpp
-    platform/ps5/native_memory_calls.cpp platform/ps5/libc_bits.c)
+  add_library(xenia-native-game-objects OBJECT src/native_game_main.cpp src/launcher.cpp src/autotest.cpp
+    platform/ps5/native_memory_calls.cpp platform/ps5/libc_bits.c
+    platform/ps5/crash_report.cpp platform/ps5/net_log.cpp)
   target_link_libraries(xenia-native-game-objects PRIVATE xenia_dualsense_input
     xenia_vulkan_renderer xenia_audio_engine xenia_ui_core xenia_xex_support)
+  target_include_directories(xenia-native-game-objects PRIVATE include)
   target_compile_options(xenia-native-game-objects PRIVATE -fno-char8_t -mavx)
 endif()
 # Existing compiler depfiles may point to upstream thread.h from before the

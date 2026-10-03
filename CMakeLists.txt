@@ -8,7 +8,13 @@ option(XBOX360PS5_BUILD_AUDIO "Build actual XMA decoder and audio engine" OFF)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-set(XENIA_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/.deps/xenia")
+# The core (Xenia Canary, or the original Xenia) as tools/prepare.py chose it.
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/build/generated/xenia_base.cmake")
+  include("${CMAKE_CURRENT_SOURCE_DIR}/build/generated/xenia_base.cmake")
+else()
+  set(XENIA_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/.deps/xenia")
+  set(XBOX360PS5_CANARY OFF)
+endif()
 if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/build/generated/xenia/base/platform.h")
   message(FATAL_ERROR "Run python3 tools/prepare.py first")
 endif()
@@ -86,7 +92,7 @@ target_link_libraries(xenia-ppc-translation-smoke PRIVATE xenia_cpu_compiler)
 file(GLOB XENIA_X64_SOURCES CONFIGURE_DEPENDS
   "${XENIA_SOURCE}/src/xenia/cpu/backend/x64/*.cc")
 list(FILTER XENIA_X64_SOURCES EXCLUDE REGEX "_win\\.cc$")
-foreach(name IN ITEMS x64_backend x64_emitter x64_sequences x64_seq_vector x64_tracers)
+foreach(name IN ITEMS x64_backend x64_emitter x64_sequences x64_seq_vector x64_tracers x64_code_cache)
   list(REMOVE_ITEM XENIA_X64_SOURCES "${XENIA_SOURCE}/src/xenia/cpu/backend/x64/${name}.cc")
   list(APPEND XENIA_X64_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/build/generated-sources/xenia/cpu/backend/x64/${name}.cc")
 endforeach()
@@ -94,6 +100,7 @@ endforeach()
 # first existed (compiler depfiles otherwise still point to upstream headers).
 set_property(SOURCE ${XENIA_X64_SOURCES} APPEND PROPERTY OBJECT_DEPENDS
   "${CMAKE_CURRENT_SOURCE_DIR}/build/generated/xenia/cpu/backend/x64/x64_stack_layout.h"
+  "${CMAKE_CURRENT_SOURCE_DIR}/build/generated/xenia/cpu/backend/x64/x64_code_cache.h"
   "${CMAKE_CURRENT_SOURCE_DIR}/build/generated/xenia/cpu/backend/x64/x64_tracers.h")
 add_library(xenia_x64_backend STATIC ${XENIA_X64_SOURCES})
 target_link_libraries(xenia_x64_backend PUBLIC xenia_cpu_compiler)

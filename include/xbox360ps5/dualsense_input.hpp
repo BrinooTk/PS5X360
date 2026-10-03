@@ -20,6 +20,9 @@ class DualSenseInput final : public xe::hid::InputDriver {
   xe::X_RESULT GetState(uint32_t, xe::hid::X_INPUT_STATE*) override;
   xe::X_RESULT SetState(uint32_t, xe::hid::X_INPUT_VIBRATION*) override;
   xe::X_RESULT GetKeystroke(uint32_t, uint32_t, xe::hid::X_INPUT_KEYSTROKE*) override;
+#if XBOX360PS5_CANARY
+  xe::hid::InputType GetInputType() const override { return xe::hid::InputType::Controller; }
+#endif
  private:
   std::mutex mutex_;
   bool connected_ = false;

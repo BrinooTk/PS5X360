@@ -33,12 +33,15 @@ endif()
 # not a linked KernelState until the coordinator and scheduler are connected.
 file(GLOB_RECURSE KERNEL_SOURCES CONFIGURE_DEPENDS "${XENIA_SOURCE}/src/xenia/kernel/*.cc")
 list(FILTER KERNEL_SOURCES EXCLUDE REGEX "(_win|_test|_linux|_android)\\.cc$")
-list(FILTER KERNEL_SOURCES EXCLUDE REGEX "/(xam_net|xsocket)\\.cc$")
+list(FILTER KERNEL_SOURCES EXCLUDE REGEX "/(xam_net|xsocket|xboxkrnl_io_info|xam_info)\\.cc$")
+list(APPEND KERNEL_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/build/generated-sources/xboxkrnl_io_info.cc"
+  "${CMAKE_CURRENT_SOURCE_DIR}/build/generated-sources/xam_info.cc"
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/title_switch.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/src/covers.cpp")
 list(APPEND KERNEL_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/build/generated-sources/xam_net.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/build/generated-sources/xsocket.cc")
 add_library(xenia_guest_kernel STATIC ${KERNEL_SOURCES})
 target_link_libraries(xenia_guest_kernel PUBLIC xenia_cpu_runtime xenia_guest_vfs)
-target_include_directories(xenia_guest_kernel PRIVATE "${XENIA_SOURCE}/third_party/llvm/include")
+target_include_directories(xenia_guest_kernel PRIVATE "${XENIA_SOURCE}/third_party/llvm/include" "${CMAKE_CURRENT_SOURCE_DIR}/include")
 target_compile_definitions(xenia_guest_kernel PRIVATE NDEBUG)
 target_compile_options(xenia_guest_kernel PRIVATE -ffunction-sections -fdata-sections -fno-char8_t -mavx)
 
@@ -47,9 +50,11 @@ target_compile_options(xenia_guest_kernel PRIVATE -ffunction-sections -fdata-sec
 add_library(xenia_emulator_coordinator STATIC
   "${CMAKE_CURRENT_SOURCE_DIR}/build/generated-sources/emulator.cc" "${XENIA_SOURCE}/src/xenia/config.cc"
   "${XENIA_SOURCE}/src/xenia/hid/input_system.cc"
-  "${XENIA_SOURCE}/src/xenia/hid/hid_flags.cc")
+  "${XENIA_SOURCE}/src/xenia/hid/hid_flags.cc"
+  src/game_patches.cpp)
 target_link_libraries(xenia_emulator_coordinator PUBLIC xenia_guest_kernel)
-target_include_directories(xenia_emulator_coordinator PRIVATE "${XENIA_SOURCE}/src/xenia")
+target_include_directories(xenia_emulator_coordinator PRIVATE "${XENIA_SOURCE}/src/xenia"
+  "${CMAKE_CURRENT_SOURCE_DIR}/include")
 target_compile_definitions(xenia_emulator_coordinator PRIVATE NDEBUG)
 target_compile_options(xenia_emulator_coordinator PRIVATE -ffunction-sections -fdata-sections -fno-char8_t -mavx)
 

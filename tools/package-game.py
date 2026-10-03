@@ -15,19 +15,20 @@ if args.folder:
     param["titleId"] = "PPSA50011"
     param["conceptId"] = "50011"
     param["contentId"] = "UP9000-PPSA50011_00-XBOX360PS5M80001"
-    param["localizedParameters"]["en-US"]["titleName"] = "Xbox360PS5 Experimental Game Test"
+    param["localizedParameters"]["en-US"]["titleName"] = "PS5X360"
+    # The icon, the picture shown while the title starts (pic0) and its home-screen background (pic1).
+    for name in ("icon0.png", "pic0.png", "pic1.png"):
+        (app / "sce_sys" / name).write_bytes((ROOT / "assets/branding" / name).read_bytes())
     (app / "sce_sys/param.json").write_text(json.dumps(param, indent=2) + "\n")
     (app / "assets/roms/README.txt").write_text(
-        "Put the extracted game here, with default.xex and its original data folders.\n"
-        "Default guest path: /app0/assets/roms/default.xex\n"
-        "For a subfolder, set the full /app0 path in assets/game.txt.\n"
+        "Put each game in its own folder here: an extracted game (default.xex and its\n"
+        "data folders), an .iso image, or a GOD/STFS package. The library lists them.\n"
+        "To start one game directly, write its full /app0 path in assets/game.txt.\n"
         "No game, console BIOS or keys are included.\n")
     (app / "TEST_STATUS.txt").write_text(
-        "EXPERIMENTAL BUILD - NOT YET HARDWARE VALIDATED.\n"
-        "Real Xenia CPU/kernel/VFS/XMA/Xenos Vulkan and RADV are linked.\n"
-        "Host lifecycle and Sonic module loading passed; game execution is unverified.\n"
-        "Native log: /download0/xbox360ps5/engine.log\n"
-        "Preserve the prior M4/M7 apps until this has been tested.\n")
+        "PS5X360 - experimental Xbox 360 emulator for PS5 (Xenia Canary).\n"
+        "Games go in assets/roms, one folder per game. See LEIA-ME.md.\n"
+        "Log: /download0/xbox360ps5/engine.log\n")
 else:
     tests = ET.parse(ROOT / "build/kernel-host/integration-tests.xml").getroot()
     if int(tests.attrib.get("failures", "1")) or int(tests.attrib.get("tests", "0")) < 16:
@@ -39,8 +40,14 @@ else:
     if hashlib.sha256(required[1].read_bytes()).hexdigest() != expected_libc:
         raise SystemExit("Unexpected companion libc")
     allowed = {"eboot.bin", "sce_module/libc.prx", "sce_sys/param.json", "sce_sys/icon0.png",
-               "assets/roms/README.txt", "assets/game.txt", "TEST_STATUS.txt"}
-    package_files = [path for path in sorted(app.rglob('*')) if path.is_file()]
+               "sce_sys/pic0.png", "sce_sys/pic1.png",
+               "assets/roms/README.txt", "assets/game.txt", "TEST_STATUS.txt",
+                "assets/fonts/Roboto-Medium.ttf", "assets/fonts/NotoSans-Regular.ttf",
+                "assets/fonts/NotoSans-SemiBold.ttf", "assets/fonts/OFL.txt", "assets/fonts/README.md"}
+    # A local test folder may hold the user's own games under assets/roms and patch files under
+    # assets/patches; neither is packaged.
+    package_files = [path for path in sorted(app.rglob('*')) if path.is_file() and (
+        not {"roms", "patches"} & set(path.relative_to(app).parts[:2]) or path.relative_to(app).as_posix() == "assets/roms/README.txt")]
     if any(path.relative_to(app).as_posix() not in allowed for path in package_files):
         raise SystemExit("Unexpected app contents: refusing to bundle game data or unknown files")
     records = {str(path.relative_to(app)).replace('\\', '/'): {

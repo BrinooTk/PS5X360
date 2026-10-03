@@ -1,120 +1,99 @@
-# Xbox360PS5
+<p align="center">
+  <img src="docs/images/banner.png" alt="PS5X360 — Xbox 360 emulation on PlayStation 5" width="100%">
+</p>
 
-Port experimental do Xenia para PS5, iniciado em 2026-10-01. Projeto separado
-do Castation. O núcleo vem do Xenia; o trabalho aqui adapta a plataforma PS5.
+<p align="center">
+  <a href="https://github.com/BrinooTk/PS5X360/releases"><strong>Download a release</strong></a> ·
+  <a href="docs/INSTALLATION.md">Installation guide</a> ·
+  <a href="docs/COMPATIBILITY.md">Compatibility</a> ·
+  <a href="https://github.com/BrinooTk/PS5X360/issues">Report an issue</a>
+</p>
 
-**Execução de jogos no PS5 ainda não validada.** M8 integra o kernel real,
-VFS, threads/APCs, entrada DualSense/XInput, áudio XMAFRAMES e o renderizador
-Xenos/Vulkan. O driver RADV foi compilado para PS5. No PC, 16 suítes passaram,
-incluindo inicialização e encerramento conjuntos do núcleo, e o módulo do
-Sonic foi carregado no kernel com resolução de imports, sem executar o jogo.
-A entrada nativa de jogo conecta essas fábricas à apresentação KHR_display.
-Builds e limites em [docs/ENGINE_INTEGRATION.md](docs/ENGINE_INTEGRATION.md).
-A análise dos cinco emuladores de referência está em
-[docs/PS5_REFERENCES.md](docs/PS5_REFERENCES.md).
+# PS5X360
 
-M7 gera **Xbox360PS5 Actual CPU Runtime Test**, PPSA50010, em pasta nativa,
-com o runtime PPC/x64 real e logs persistentes. Corrige a ligação de memória
-do título para usar APIs normais do próprio processo. No host, os 50 casos
-executam duas vezes com limpeza e reinicialização. O aplicativo ainda aguarda
-validação no PS5 e não carrega jogos. Build: `./build.ps1 NativeRuntime`, depois
-de `./build.ps1 RuntimeHost`. Consulte
-[docs/ACTUAL_CPU_NATIVE_TEST.md](docs/ACTUAL_CPU_NATIVE_TEST.md).
+An experimental **Xbox 360 emulator for PlayStation 5**, built on Xenia Canary with native DualSense input, audio output and RADV Vulkan graphics.
 
-O núcleo está fixado em `95a5c3ee250f80c3b9d139658649d9ffb6db3eec`.
-`tools/prepare.py` gera um overlay de `platform.h` que reconhece
-`__PROSPERO__` como `XE_PLATFORM_PS5`. A plataforma não se apresenta como Linux.
-O checkout do Xenia fica intacto em `.deps/xenia`.
+**Games already run on the development PS5. Compatibility varies, and this is an early preview.** Expect crashes, visual errors and uneven performance in some titles. There is no promise of full-library compatibility or 60 FPS.
 
-## Compilar
+## What is included
 
-No Windows, com Docker e a imagem local `castation-buildenv`:
+- A cover-flow game library with folders, ISO images and GOD/STFS packages.
+- Player profiles, saved games and a cover downloader powered by XboxUnity.
+- An in-game guide opened with the touchpad, revealing from the center outward.
+- Noto Sans typography and an interface in **English, Portuguese and Spanish**.
+- Automatic PS5 language detection, with **English as the interface fallback**.
+- Community Xenia Canary patches, matched to the game's executable version and disabled by default.
+- Optional FPS display, CAS sharpening and FSR image upscaling.
 
-```powershell
-python tools/prepare.py --fetch
-./build.ps1 Host
-./build.ps1 PS5
-./build.ps1 Native
-./build.ps1 NativeCPU
+## Quick installation
+
+<img src="docs/images/installation.png" alt="Download the ZIP, copy PPSA50011 via FTP, add one folder per game, and launch PS5X360" width="100%">
+
+1. Download `PS5X360-release.zip` from [Releases](https://github.com/BrinooTk/PS5X360/releases).
+2. Extract it on your computer.
+3. Using FTP, copy the complete `PPSA50011` folder to **`/data/homebrew/PPSA50011`** on your PS5.
+4. Let ShadowMountPlus register the title, then open **PS5X360** from the PS5 home screen.
+5. Put each game in its own folder under `PPSA50011/assets/roms/`. Reopen the emulator or select **Settings → Refresh game list**.
+
+The development setup uses **PS5 firmware 13.60 with homebrew access, etaHEN, ShadowMountPlus and kstuff**. Other setups have not been verified. This application requires an already working homebrew environment.
+
+[Read the full installation and usage guide →](docs/INSTALLATION.md)
+
+## Organize your games
+
+```text
+PPSA50011/
+├── eboot.bin
+├── sce_module/
+├── sce_sys/
+└── assets/
+    └── roms/
+        ├── Game One/
+        │   ├── default.xex
+        │   └── ...game data...
+        ├── Game Two/
+        │   └── game.iso
+        └── Game Three/
+            ├── ...GOD or STFS package...
+            └── ...matching .data folder, if required...
 ```
 
-O script PS5 usa o SDK já presente no workspace. Pode-se indicar outro caminho
-com `-Sdk`. No Linux:
+Keep all extracted game data together. The launcher reads games inside the title's `assets/roms` folder. External USB paths are not currently scanned.
 
-```bash
-python3 tools/prepare.py --fetch
-bash tools/build.sh host
-PS5_PAYLOAD_SDK=/caminho/ps5-payload-sdk bash tools/build.sh ps5
-```
+**No games, console BIOS or keys are included.**
 
-Saídas:
+## Controls
 
-- `build/host/xenia-platform-smoke`: teste executável no computador.
-- `build/ps5/libxenia_ppc_decoder.a`: primeiros componentes reais do núcleo.
-- `build/ps5/xenia-platform-smoke`: ELF de teste do SDK PS5.
-- `build/ps5/receipt.json`: hash, revisão, formato e status de validação.
-- `build/ps5/libxenia_hir_values.a`: builder, blocos, instruções e valores HIR upstream.
-- `build/ps5/xenia-hir-smoke`: teste de desenvolvimento desses componentes.
-- `build/ps5/hir-receipt.json`: validação estrutural e hash do novo ELF.
+| DualSense button | Library action |
+| --- | --- |
+| D-pad / stick | Choose a game |
+| Cross | Launch |
+| Triangle | Game details and patches |
+| Square | Settings |
+| L1 / R1 | Change library filter |
+| Circle | Close the current panel |
+| Touchpad, during a game | Open the emulator guide |
 
-O teste HIR tem 20 casos aprovados no host: aritmética, ordem dos bytes,
-vetores, gestão de operandos, construção e limpeza de blocos de tradução.
-Os mesmos componentes e o teste foram compilados e ligados para PS5.
-Esse teste HIR ainda não foi executado no console. Ver
-[docs/CPU_TRANSLATION.md](docs/CPU_TRANSLATION.md).
+The guide offers resume, return to the library, Xbox BACK and exit. To use the touchpad as Xbox BACK instead, change **Settings → Touchpad click**; the guide then opens with **OPTIONS + touchpad**.
 
-A continuação M3 compila frontend PPC, passes de otimização e backend x64
-como bibliotecas para PS5. Cinco suites de host (74 casos ao todo) passaram.
-Incluem testes dos atômicos PS5 e comparação Xbyak/Capstone; ainda não há
-execução guest/JIT. O pacote de desenvolvimento pode ser gerado com
-`python tools/package-cpu-probe.py`, após os builds Host e PS5.
+## Compatibility and bug reports
 
-M4 acrescenta uma sexta suite, com 24 verificações de tradução dos emissores
-PPC originais e comparação por avaliador HIR de teste (98 casos de host no
-total). `NativeCPU` gera **Xbox360PS5 CPU Translation Test**, PPSA50009,
-separado do M1. Instruções e limites em [docs/CPU_NATIVE_TEST.md](docs/CPU_NATIVE_TEST.md).
-O M4 também foi confirmado no PS5: o log recolhido registra 41 execuções com
-24 casos de tradução e zero falhas. A evidência fixa os hashes do executável
-e do módulo libc. Nesse aplicativo M4 não há execução x64 gerada nem renderer Vulkan.
+Booting into a menu is not the same as completing gameplay. Some titles still fail during scenes or fights. [Current compatibility notes](docs/COMPATIBILITY.md) distinguish console observations from host tests.
 
-M5 integra o runtime CPU original e corrige as fronteiras System V do
-recompilador. Oito suites de host passaram: 98 verificações anteriores,
-39 de memória/arquivos e 50 de execução real PPC/x64. O runtime também foi compilado
-e ligado para PS5, mas ainda não foi executado no console nem inicia jogos.
-`RuntimeHost` e `RuntimePS5` reproduzem os builds; veja
-[docs/RUNTIME_INTEGRATION.md](docs/RUNTIME_INTEGRATION.md) para evidências,
-artefatos, inspeção do Sonic e dependências ainda necessárias.
+When [reporting a bug](https://github.com/BrinooTk/PS5X360/issues), include the game, title ID, region/version, enabled patches, firmware, release version and the exact point where it fails. Include a short video or screenshot and the relevant `engine.log` excerpt when possible.
 
-O ELF é um probe de componentes, não um pacote instalável nem um emulador
-jogável. O ELF isolado M0 não foi executado no console.
+## Development
 
-O target `Native` produz o primeiro teste de hardware em
-`dist/Xbox360PS5-M1-native-platform-test.zip`, com uma pasta `PPSA50008`
-registrável no ShadowMountPlus. Ele apresenta os resultados do decoder do
-Xenia e os valores do DualSense na TV. Ver [docs/FIRST_TEST.md](docs/FIRST_TEST.md).
-O runtime de título é gerado a partir do toolchain local do Castation na
-revisão `94dfef7`; a tela usa o renderer mínimo do PS5 Native App Boilerplate
-na revisão `470695e0c557f99ff2df0e36e4df713c5e636526`, com atualização dos buffers.
+The active core is Xenia Canary at `b083312b8b18e07e6e410b82104191f126722794`. The PS5 core changes are stored in `patches/canary/xbox360ps5.patch`; the launcher and platform adapters live in this repository.
 
-## Arquitetura e próximos marcos
+[Build notes and source dependencies](docs/BUILD.md) · [Third-party credits](docs/CREDITS.md)
 
-Ver [docs/PORTING.md](docs/PORTING.md). Cada componente entra no build com
-validação própria antes da integração ao aplicativo. O objetivo gráfico é
-usar o renderizador Vulkan do Xenia no driver PS5, com AudioOut e DualSense
-como serviços nativos.
-O teste nativo M1 foi validado no PS5: imagem e controle confirmados pelo
-usuário; o log registrou 53 execuções de nove casos com zero falhas. Isso
-valida os componentes iniciais, não a emulação de jogos.
+Older M0–M8 milestones and Portuguese research notes are preserved in [the port history](docs/PORT_HISTORY_PT.md). They describe earlier stages and do not replace the current release status.
 
-Xenia é experimental e sua compatibilidade varia entre jogos. A potência do
-PS5 por si só não garante compatibilidade, resolução ou 60 FPS. Essas métricas
-precisam ser medidas depois de CPU e GPU funcionarem corretamente.
+## Credits and licenses
 
-## Licenças
+Based on [Xenia Canary](https://github.com/xenia-canary/xenia-canary), with the [PS5_Vulkan](https://github.com/mihawk-99/PS5_Vulkan) RADV work and native runtime/tooling from the projects listed in [Credits](docs/CREDITS.md). Community patches come from [xenia-canary/game-patches](https://github.com/xenia-canary/game-patches); covers use XboxUnity.
 
-Código original deste projeto: MIT. Xenia: BSD de três cláusulas; fmt: licença
-MIT e exceção indicada em sua licença. O renderer e as ferramentas do runtime
-nativo mantêm GPL-3.0-or-later; os aplicativos M1 e M4 combinados são distribuídos sob
-essa licença, mantendo os avisos de seus componentes. As cópias dos avisos
-estão em `licenses/`, incluindo a licença LLVM do runtime C++ do SDK usado no
-M4. Nenhum jogo, BIOS ou chave é distribuído.
+Original project code is licensed under MIT. Bundled third-party components keep their own licenses, including BSD, LGPL and GPL components. See [LICENSE](LICENSE), [licenses/](licenses/) and the font's [SIL Open Font License](assets/fonts/OFL.txt).
+
+PS5X360 is an independent community project and is not affiliated with Sony or Microsoft. README artwork is illustrative branding, not an emulator screenshot.

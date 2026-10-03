@@ -1,0 +1,2 @@
+FROM xbox360ps5-hostdebug
+RUN apt-get update && apt-get install -y --no-install-recommends vulkan-validationlayers && rm -rf /var/lib/apt/lists/*

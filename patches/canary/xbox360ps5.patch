@@ -1,0 +1,1419 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 30febc4b7..5d9c1329b 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -292,9 +292,13 @@ else()
+   add_compile_options($<$<CONFIG:Release>:-O3>)
+   # Link-time optimization (use lld and llvm-ar/ranlib to avoid system
+   # linker/archiver LTO plugin version mismatch with clang's bitcode)
+-  add_compile_options($<$<CONFIG:Release>:-flto=thin>)
+-  add_link_options($<$<CONFIG:Release>:-flto=thin>)
+-  add_link_options($<$<CONFIG:Release>:-fuse-ld=lld>)
++  # Xbox360PS5: the PS5 title is linked by its own linker script from plain
++  # objects.
++  if(NOT PROSPERO)
++    add_compile_options($<$<CONFIG:Release>:-flto=thin>)
++    add_link_options($<$<CONFIG:Release>:-flto=thin>)
++    add_link_options($<$<CONFIG:Release>:-fuse-ld=lld>)
++  endif()
+   find_program(LLVM_AR NAMES llvm-ar)
+   find_program(LLVM_RANLIB NAMES llvm-ranlib)
+   if(LLVM_AR)
+diff --git a/cmake/XeniaHelpers.cmake b/cmake/XeniaHelpers.cmake
+index b712553ca..bd701622c 100644
+--- a/cmake/XeniaHelpers.cmake
++++ b/cmake/XeniaHelpers.cmake
+@@ -75,6 +75,14 @@ function(xe_platform_sources target base_path)
+       "${base_path}/*_gtk.h"
+       "${base_path}/*_gtk.cc"
+     )
++  elseif(PROSPERO)
++    # Xbox360PS5: the PlayStation 5 takes the POSIX sources. Its memory
++    # mapping and fault handler are the Xbox360PS5 platform's own (direct
++    # memory, 16 KiB pages, a different signal context).
++    file(${glob_mode} _plat_sources      "${base_path}/*_posix.h"
++      "${base_path}/*_posix.cc"
++    )
++    list(FILTER _plat_sources EXCLUDE REGEX "/(memory_posix|exception_handler_posix)\.cc$")
+   endif()
+ 
+   list(APPEND _sources ${_plat_sources})
+diff --git a/src/xenia/base/clock_posix.cc b/src/xenia/base/clock_posix.cc
+index cbe0fff85..31609edcd 100644
+--- a/src/xenia/base/clock_posix.cc
++++ b/src/xenia/base/clock_posix.cc
+@@ -7,6 +7,11 @@
+  ******************************************************************************
+  */
+ 
++// Xbox360PS5: the console's FreeBSD-derived kernel has no raw monotonic clock.
++#include <time.h>
++#if defined(__PROSPERO__) && !defined(CLOCK_MONOTONIC_RAW)
++#define CLOCK_MONOTONIC_RAW CLOCK_MONOTONIC
++#endif
+ #include <sys/time.h>
+ #ifdef __APPLE__
+ #include <mach/mach_time.h>
+@@ -29,9 +34,16 @@ uint64_t Clock::host_tick_frequency_platform() {
+   assert_zero(error);
+   assert_zero(res.tv_sec);  // Sub second resolution is required.
+ 
++#if defined(__PROSPERO__)
++  // Xbox360PS5: the tick count below is in nanoseconds whatever resolution the
++  // console reports for the clock (it is not 1 ns there, and a frequency
++  // derived from it made guest time run many times too fast).
++  return 1000000000ull;
++#else
+   // Convert nano seconds to hertz. Resolution is 1ns on most systems.
+   return 1000000000ull / res.tv_nsec;
+ #endif
++#endif
+ }
+ 
+ uint64_t Clock::host_tick_count_platform() {
+diff --git a/src/xenia/base/filesystem_posix.cc b/src/xenia/base/filesystem_posix.cc
+index 43013c391..97713afe8 100644
+--- a/src/xenia/base/filesystem_posix.cc
++++ b/src/xenia/base/filesystem_posix.cc
+@@ -59,6 +59,9 @@ std::filesystem::path GetExecutablePath() {
+     return std::string(path);
+   }
+   return std::string();
++#elif XE_PLATFORM_PS5
++  // Xbox360PS5: a title always runs from its own mount.
++  return std::string("/app0/eboot.bin");
+ #else
+   char buff[FILENAME_MAX] = "";
+   ssize_t len = readlink("/proc/self/exe", buff, sizeof(buff) - 1);
+@@ -75,6 +78,10 @@ std::filesystem::path GetExecutableFolder() {
+ }
+ 
+ std::filesystem::path GetUserFolder() {
++#if XE_PLATFORM_PS5
++  // Xbox360PS5: the title's writable storage.
++  return "/download0";
++#endif
+   // get preferred data home
+   char* home = std::getenv("XDG_DATA_HOME");
+   if (home) {
+diff --git a/src/xenia/base/logging.cc b/src/xenia/base/logging.cc
+index d2dc834d4..945d96e64 100644
+--- a/src/xenia/base/logging.cc
++++ b/src/xenia/base/logging.cc
+@@ -465,6 +465,12 @@ void InitializeLogging(const std::string_view app_name) {
+ #endif  // XE_PLATFORM_ANDROID
+ }
+ 
++void AddLogSink(std::unique_ptr<LogSink> sink) {
++  if (logger_) {
++    logger_->AddLogSink(std::move(sink));
++  }
++}
++
+ void ShutdownLogging() {
+   Logger* logger = logger_;
+   logger_ = nullptr;
+diff --git a/src/xenia/base/logging.h b/src/xenia/base/logging.h
+index 0541413f2..8b9aa1f9d 100644
+--- a/src/xenia/base/logging.h
++++ b/src/xenia/base/logging.h
+@@ -12,6 +12,7 @@
+ 
+ #include <cstdarg>
+ #include <cstdint>
++#include <memory>
+ #include <string>
+ 
+ #include "third_party/fmt/include/fmt/format.h"
+@@ -75,6 +76,8 @@ class DebugPrintLogSink final : public LogSink {
+ // Must be called on startup.
+ void InitializeLogging(const std::string_view app_name);
+ void ShutdownLogging();
++// Xbox360PS5: one more output for the log (after InitializeLogging).
++void AddLogSink(std::unique_ptr<LogSink> sink);
+ void FlushLog();
+ 
+ namespace logging {
+diff --git a/src/xenia/base/memory.h b/src/xenia/base/memory.h
+index 8ef40bbff..39dca8bfd 100644
+--- a/src/xenia/base/memory.h
++++ b/src/xenia/base/memory.h
+@@ -60,6 +60,15 @@ size_t page_size();
+ // This is likely 64KiB.
+ size_t allocation_granularity();
+ 
++// Xbox360PS5: whether the 4 KiB offset of the guest's 0xE0000000 physical
++// range is emulated in address translation (hosts that cannot map at 4 KiB
++// granularity: Windows, and the PS5 with its 16 KiB pages) rather than done
++// by the mapping itself.
++inline bool IsPhysicalOffsetEmulated() {
++  static const bool emulated = allocation_granularity() > 0x1000;
++  return emulated;
++}
++
+ enum class PageAccess {
+   kNoAccess = 0,
+   kReadOnly = 1 << 0,
+diff --git a/src/xenia/base/memory_posix.cc b/src/xenia/base/memory_posix.cc
+index 073de13fd..5cef724c3 100644
+--- a/src/xenia/base/memory_posix.cc
++++ b/src/xenia/base/memory_posix.cc
+@@ -80,8 +80,35 @@ void AndroidShutdown() {
+ }
+ #endif
+ 
+-size_t page_size() { return getpagesize(); }
+-size_t allocation_granularity() { return page_size(); }
++size_t page_size() {
++#if XE_PLATFORM_GNU_LINUX
++  // Xbox360PS5: exercise guest heaps and access watches with the console's
++  // coarser pages on a Linux host. This changes Xenia's bookkeeping only;
++  // Linux still supplies its actual native mappings. Production defaults
++  // to the real page size.
++  static const size_t size = [] {
++    const size_t native = getpagesize();
++    const char* text = std::getenv("XBOX360PS5_HOST_PAGE_SIZE");
++    const size_t requested = text ? std::strtoull(text, nullptr, 0) : native;
++    return requested == 16384 && native <= requested ? requested : native;
++  }();
++  return size;
++#else
++  return getpagesize();
++#endif
++}
++size_t allocation_granularity() {
++  // Xbox360PS5: XE_ALLOCATION_GRANULARITY=<bytes> makes a PC behave like a
++  // host whose mappings are coarser than 4 KiB (the PS5: 16 KiB; Windows:
++  // 64 KiB), which changes how the guest's 0xE0000000 range is mapped. For
++  // reproducing console-only behaviour on a PC.
++  static const size_t granularity = [] {
++    const char* text = std::getenv("XE_ALLOCATION_GRANULARITY");
++    const size_t value = text ? std::strtoull(text, nullptr, 0) : 0;
++    return value >= page_size() ? value : page_size();
++  }();
++  return granularity;
++}
+ 
+ uint32_t ToPosixProtectFlags(PageAccess access) {
+   switch (access) {
+diff --git a/src/xenia/base/mutex.cc b/src/xenia/base/mutex.cc
+index 09b671a41..210025fd8 100644
+--- a/src/xenia/base/mutex.cc
++++ b/src/xenia/base/mutex.cc
+@@ -10,7 +10,7 @@
+ #include "xenia/base/mutex.h"
+ #if XE_PLATFORM_WIN32 == 1
+ #include "xenia/base/platform_win.h"
+-#elif XE_PLATFORM_LINUX == 1
++#elif XE_PLATFORM_LINUX == 1 && !XE_PLATFORM_PS5
+ #include <linux/futex.h>
+ #include <pthread.h>
+ #include <sys/syscall.h>
+@@ -75,7 +75,7 @@ bool xe_fast_mutex::try_lock() {
+   }
+   return false;
+ }
+-#elif XE_PLATFORM_LINUX == 1 && XE_ENABLE_FAST_LINUX_MUTEX == 1
++#elif XE_PLATFORM_LINUX == 1 && !XE_PLATFORM_PS5 && XE_ENABLE_FAST_LINUX_MUTEX == 1
+ 
+ namespace {
+ 
+diff --git a/src/xenia/base/mutex.h b/src/xenia/base/mutex.h
+index aa15e34e0..39892ee40 100644
+--- a/src/xenia/base/mutex.h
++++ b/src/xenia/base/mutex.h
+@@ -83,7 +83,7 @@ class xe_unlikely_mutex {
+   bool try_lock() { return _tryget(); }
+ };
+ using xe_mutex = xe_fast_mutex;
+-#elif XE_PLATFORM_LINUX == 1 && XE_ENABLE_FAST_LINUX_MUTEX == 1
++#elif XE_PLATFORM_LINUX == 1 && !XE_PLATFORM_PS5 && XE_ENABLE_FAST_LINUX_MUTEX == 1
+ 
+ #define XE_LINUX_MUTEX_SPINCOUNT 128
+ 
+diff --git a/src/xenia/base/platform.h b/src/xenia/base/platform.h
+index 3aea30fb3..c22f752d3 100644
+--- a/src/xenia/base/platform.h
++++ b/src/xenia/base/platform.h
+@@ -37,6 +37,11 @@
+ #elif defined(__gnu_linux__)
+ #define XE_PLATFORM_GNU_LINUX 1
+ #define XE_PLATFORM_LINUX 1
++#elif defined(__PROSPERO__)
++// Xbox360PS5: the PlayStation 5 (FreeBSD-derived) takes the Linux code paths,
++// as Android does; what differs is under XE_PLATFORM_PS5.
++#define XE_PLATFORM_PS5 1
++#define XE_PLATFORM_LINUX 1
+ #else
+ #error Unsupported target OS.
+ #endif
+diff --git a/src/xenia/base/profiling.cc b/src/xenia/base/profiling.cc
+index d97ba81cc..cd1b4c11e 100644
+--- a/src/xenia/base/profiling.cc
++++ b/src/xenia/base/profiling.cc
+@@ -14,6 +14,7 @@
+ #include "third_party/fmt/include/fmt/printf.h"
+ 
+ // NOTE: microprofile must be setup first, before profiling.h is included.
++#if !XE_PLATFORM_PS5
+ #define MICROPROFILE_ENABLED 1
+ #define MICROPROFILEUI_ENABLED 1
+ #define MICROPROFILE_IMPL 1
+@@ -30,6 +31,7 @@
+ #define MICROPROFILE_DEBUG 0
+ #define MICROPROFILE_MAX_THREADS 256
+ #include "third_party/microprofile/microprofile.h"
++#endif  // !XE_PLATFORM_PS5
+ 
+ #include "xenia/base/assert.h"
+ #include "xenia/base/cvar.h"
+diff --git a/src/xenia/base/threading_posix.cc b/src/xenia/base/threading_posix.cc
+index 9982f67cf..108db98e4 100644
+--- a/src/xenia/base/threading_posix.cc
++++ b/src/xenia/base/threading_posix.cc
+@@ -34,14 +34,33 @@
+ #include "xenia/base/string_util.h"
+ #endif
+ 
+-#if XE_PLATFORM_LINUX
++#if XE_PLATFORM_PS5
++// Xbox360PS5: the FreeBSD spellings of the Linux thread extensions.
++#include <pthread_np.h>
++#include <sys/cpuset.h>
++typedef cpuset_t cpu_set_t;
++#define XE_GETTID() pthread_getthreadid_np()
++static inline int pthread_setname_np(pthread_t thread, const char* name) {
++  pthread_set_name_np(thread, name);
++  return 0;
++}
++static inline int pthread_getname_np(pthread_t thread, char* name,
++                                     size_t size) {
++  pthread_get_name_np(thread, name, size);
++  return 0;
++}
++#else
++#define XE_GETTID() syscall(SYS_gettid)
++#endif
++
++#if XE_PLATFORM_LINUX && !XE_PLATFORM_PS5
+ // SIGEV_THREAD_ID in timer_create(...) is a Linux extension
+ #define XE_HAS_SIGEV_THREAD_ID 1
+ #ifdef __GLIBC__
+ #define sigev_notify_thread_id _sigev_un._tid
+ #endif
+ #if __GLIBC__ == 2 && __GLIBC_MINOR__ < 30
+-#define gettid() syscall(SYS_gettid)
++#define gettid() XE_GETTID()
+ #endif
+ #else
+ #define XE_HAS_SIGEV_THREAD_ID 0
+@@ -140,7 +159,7 @@ void EnableAffinityConfiguration() {}
+ // uint64_t ticks() { return mach_absolute_time(); }
+ 
+ uint32_t current_thread_system_id() {
+-  return static_cast<uint32_t>(syscall(SYS_gettid));
++  return static_cast<uint32_t>(XE_GETTID());
+ }
+ 
+ void MaybeYield() {
+@@ -271,12 +290,22 @@ class PosixConditionBase {
+     if (predicate()) {
+       executed = true;
+     } else {
++      // Xbox360PS5: a blocked wait holds a ticket, so that a signal set while
++      // it waits is kept for it (see PosixCondition<Event>).
++      wait_ticket_ = ++ticket_counter_;
++      begin_wait();
+       if (timeout == std::chrono::milliseconds::max()) {
+         cond_.wait(lock, predicate);
+         executed = true;  // Did not time out;
+       } else {
+         executed = cond_.wait_for(lock, timeout, predicate);
+       }
++      if (executed) {
++        post_execution();
++      }
++      end_wait();
++      wait_ticket_ = 0;
++      return executed ? WaitResult::kSuccess : WaitResult::kTimeout;
+     }
+     if (executed) {
+       post_execution();
+@@ -304,7 +333,28 @@ class PosixConditionBase {
+                         ? std::chrono::steady_clock::time_point::max()
+                         : start_time + timeout;
+ 
++    // Xbox360PS5: once the first poll fails, this thread counts as a waiter of
++    // every handle (with a ticket, as in Wait), and sleeps until any object
++    // is signaled rather than for a fixed millisecond.
++    bool registered = false;
++    const auto unregister = [&handles, &registered](bool locked) {
++      if (!registered) {
++        return;
++      }
++      for (auto handle : handles) {
++        if (locked) {
++          handle->end_wait();
++        } else {
++          std::lock_guard<std::mutex> handle_lock(handle->mutex_);
++          handle->end_wait();
++        }
++      }
++      registered = false;
++      wait_ticket_ = 0;
++    };
++
+     while (true) {
++      const uint64_t generation = any_generation_.load();
+       // Check all handles to see if any/all are signaled
+       // Use try_lock to avoid deadlocks from lock ordering issues
+       size_t first_signaled = std::numeric_limits<size_t>::max();
+@@ -376,23 +426,37 @@ class PosixConditionBase {
+         } else {
+           handles[first_signaled]->post_execution();
+         }
++        unregister(true);
+         return std::make_pair(WaitResult::kSuccess, first_signaled);
+       }
+ 
+-      // Release locks before sleeping
+-      locks.clear();
+-
+       // Check timeout
+       auto now = std::chrono::steady_clock::now();
+       if (now >= end_time) {
++        unregister(true);
+         return std::make_pair<WaitResult, size_t>(WaitResult::kTimeout, 0);
+       }
+ 
+-      // Sleep for a short time before polling again
++      if (!registered) {
++        registered = true;
++        wait_ticket_ = ++ticket_counter_;
++        for (auto handle : handles) {
++          handle->begin_wait();
++        }
++      }
++
++      // Release locks before sleeping
++      locks.clear();
++
++      // Sleep until something is signaled (with a short bound, in case a
++      // state change does not go through NotifyAny).
+       auto remaining =
+           std::chrono::duration_cast<std::chrono::milliseconds>(end_time - now);
+-      auto sleep_time = std::min(remaining, std::chrono::milliseconds(1));
+-      std::this_thread::sleep_for(sleep_time);
++      auto sleep_time = std::min(remaining, std::chrono::milliseconds(4));
++      std::unique_lock<std::mutex> any_lock(any_mutex_);
++      any_cond_.wait_for(any_lock, sleep_time, [generation] {
++        return any_generation_.load() != generation;
++      });
+     }
+   }
+ 
+@@ -403,6 +467,28 @@ class PosixConditionBase {
+  protected:
+   [[nodiscard]] inline virtual bool signaled() const = 0;
+   inline virtual void post_execution() = 0;
++  // Xbox360PS5: around the blocked part of a wait, with mutex_ held.
++  virtual void begin_wait() {}
++  virtual void end_wait() {}
++ public:
++  // Xbox360PS5: wakes the waits on several objects, after a state change.
++  static void NotifyAny() {
++    {
++      std::lock_guard<std::mutex> any_lock(any_mutex_);
++      ++any_generation_;
++    }
++    any_cond_.notify_all();
++  }
++
++ protected:
++  // The ticket of the wait this thread is blocked in, or zero. Tickets grow
++  // with time: one taken before a signal is not greater than the counter read
++  // when the signal is set.
++  static inline thread_local uint64_t wait_ticket_ = 0;
++  static inline std::atomic<uint64_t> ticket_counter_{0};
++  static inline std::atomic<uint64_t> any_generation_{0};
++  static inline std::mutex any_mutex_;
++  static inline std::condition_variable any_cond_;
+   std::condition_variable cond_;
+   std::mutex mutex_;
+ };
+@@ -422,24 +508,46 @@ class PosixCondition<Event> : public PosixConditionBase {
+   ~PosixCondition() override = default;
+ 
+   bool Signal() override {
+-    auto lock = std::unique_lock(mutex_);
+-    signal_ = true;
+-    cond_.notify_all();
++    {
++      auto lock = std::unique_lock(mutex_);
++      signal_ = true;
++      // Xbox360PS5: with threads already waiting, the signal of an auto-reset
++      // event is theirs (see PosixConditionBase::wait_ticket_).
++      reserved_ = !manual_reset_ && waiters_ > 0;
++      reserved_ticket_ = ticket_counter_.load();
++      cond_.notify_all();
++    }
++    NotifyAny();
+     return true;
+   }
+ 
+   void Reset() {
+     auto lock = std::unique_lock(mutex_);
+     signal_ = false;
++    reserved_ = false;
+   }
+ 
+  private:
+-  [[nodiscard]] bool signaled() const override { return signal_; }
++  [[nodiscard]] bool signaled() const override {
++    return signal_ && (!reserved_ || (wait_ticket_ != 0 &&
++                                      wait_ticket_ <= reserved_ticket_));
++  }
+   void post_execution() override {
+     if (!manual_reset_) {
+       signal_ = false;
++      reserved_ = false;
+     }
+   }
++  void begin_wait() override { ++waiters_; }
++  void end_wait() override {
++    // Nobody left of those the signal was kept for: anyone may take it.
++    if (--waiters_ == 0) {
++      reserved_ = false;
++    }
++  }
++  uint32_t waiters_ = 0;
++  bool reserved_ = false;
++  uint64_t reserved_ticket_ = 0;
+   bool signal_;
+   const bool manual_reset_;
+ };
+@@ -463,6 +571,7 @@ class PosixCondition<Semaphore> final : public PosixConditionBase {
+     }
+     count_ += release_count;
+     cond_.notify_all();
++    PosixConditionBase::NotifyAny();  // Xbox360PS5: wake waits on several objects.
+     return true;
+   }
+ 
+@@ -471,6 +580,7 @@ class PosixCondition<Semaphore> final : public PosixConditionBase {
+   void post_execution() override {
+     count_--;
+     cond_.notify_all();
++    PosixConditionBase::NotifyAny();  // Xbox360PS5: wake waits on several objects.
+   }
+   uint32_t count_;
+   const uint32_t maximum_count_;
+@@ -495,6 +605,7 @@ class PosixCondition<Mutant> final : public PosixConditionBase {
+       // Free to be acquired by another thread
+       if (count_ == 0) {
+         cond_.notify_all();
++        PosixConditionBase::NotifyAny();  // Xbox360PS5: wake waits on several objects.
+       }
+       return true;
+     }
+@@ -529,6 +640,7 @@ class PosixCondition<Timer> final : public PosixConditionBase {
+     std::lock_guard lock(mutex_);
+     signal_ = true;
+     cond_.notify_all();
++    PosixConditionBase::NotifyAny();  // Xbox360PS5: wake waits on several objects.
+     return true;
+   }
+ 
+@@ -629,7 +741,14 @@ class PosixCondition<Thread> final : public PosixConditionBase {
+     if (pthread_attr_init(&attr) != 0) {
+       return false;
+     }
++#if XE_PLATFORM_PS5
++    // Xbox360PS5: the console gives every thread a 2 MiB stack from direct
++    // memory; a requested size would come from the small flexible-memory
++    // budget, which threads with 16 MiB stacks exhaust.
++    if (false) {
++#else
+     if (pthread_attr_setstacksize(&attr, params.stack_size) != 0) {
++#endif
+       pthread_attr_destroy(&attr);
+       return false;
+     }
+@@ -657,7 +776,7 @@ class PosixCondition<Thread> final : public PosixConditionBase {
+   /// Thread::GetCurrentThread() on the main thread
+   explicit PosixCondition(pthread_t thread)
+       : thread_(thread),
+-        tid_(static_cast<pid_t>(syscall(SYS_gettid))),
++        tid_(static_cast<pid_t>(XE_GETTID())),
+         signaled_(false),
+         exit_code_(0),
+         state_(State::kRunning),
+@@ -742,7 +861,11 @@ class PosixCondition<Thread> final : public PosixConditionBase {
+   }
+ #endif
+ 
++#if XE_PLATFORM_PS5
++  uint32_t system_id() const { return static_cast<uint32_t>(tid_); }
++#else
+   uint32_t system_id() const { return static_cast<uint32_t>(thread_); }
++#endif
+ 
+   uint64_t affinity_mask() const {
+     WaitStarted();
+@@ -770,6 +893,14 @@ class PosixCondition<Thread> final : public PosixConditionBase {
+   }
+ 
+   void set_affinity_mask(uint64_t mask) const {
++#if XE_PLATFORM_PS5
++    // Xbox360PS5: guest threads are not pinned to the console's cores. Its
++    // scheduler does not share a core between a thread that spins and one of
++    // lower priority pinned beside it: a game's main thread spun for ever
++    // waiting for a thread that never ran (Sonic the Hedgehog's save thread).
++    (void)mask;
++    return;
++#endif
+     WaitStarted();
+     cpu_set_t cpu_set;
+     CPU_ZERO(&cpu_set);
+@@ -850,6 +981,10 @@ class PosixCondition<Thread> final : public PosixConditionBase {
+ #if XE_PLATFORM_ANDROID
+     sigqueue(pthread_gettid_np(thread_),
+              GetSystemSignal(SignalType::kThreadUserCallback), value);
++#elif XE_PLATFORM_PS5
++    // No pthread_sigqueue: the handler takes the thread from its own
++    // thread-local pointer instead of the signal's value.
++    pthread_kill(thread_, GetSystemSignal(SignalType::kThreadUserCallback));
+ #else
+     pthread_sigqueue(thread_, GetSystemSignal(SignalType::kThreadUserCallback),
+                      value);
+@@ -954,6 +1089,7 @@ class PosixCondition<Thread> final : public PosixConditionBase {
+       exit_code_ = exit_code;
+       signaled_ = true;
+       cond_.notify_all();
++      PosixConditionBase::NotifyAny();  // Xbox360PS5: wake waits on several objects.
+     }
+     if (is_current_thread) {
+       pthread_exit(reinterpret_cast<void*>(exit_code));
+@@ -1346,7 +1482,7 @@ void* PosixCondition<Thread>::ThreadStartRoutine(void* parameter) {
+   delete start_data;
+ 
+   current_thread_ = thread;
+-  thread->handle_.tid_ = static_cast<pid_t>(syscall(SYS_gettid));
++  thread->handle_.tid_ = static_cast<pid_t>(XE_GETTID());
+   {
+     std::unique_lock lock(thread->handle_.state_mutex_);
+     thread->handle_.state_ =
+@@ -1373,6 +1509,7 @@ void* PosixCondition<Thread>::ThreadStartRoutine(void* parameter) {
+     thread->handle_.exit_code_ = 0;
+     thread->handle_.signaled_ = true;
+     thread->handle_.cond_.notify_all();
++    PosixConditionBase::NotifyAny();  // Xbox360PS5: wake waits on several objects.
+   }
+ 
+   current_thread_ = nullptr;
+@@ -1443,9 +1580,16 @@ static void signal_handler(int signal, siginfo_t* info, void* context) {
+       current_thread_->WaitSuspended();
+     } break;
+     case SignalType::kThreadUserCallback: {
++#if XE_PLATFORM_PS5
++      if (!current_thread_) {
++        return;
++      }
++      auto p_thread = &current_thread_->condition();
++#else
+       assert_not_null(info->si_value.sival_ptr);
+       auto p_thread =
+           static_cast<PosixCondition<Thread>*>(info->si_value.sival_ptr);
++#endif
+       if (alertable_state_) {
+         p_thread->CallUserCallback();
+       }
+diff --git a/src/xenia/cpu/backend/code_cache_base.h b/src/xenia/cpu/backend/code_cache_base.h
+index 9477cc7a8..d3186ac86 100644
+--- a/src/xenia/cpu/backend/code_cache_base.h
++++ b/src/xenia/cpu/backend/code_cache_base.h
+@@ -268,11 +268,26 @@ class CodeCacheBase : public CodeCache {
+     }
+   }
+ 
++ public:
++  // Xbox360PS5: the console loads the title's libc at 0x80000000, where the
++  // indirection table (indexed by guest address) would be. There the table
++  // sits this far from the guest address, and the generated code below it,
++  // near the title's own code.
++#if XE_PLATFORM_PS5
++  static constexpr intptr_t kIndirectionTableHostDelta = -0x30000000;
++#else
++  static constexpr intptr_t kIndirectionTableHostDelta = 0;
++#endif
++
+  protected:
+   static constexpr size_t kIndirectionTableSize = 0x1FFFFFFF;
+   static constexpr uintptr_t kIndirectionTableBase = 0x80000000;
+   static constexpr size_t kGeneratedCodeSize = 0x0FFFFFFF;
++#if XE_PLATFORM_PS5
++  static constexpr uintptr_t kGeneratedCodeExecuteBase = 0x40000000;
++#else
+   static constexpr uintptr_t kGeneratedCodeExecuteBase = 0xA0000000;
++#endif
+   static const uintptr_t kGeneratedCodeWriteBase =
+       kGeneratedCodeExecuteBase + kGeneratedCodeSize + 1;
+   static constexpr size_t kMaximumFunctionCount = 1000000;
+@@ -287,8 +302,9 @@ class CodeCacheBase : public CodeCache {
+ 
+   bool Initialize() {
+     indirection_table_base_ = reinterpret_cast<uint8_t*>(xe::memory::AllocFixed(
+-        reinterpret_cast<void*>(kIndirectionTableBase), kIndirectionTableSize,
+-        xe::memory::AllocationType::kReserve,
++        reinterpret_cast<void*>(kIndirectionTableBase +
++                                kIndirectionTableHostDelta),
++        kIndirectionTableSize, xe::memory::AllocationType::kReserve,
+         xe::memory::PageAccess::kReadWrite));
+     if (!indirection_table_base_) {
+       XELOGE("Unable to allocate code cache indirection table");
+diff --git a/src/xenia/cpu/backend/x64/x64_emitter.cc b/src/xenia/cpu/backend/x64/x64_emitter.cc
+index 694c92b4e..d3d49a90a 100644
+--- a/src/xenia/cpu/backend/x64/x64_emitter.cc
++++ b/src/xenia/cpu/backend/x64/x64_emitter.cc
+@@ -711,7 +711,11 @@ void X64Emitter::Call(const hir::Instr* instr, GuestFunction* function) {
+     // The target dword will either contain the address of the generated code
+     // or a thunk to ResolveAddress.
+     mov(ebx, function->address());
++#if XE_PLATFORM_PS5
++    mov(eax, dword[rbx + X64CodeCache::kIndirectionTableHostDelta]);
++#else
+     mov(eax, dword[ebx]);
++#endif
+   } else {
+     // Old-style resolve.
+     // Not too important because indirection table is almost always available.
+@@ -752,10 +756,19 @@ void X64Emitter::CallIndirect(const hir::Instr* instr,
+   // The target dword will either contain the address of the generated code
+   // or a thunk to ResolveAddress.
+   if (code_cache_->has_indirection_table()) {
++#if XE_PLATFORM_PS5
++    // Also clears the upper half, used by the 64-bit address below.
++    mov(ebx, reg.cvt32());
++#else
+     if (reg.cvt32() != ebx) {
+       mov(ebx, reg.cvt32());
+     }
++#endif
++#if XE_PLATFORM_PS5
++    mov(eax, dword[rbx + X64CodeCache::kIndirectionTableHostDelta]);
++#else
+     mov(eax, dword[ebx]);
++#endif
+   } else {
+     // Old-style resolve.
+     // Not too important because indirection table is almost always available.
+diff --git a/src/xenia/cpu/ppc/ppc_context.h b/src/xenia/cpu/ppc/ppc_context.h
+index 0c46e8c1e..c9498e57c 100644
+--- a/src/xenia/cpu/ppc/ppc_context.h
++++ b/src/xenia/cpu/ppc/ppc_context.h
+@@ -14,6 +14,7 @@
+ #include <mutex>
+ #include <string>
+ 
++#include "xenia/base/memory.h"
+ #include "xenia/base/mutex.h"
+ #include "xenia/base/vec128.h"
+ #include "xenia/guest_pointers.h"
+@@ -439,6 +440,14 @@ typedef struct alignas(64) PPCContext_s {
+         static_cast<uint32_t>(reinterpret_cast<uintptr_t>(this))) {
+       host_address += 0x1000;
+     }
++#else
++    // Xbox360PS5: the offset is needed wherever the host cannot map at 4 KiB
++    // granularity, not only on Windows. Without it every kernel call that
++    // touches the game's 0xE0000000 memory on the PS5 was 4 KiB off (a game
++    // never got its XMA context back, for one).
++    if (guest_address >= 0xE0000000u && xe::memory::IsPhysicalOffsetEmulated()) {
++      host_address += 0x1000;
++    }
+ #endif
+     return reinterpret_cast<T>(host_address);
+   }
+@@ -467,6 +476,12 @@ typedef struct alignas(64) PPCContext_s {
+     if (guest_tmp >= static_cast<uint32_t>(reinterpret_cast<uintptr_t>(this))) {
+       guest_tmp -= 0x1000;
+     }
++#else
++    // Xbox360PS5: see TranslateVirtual. Host offsets from 0xE0001000 up are
++    // the guest's 0xE0000000 range.
++    if (guest_tmp >= 0xE0001000u && xe::memory::IsPhysicalOffsetEmulated()) {
++      guest_tmp -= 0x1000;
++    }
+ #endif
+     return guest_tmp;
+   }
+diff --git a/src/xenia/cpu/thread.cc b/src/xenia/cpu/thread.cc
+index 8a3d4b8d3..1c9613cb6 100644
+--- a/src/xenia/cpu/thread.cc
++++ b/src/xenia/cpu/thread.cc
+@@ -13,7 +13,7 @@
+ namespace xe {
+ namespace cpu {
+ 
+-thread_local Thread* Thread::current_thread_ = nullptr;
++constinit thread_local Thread* Thread::current_thread_ = nullptr;
+ 
+ Thread::Thread() {}
+ Thread::~Thread() {}
+diff --git a/src/xenia/cpu/thread.h b/src/xenia/cpu/thread.h
+index 4878e9725..d93d10ec4 100644
+--- a/src/xenia/cpu/thread.h
++++ b/src/xenia/cpu/thread.h
+@@ -40,7 +40,8 @@ class Thread {
+   const std::string& thread_name() const { return thread_name_; }
+ 
+  protected:
+-  thread_local static Thread* current_thread_;
++  // Xbox360PS5: constinit, so that no (weak) TLS-init function is referenced.
++  constinit thread_local static Thread* current_thread_;
+ 
+   ThreadState* thread_state_ = nullptr;
+   std::unique_ptr<xe::threading::Thread> thread_ = nullptr;
+diff --git a/src/xenia/emulator.cc b/src/xenia/emulator.cc
+index eadd15ccf..fb3b333be 100644
+--- a/src/xenia/emulator.cc
++++ b/src/xenia/emulator.cc
+@@ -11,6 +11,18 @@
+ 
+ #include "xenia/emulator.h"
+ 
++#include "xenia/base/platform.h"
++#ifndef XE_PLATFORM_PS5
++#define XE_PLATFORM_PS5 0
++#endif
++// Xbox360PS5: tabulate measures text through a named C++ locale, which the
++// console's library does not have: the launch tables are left out of the log there.
++#if XE_PLATFORM_PS5
++#define XE_TABLE_TEXT(table) std::string("(not printed on the console)")
++#else
++#define XE_TABLE_TEXT(table) (table).str()
++#endif
++
+ #include "config.h"
+ #include "third_party/fmt/include/fmt/format.h"
+ #include "third_party/tabulate/single_include/tabulate/tabulate.hpp"
+@@ -1680,8 +1692,10 @@ X_STATUS Emulator::CompleteLaunch(const std::filesystem::path& path,
+       XELOGI("Title name: {}", title_name_);
+ 
+       // Show achievments data
++      // Xbox360PS5: no multi-byte measuring on the console - tabulate would ask
++      // the C++ library for a named locale, which the console's does not have.
+       tabulate::Table table;
+-      table.format().multi_byte_characters(true);
++      table.format().multi_byte_characters(!XE_PLATFORM_PS5);
+       table.add_row({"ID", "Title", "Description", "Type", "Gamerscore"});
+ 
+       const std::vector<kernel::util::GameInfoDatabase::Achievement>
+@@ -1696,7 +1710,7 @@ X_STATUS Emulator::CompleteLaunch(const std::filesystem::path& path,
+                        fmt::format("{}", entry.gamerscore)});
+       }
+       XELOGI("\n-------------------- ACHIEVEMENTS --------------------\n{}",
+-             table.str());
++             XE_TABLE_TEXT(table));
+ 
+       const std::vector<kernel::util::GameInfoDatabase::Property>
+           properties_list = game_info_database_->GetProperties();
+@@ -1706,7 +1720,7 @@ X_STATUS Emulator::CompleteLaunch(const std::filesystem::path& path,
+           properties_list | std::views::take(150);
+ 
+       table = tabulate::Table();
+-      table.format().multi_byte_characters(true);
++      table.format().multi_byte_characters(!XE_PLATFORM_PS5);
+       table.add_row({"ID", "Name", "Matchmaking", "Data Size"});
+ 
+       for (const kernel::util::GameInfoDatabase::Property& entry :
+@@ -1728,13 +1742,13 @@ X_STATUS Emulator::CompleteLaunch(const std::filesystem::path& path,
+       }
+ 
+       XELOGI("\n-------------------- PROPERTIES --------------------{}\n{}",
+-             properties_totals.c_str(), table.str());
++             properties_totals.c_str(), XE_TABLE_TEXT(table));
+ 
+       const std::vector<kernel::util::GameInfoDatabase::Context> contexts_list =
+           game_info_database_->GetContexts();
+ 
+       table = tabulate::Table();
+-      table.format().multi_byte_characters(true);
++      table.format().multi_byte_characters(!XE_PLATFORM_PS5);
+       table.add_row(
+           {"ID", "Name", "Matchmaking", "Default Value", "Max Value"});
+ 
+@@ -1749,7 +1763,7 @@ X_STATUS Emulator::CompleteLaunch(const std::filesystem::path& path,
+                        fmt::format("{}", entry.max_value)});
+       }
+       XELOGI("\n-------------------- CONTEXTS --------------------\n{}",
+-             table.str());
++             XE_TABLE_TEXT(table));
+ 
+       const std::vector<kernel::util::GameInfoDatabase::StatsView> stats_views =
+           game_info_database_->GetStatsViews();
+@@ -1758,7 +1772,7 @@ X_STATUS Emulator::CompleteLaunch(const std::filesystem::path& path,
+       const auto stats_views_limit = stats_views | std::views::take(100);
+ 
+       table = tabulate::Table();
+-      table.format().multi_byte_characters(true);
++      table.format().multi_byte_characters(!XE_PLATFORM_PS5);
+       table.add_row({"ID", "View Type", "Name", "Skilled", "Arbitrated",
+                      "Hidden", "Team View", "Online Only"});
+ 
+@@ -1785,13 +1799,13 @@ X_STATUS Emulator::CompleteLaunch(const std::filesystem::path& path,
+             "\nViews: {}/{}", stats_views_limit.size(), stats_views.size());
+       }
+       XELOGI("\n-------------------- STATS VIEWS --------------------{}\n{}",
+-             stats_view_totals.c_str(), table.str());
++             stats_view_totals.c_str(), XE_TABLE_TEXT(table));
+ 
+       const std::vector<kernel::util::GameInfoDatabase::PresenceMode>
+           presence_modes = game_info_database_->GetPresenceModes();
+ 
+       table = tabulate::Table();
+-      table.format().multi_byte_characters(true);
++      table.format().multi_byte_characters(!XE_PLATFORM_PS5);
+       table.add_row({"Context Value", "Contexts Count", "Properties Count"});
+ 
+       for (const kernel::util::GameInfoDatabase::PresenceMode& entry :
+@@ -1802,7 +1816,7 @@ X_STATUS Emulator::CompleteLaunch(const std::filesystem::path& path,
+              fmt::format("{}", entry.property_bag.properties.size())});
+       }
+       XELOGI("\n-------------------- PRESENCE MODES --------------------\n{}",
+-             table.str());
++             XE_TABLE_TEXT(table));
+ 
+       auto icon_block = game_info_database_->GetIcon();
+       if (!icon_block.empty()) {
+diff --git a/src/xenia/gpu/command_processor.h b/src/xenia/gpu/command_processor.h
+index dfe42737f..9f1f5a8d7 100644
+--- a/src/xenia/gpu/command_processor.h
++++ b/src/xenia/gpu/command_processor.h
+@@ -126,6 +126,8 @@ class CommandProcessor {
+                    kernel::KernelState* kernel_state);
+   virtual ~CommandProcessor();
+   uint32_t counter() const { return counter_; }
++  // Xbox360PS5: frames the guest presented since the start.
++  uint64_t swap_count() const { return swap_count_.load(); }
+   void increment_counter() { counter_++; }
+ 
+   Shader* active_vertex_shader() const { return active_vertex_shader_; }
+@@ -600,6 +602,7 @@ class CommandProcessor {
+   std::vector<uint32_t> me_bin_;
+ 
+   uint32_t counter_ = 0;
++  std::atomic<uint64_t> swap_count_{0};
+ 
+   uint32_t primary_buffer_ptr_ = 0;
+   uint32_t primary_buffer_size_ = 0;
+diff --git a/src/xenia/gpu/pm4_command_processor_implement.h b/src/xenia/gpu/pm4_command_processor_implement.h
+index bd3b995dd..32325d05a 100644
+--- a/src/xenia/gpu/pm4_command_processor_implement.h
++++ b/src/xenia/gpu/pm4_command_processor_implement.h
+@@ -660,6 +660,7 @@ bool COMMAND_PROCESSOR::ExecutePacketType3_XE_SWAP(uint32_t packet,
+   uint32_t frontbuffer_height = reader_.ReadAndSwap<uint32_t>();
+   reader_.AdvanceRead((count - 4) * sizeof(uint32_t));
+ 
++  ++swap_count_;  // Xbox360PS5: frames presented, for the frame rate.
+   COMMAND_PROCESSOR::IssueSwap(frontbuffer_ptr, frontbuffer_width,
+                                frontbuffer_height);
+ 
+diff --git a/src/xenia/gpu/shared_memory.cc b/src/xenia/gpu/shared_memory.cc
+index 3afb39120..13bd7373a 100644
+--- a/src/xenia/gpu/shared_memory.cc
++++ b/src/xenia/gpu/shared_memory.cc
+@@ -9,6 +9,8 @@
+ 
+ #include "xenia/gpu/shared_memory.h"
+ 
++#include <cstdlib>
++
+ #include "xenia/base/assert.h"
+ #include "xenia/base/bit_range.h"
+ #include "xenia/base/logging.h"
+@@ -18,7 +20,25 @@ namespace xe {
+ namespace gpu {
+ 
+ SharedMemory::SharedMemory(Memory& memory) : memory_(memory) {
+-  page_size_log2_ = xe::log2_ceil(uint32_t(xe::memory::page_size()));
++  // Xbox360PS5: the guest physical heap is allocated in 4 KiB pages, even
++  // when the host protects memory in 16 KiB pages. Rounding a requested
++  // texture out to a host page includes unallocated neighbours, which the
++  // Vulkan uploader correctly rejects. Keep upload/validity units at 4 KiB;
++  // Memory still rounds access watches to host pages and invalidates every
++  // affected upload unit when a host page changes.
++  page_size_log2_ = xe::log2_ceil(
++      std::min(uint32_t(xe::memory::page_size()), uint32_t(0x1000)));
++#if XE_PLATFORM_GNU_LINUX
++  // Xbox360PS5: reproduce the console's GPU upload granularity on a PC,
++  // without changing the host allocator or its memory protection granularity.
++  if (const char* value = std::getenv("XBOX360PS5_GPU_PAGE_SIZE")) {
++    const unsigned long size = std::strtoul(value, nullptr, 0);
++    if (size == 4096 || size == 16384) {
++      page_size_log2_ = xe::log2_ceil(uint32_t(size));
++    }
++  }
++#endif
++  XELOGI("Shared memory upload granularity: {} bytes", 1u << page_size_log2_);
+ }
+ 
+ SharedMemory::~SharedMemory() { ShutdownCommon(); }
+diff --git a/src/xenia/kernel/xam/xam_info.cc b/src/xenia/kernel/xam/xam_info.cc
+index 9b908fad5..fa4bf9d33 100644
+--- a/src/xenia/kernel/xam/xam_info.cc
++++ b/src/xenia/kernel/xam/xam_info.cc
+@@ -483,6 +483,11 @@ void XamLoaderLaunchTitle_entry(lpstring_t raw_name_ptr, dword_t flags) {
+     assert_always("Game requested exit to dashboard via XamLoaderLaunchTitle");
+   }
+ 
++  // Xbox360PS5: see XamModule::restart_hook.
++  if (XamModule::restart_hook) {
++    XamModule::restart_hook();
++  }
++
+   auto display_window = kernel_state()->emulator()->display_window();
+   auto imgui_drawer = kernel_state()->emulator()->imgui_drawer();
+ 
+@@ -492,7 +497,7 @@ void XamLoaderLaunchTitle_entry(lpstring_t raw_name_ptr, dword_t flags) {
+           auto dialog = xe::ui::ImGuiDialog::ShowMessageBox(
+               imgui_drawer, title.c_str(), message.c_str());
+ 
+-          std::jthread([dialog]() {
++          std::thread([dialog]() {
+             while (!dialog->IsClosing()) {
+               std::this_thread::yield();
+             }
+@@ -515,6 +520,11 @@ void XamLoaderTerminateTitle_entry() {
+   std::string message = "Game requested exit to dashboard.";
+   assert_always("Game requested exit to dashboard via XamLoaderTerminateTitle");
+ 
++  // Xbox360PS5: see XamModule::restart_hook.
++  if (XamModule::restart_hook) {
++    XamModule::restart_hook();
++  }
++
+   auto display_window = kernel_state()->emulator()->display_window();
+   auto imgui_drawer = kernel_state()->emulator()->imgui_drawer();
+ 
+@@ -524,7 +534,7 @@ void XamLoaderTerminateTitle_entry() {
+           auto dialog = xe::ui::ImGuiDialog::ShowMessageBox(
+               imgui_drawer, title.c_str(), message.c_str());
+ 
+-          std::jthread([dialog]() {
++          std::thread([dialog]() {
+             while (!dialog->IsClosing()) {
+               std::this_thread::yield();
+             }
+diff --git a/src/xenia/kernel/xam/xam_module.cc b/src/xenia/kernel/xam/xam_module.cc
+index 9bc309756..58448d43a 100644
+--- a/src/xenia/kernel/xam/xam_module.cc
++++ b/src/xenia/kernel/xam/xam_module.cc
+@@ -120,7 +120,24 @@ void XamModule::SaveLoaderData() {
+ 
+   if (host_path.extension() == ".xex") {
+     host_path.remove_filename();
+-    host_path = host_path / launch_path;
++    // Xbox360PS5: the launch path is a guest path (backslashes, any case);
++    // on a case-sensitive host file system each part is looked up by name
++    // without regard to case.
++    for (const auto& part : xe::utf8::split_path(launch_path)) {
++      std::filesystem::path next = host_path / std::string(part);
++      std::error_code error;
++      if (!std::filesystem::exists(next, error)) {
++        for (std::filesystem::directory_iterator it(host_path, error), end;
++             !error && it != end; it.increment(error)) {
++          if (xe::utf8::equal_case(xe::path_to_utf8(it->path().filename()),
++                                   part)) {
++            next = it->path();
++            break;
++          }
++        }
++      }
++      host_path = next;
++    }
+     launch_path = "";
+   }
+ 
+diff --git a/src/xenia/kernel/xam/xam_module.h b/src/xenia/kernel/xam/xam_module.h
+index ec3bc8e87..51dc0a9ef 100644
+--- a/src/xenia/kernel/xam/xam_module.h
++++ b/src/xenia/kernel/xam/xam_module.h
+@@ -10,6 +10,8 @@
+ #ifndef XENIA_KERNEL_XAM_XAM_MODULE_H_
+ #define XENIA_KERNEL_XAM_XAM_MODULE_H_
+ 
++#include "xenia/base/platform.h"
++#include <functional>
+ #include <string>
+ 
+ #include "xenia/cpu/export_resolver.h"
+@@ -20,8 +22,15 @@ namespace xe {
+ namespace kernel {
+ namespace xam {
+ 
++// Xbox360PS5: the title's working folder is not writable on the PS5, so the
++// request to start another executable was lost with the restart.
++#if XE_PLATFORM_PS5
++static constexpr std::string_view kXamModuleLoaderDataFileName =
++    "/download0/xbox360ps5/launch_data.bin";
++#else
+ static constexpr std::string_view kXamModuleLoaderDataFileName =
+     "launch_data.bin";
++#endif
+ 
+ class XamModule : public KernelModule {
+  public:
+@@ -42,6 +51,11 @@ class XamModule : public KernelModule {
+   void LoadLoaderData();
+   void SaveLoaderData();
+ 
++  // Xbox360PS5: called when a title asks for another one (after its launch
++  // data is saved) or for the dashboard. A host that can restart itself does
++  // it here, instead of asking the user to restart the emulator.
++  static inline std::function<void()> restart_hook;
++
+   void SetLaunchCallback(uint32_t callback) { callback_ = callback; }
+ 
+   const LoaderData& loader_data() const { return loader_data_; }
+diff --git a/src/xenia/kernel/xam/xam_ui.cc b/src/xenia/kernel/xam/xam_ui.cc
+index 11bc26872..fe81f54f7 100644
+--- a/src/xenia/kernel/xam/xam_ui.cc
++++ b/src/xenia/kernel/xam/xam_ui.cc
+@@ -82,7 +82,7 @@ X_RESULT xeXamDispatchDialog(T* dialog,
+     return result;
+   };
+   auto post = []() {
+-    std::jthread t([] {
++    std::thread t([] {
+       xe::threading::Sleep(kUIDelayMillis);
+       kernel_state()->BroadcastNotification(kXNotificationSystemUI, false);
+     });
+@@ -149,7 +149,7 @@ X_RESULT xeXamDispatchHeadless(std::function<X_RESULT()> run_callback,
+     xe::threading::Sleep(std::chrono::milliseconds(25));
+   };
+   auto post = []() {
+-    std::jthread t([]() {
++    std::thread t([]() {
+       xe::threading::Sleep(kUIDelayMillis);
+       kernel_state()->BroadcastNotification(kXNotificationSystemUI, false);
+     });
+diff --git a/src/xenia/memory.cc b/src/xenia/memory.cc
+index 706bd4809..0e1358561 100644
+--- a/src/xenia/memory.cc
++++ b/src/xenia/memory.cc
+@@ -103,16 +103,46 @@ void CrashDump() {
+   --in_crash_dump;
+ }
+ 
+-static inline bool ShouldSkipHostCommit(const BaseHeap& heap) {
+-  // When the host page size is larger than 4 KB (e.g. 16 KB on macOS ARM64,
+-  // 64 KB on some ARM64 Linux kernels), mprotect on 4 KB guest page boundaries
+-  // fails with EINVAL. All heaps are backed by a shared file mapping
+-  // (MapFileView) that is already mapped RW, so the commit is a no-op â€” skip
+-  // it.
+-  if (xe::memory::page_size() > 0x1000) {
+-    return true;
++// Xbox360PS5: recommit must restore access after a guard, decommit or release.
++// Skipping it on a host with 16 KiB pages leaves newly reused stacks no-access.
++// For partial host pages, preserve the access required by neighbouring guest
++// allocations instead of asking the OS to protect an unaligned 4 KiB range.
++static void* AllocateHostRange(BaseHeap& heap, uint32_t offset, uint32_t size,
++                              memory::AllocationType type, uint32_t protect) {
++  void* result = heap.TranslateRelative(offset);
++  const uintptr_t first = reinterpret_cast<uintptr_t>(result);
++  const uintptr_t last = first + size;
++  const uintptr_t native_page = memory::page_size();
++  if (native_page <= 0x1000 ||
++      ((first & (native_page - 1)) == 0 && (size & (native_page - 1)) == 0)) {
++    return memory::AllocFixed(result, size, type, ToPageAccess(protect));
++  }
++  const uintptr_t heap_first =
++      reinterpret_cast<uintptr_t>(heap.TranslateRelative(0));
++  const uintptr_t heap_last = heap_first + heap.heap_size();
++  for (uintptr_t host = first & ~(native_page - 1); host < last;
++       host += native_page) {
++    const uintptr_t begin = std::max(host, heap_first);
++    const uintptr_t end = std::min(host + native_page, heap_last);
++    memory::PageAccess access = memory::PageAccess::kNoAccess;
++    for (uintptr_t guest = begin; guest < end; guest += heap.page_size()) {
++      uint32_t guest_protect = protect;
++      if (guest < first || guest >= last) {
++        heap.QueryProtect(heap.heap_base() + uint32_t(guest - heap_first),
++                          &guest_protect);
++      }
++      const auto guest_access = ToPageAccess(guest_protect);
++      if (guest_access == memory::PageAccess::kReadWrite) {
++        access = guest_access;
++        break;
++      }
++      if (guest_access == memory::PageAccess::kReadOnly) access = guest_access;
++    }
++    if (!memory::Protect(reinterpret_cast<void*>(host), native_page, access)) {
++      return nullptr;
++    }
+   }
+-  return false;
++  return result;
+ }
+ 
+ void RandomizeMemory(void* range_start, uint32_t size) {
+@@ -1129,13 +1159,12 @@ bool BaseHeap::AllocFixed(uint32_t base_address, uint32_t size,
+   if (allocation_type == kMemoryAllocationReserve) {
+     // Reserve is not needed, as we are mapped already.
+   } else {
+-    if (!ShouldSkipHostCommit(*this)) {
++    {
+       auto alloc_type = (allocation_type & kMemoryAllocationCommit)
+                             ? xe::memory::AllocationType::kCommit
+                             : xe::memory::AllocationType::kReserve;
+-      void* result = xe::memory::AllocFixed(
+-          TranslateRelative(start_page_number * page_size_),
+-          page_count * page_size_, alloc_type, ToPageAccess(protect));
++      void* result = AllocateHostRange(*this, start_page_number * page_size_,
++                                      page_count * page_size_, alloc_type, protect);
+       if (!result) {
+         XELOGE("BaseHeap::AllocFixed failed to alloc range from host");
+         return false;
+@@ -1144,9 +1173,6 @@ bool BaseHeap::AllocFixed(uint32_t base_address, uint32_t size,
+       if (cvars::scribble_heap && protect & kMemoryProtectWrite) {
+         RandomizeMemory(result, page_count * page_size_);
+       }
+-    } else if (cvars::scribble_heap && protect & kMemoryProtectWrite) {
+-      RandomizeMemory(TranslateRelative(start_page_number * page_size_),
+-                      page_count * page_size_);
+     }
+   }
+ 
+@@ -1323,13 +1349,12 @@ bool BaseHeap::AllocRange(uint32_t low_address, uint32_t high_address,
+   if (allocation_type == kMemoryAllocationReserve) {
+     // Reserve is not needed, as we are mapped already.
+   } else {
+-    if (!ShouldSkipHostCommit(*this)) {
++    {
+       auto alloc_type = (allocation_type & kMemoryAllocationCommit)
+                             ? xe::memory::AllocationType::kCommit
+                             : xe::memory::AllocationType::kReserve;
+-      void* result = xe::memory::AllocFixed(
+-          TranslateRelative(start_page_number << page_size_shift_),
+-          page_count << page_size_shift_, alloc_type, ToPageAccess(protect));
++      void* result = AllocateHostRange(*this, start_page_number << page_size_shift_,
++                                      page_count << page_size_shift_, alloc_type, protect);
+       if (!result) {
+         XELOGE("BaseHeap::Alloc failed to alloc range from host");
+         // Restore the free block since we failed.
+@@ -1340,9 +1365,6 @@ bool BaseHeap::AllocRange(uint32_t low_address, uint32_t high_address,
+       if (cvars::scribble_heap && (protect & kMemoryProtectWrite)) {
+         RandomizeMemory(result, page_count << page_size_shift_);
+       }
+-    } else if (cvars::scribble_heap && (protect & kMemoryProtectWrite)) {
+-      RandomizeMemory(TranslateRelative(start_page_number << page_size_shift_),
+-                      page_count << page_size_shift_);
+     }
+   }
+ 
+diff --git a/src/xenia/ui/imgui_drawer.cc b/src/xenia/ui/imgui_drawer.cc
+index d803160c7..9ff053484 100644
+--- a/src/xenia/ui/imgui_drawer.cc
++++ b/src/xenia/ui/imgui_drawer.cc
+@@ -31,11 +31,11 @@
+ #include <ShlObj_core.h>
+ #endif
+ 
+-#if XE_PLATFORM_LINUX
++#if XE_PLATFORM_LINUX && !XE_PLATFORM_PS5
+ #include <fontconfig/fontconfig.h>
+ #endif
+ 
+-#ifdef XE_PLATFORM_LINUX
++#if XE_PLATFORM_LINUX && !XE_PLATFORM_PS5
+ #include <gtk/gtk.h>
+ #endif
+ 
+@@ -141,7 +141,7 @@ void ImGuiDrawer::RemoveNotification(ImGuiNotification* dialog) {
+   DetachIfLastWindowRemoved();
+ }
+ 
+-#ifdef XE_PLATFORM_LINUX
++#if XE_PLATFORM_LINUX && !XE_PLATFORM_PS5
+ static void SetClipboardText(void* user_data, const char* text) {
+   GtkClipboard* clipboard = gtk_clipboard_get(GDK_SELECTION_CLIPBOARD);
+   gtk_clipboard_set_text(clipboard, text, -1);
+@@ -169,7 +169,7 @@ void ImGuiDrawer::Initialize() {
+   InitializeFonts(font_size);
+   InitializeFonts(title_font_size);
+ 
+-#ifdef XE_PLATFORM_LINUX
++#if XE_PLATFORM_LINUX && !XE_PLATFORM_PS5
+   io.SetClipboardTextFn = SetClipboardText;
+   io.GetClipboardTextFn = GetClipboardText;
+ #endif
+@@ -439,7 +439,7 @@ bool ImGuiDrawer::LoadJapaneseFont(ImGuiIO& io, float font_size) {
+   return true;
+ #endif
+ 
+-#if XE_PLATFORM_LINUX
++#if XE_PLATFORM_LINUX && !XE_PLATFORM_PS5
+   // On Linux, find and merge CJK font using fontconfig
+   FcConfig* config = FcInitLoadConfigAndFonts();
+   if (!config) {
+diff --git a/src/xenia/ui/surface.h b/src/xenia/ui/surface.h
+index a37bcd8a3..9208f456f 100644
+--- a/src/xenia/ui/surface.h
++++ b/src/xenia/ui/surface.h
+@@ -33,6 +33,7 @@ class Surface {
+     kTypeIndex_XcbWindow,
+     // Windows.
+     kTypeIndex_Win32Hwnd,
++    kTypeIndex_KhrDisplay,  // Xbox360PS5: the PS5's video output.
+   };
+   using TypeFlags = uint32_t;
+   enum : TypeFlags {
+@@ -40,6 +41,7 @@ class Surface {
+                                     << kTypeIndex_AndroidNativeWindow,
+     kTypeFlag_XcbWindow = TypeFlags(1) << kTypeIndex_XcbWindow,
+     kTypeFlag_Win32Hwnd = TypeFlags(1) << kTypeIndex_Win32Hwnd,
++    kTypeFlag_KhrDisplay = TypeFlags(1) << kTypeIndex_KhrDisplay,
+   };
+ 
+   Surface(const Surface& surface) = delete;
+diff --git a/src/xenia/ui/vulkan/vulkan_instance.cc b/src/xenia/ui/vulkan/vulkan_instance.cc
+index 7584e1e1f..90dd3571b 100644
+--- a/src/xenia/ui/vulkan/vulkan_instance.cc
++++ b/src/xenia/ui/vulkan/vulkan_instance.cc
+@@ -20,7 +20,9 @@
+ #include "xenia/base/platform.h"
+ #include "xenia/ui/vulkan/vulkan_presenter.h"
+ 
+-#if XE_PLATFORM_LINUX
++#if XE_PLATFORM_PS5
++#include "xbox360ps5/radv_dispatch.hpp"
++#elif XE_PLATFORM_LINUX
+ #include <dlfcn.h>
+ #elif XE_PLATFORM_WIN32
+ #include "xenia/base/platform_win.h"
+@@ -49,7 +51,13 @@ std::unique_ptr<VulkanInstance> VulkanInstance::Create(
+   Functions& ifn = vulkan_instance->functions_;
+ 
+   bool functions_loaded = true;
+-#if XE_PLATFORM_LINUX
++#if XE_PLATFORM_PS5
++  // Xbox360PS5: the RADV driver is linked into the title; there is no loader
++  // library.
++#define XE_VULKAN_LOAD_LOADER_FUNCTION(name) \
++  functions_loaded &=                         \
++      (ifn.name = PFN_##name(xbox360ps5::RadvLoaderProc(#name))) != nullptr;
++#elif XE_PLATFORM_LINUX
+ #if XE_PLATFORM_ANDROID
+   const char* const loader_library_name = "libvulkan.so";
+ #else
+@@ -160,6 +168,12 @@ std::unique_ptr<VulkanInstance> VulkanInstance::Create(
+ #endif
+   }
+ 
++#if XE_PLATFORM_PS5
++  if (with_surface) {
++    requested_extensions.emplace(
++        "VK_KHR_display", &vulkan_instance->extensions_.ext_KHR_display);
++  }
++#endif
+   std::vector<const char*> enabled_extensions;
+ 
+   std::vector<VkExtensionProperties> supported_implementation_extensions;
+@@ -540,7 +554,7 @@ VulkanInstance::~VulkanInstance() {
+     functions_.vkDestroyInstance(instance_, nullptr);
+   }
+ 
+-#if XE_PLATFORM_LINUX
++#if XE_PLATFORM_LINUX && !XE_PLATFORM_PS5
+   if (loader_) {
+     dlclose(loader_);
+   }
+diff --git a/src/xenia/ui/vulkan/vulkan_instance.h b/src/xenia/ui/vulkan/vulkan_instance.h
+index 1468495f5..5b7618e7e 100644
+--- a/src/xenia/ui/vulkan/vulkan_instance.h
++++ b/src/xenia/ui/vulkan/vulkan_instance.h
+@@ -89,6 +89,7 @@ class VulkanInstance {
+   // supported (with the `ext_major_minor_` prefix rather than `ext_`).
+   struct Extensions {
+     bool ext_KHR_surface = false;  // #1
++    bool ext_KHR_display = false;  // #3, Xbox360PS5: the PS5's video output.
+ #ifdef VK_USE_PLATFORM_XCB_KHR
+     bool ext_KHR_xcb_surface = false;  // #6
+ #endif
+diff --git a/src/xenia/ui/vulkan/vulkan_presenter.cc b/src/xenia/ui/vulkan/vulkan_presenter.cc
+index 68b97e788..cfdfab0aa 100644
+--- a/src/xenia/ui/vulkan/vulkan_presenter.cc
++++ b/src/xenia/ui/vulkan/vulkan_presenter.cc
+@@ -17,6 +17,10 @@
+ #include "xenia/base/math.h"
+ #include "xenia/base/platform.h"
+ #include "xenia/ui/vulkan/vulkan_util.h"
++#if XE_PLATFORM_PS5
++#include "xbox360ps5/display_surface.hpp"
++#include "xbox360ps5/vulkan_platform.hpp"
++#endif
+ 
+ #if XE_PLATFORM_ANDROID
+ #include "xenia/ui/surface_android.h"
+@@ -203,6 +207,11 @@ Surface::TypeFlags VulkanPresenter::GetSurfaceTypesSupportedByInstance(
+     return 0;
+   }
+   Surface::TypeFlags type_flags = 0;
++#if XE_PLATFORM_PS5
++  if (instance_extensions.ext_KHR_display) {
++    type_flags |= Surface::kTypeFlag_KhrDisplay;
++  }
++#endif
+ #if XE_PLATFORM_ANDROID
+   if (instance_extensions.ext_KHR_android_surface) {
+     type_flags |= Surface::kTypeFlag_AndroidNativeWindow;
+@@ -571,6 +580,26 @@ VulkanPresenter::ConnectOrReconnectPaintingToSurfaceFromUIThread(
+     }
+     VkResult vulkan_surface_create_result = VK_ERROR_UNKNOWN;
+     switch (surface_type) {
++#if XE_PLATFORM_PS5
++      case Surface::kTypeIndex_KhrDisplay: {
++        // Xbox360PS5: the console's video output, through VK_KHR_display.
++        const auto& display_surface =
++            static_cast<const xbox360ps5::DisplaySurface&>(new_surface);
++        VkExtent2D selected_extent{};
++        uint32_t selected_refresh = 0;
++        std::string error;
++        if (!xbox360ps5::CreateDisplaySurface(
++                ifn.vkGetInstanceProcAddr, instance,
++                vulkan_device_->physical_device(), new_surface_width,
++                new_surface_height, display_surface.refresh(),
++                paint_context_.vulkan_surface, selected_extent,
++                selected_refresh, error)) {
++          XELOGE("PS5 KHR_display: {}", error);
++          return SurfacePaintConnectResult::kFailure;
++        }
++        vulkan_surface_create_result = VK_SUCCESS;
++      } break;
++#endif
+ #if XE_PLATFORM_ANDROID
+       case Surface::kTypeIndex_AndroidNativeWindow: {
+         auto& android_native_window_surface =
+diff --git a/third_party/ffmpeg-xenia/config.h b/third_party/ffmpeg-xenia/config.h
+index 3df8db9e5..8a23c840a 100644
+--- a/third_party/ffmpeg-xenia/config.h
++++ b/third_party/ffmpeg-xenia/config.h
+@@ -339,7 +339,7 @@
+   #define HAVE_STRUCT_SOCKADDR_STORAGE 1
+   #define HAVE_STRUCT_STAT_ST_MTIM_TV_NSEC 1
+   #define CONFIG_PIC 1
+-  #if defined(__ANDROID__)
++  #if defined(__ANDROID__) || defined(__PROSPERO__)  /* Xbox360PS5: no iconv, glob or symver */
+     #define HAVE_ARC4RANDOM 1
+     #define HAVE_RSYNC_CONTIMEOUT 1
+   #else
+@@ -360,7 +360,7 @@
+ #define HAVE_THREADS 1
+ #define HAVE_ACCESS 1
+ #define HAVE_ISATTY 1
+-#ifdef __APPLE__
++#if defined(__APPLE__) || defined(__PROSPERO__)
+ #define HAVE_MALLOC_H 0
+ #else
+ #define HAVE_MALLOC_H 1

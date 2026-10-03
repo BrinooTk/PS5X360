@@ -3,6 +3,7 @@
 // logging interface and preserves errors instead of dropping unresolved calls.
 #include "xenia/base/logging.h"
 #include "xenia/base/cvar.h"
+#include "xenia/base/threading.h"
 #include <algorithm>
 #include <array>
 #include <cstdlib>
@@ -17,6 +18,8 @@ std::mutex log_mutex;
 FILE* log_output = nullptr;
 thread_local std::array<char, 65536> thread_buffer;
 }
+// Optional second destination set by the native title (the console's kernel log).
+void (*log_mirror)(char prefix, const char* line, size_t size) = nullptr;
 FileLogSink::~FileLogSink() { if (owns_file_ && file_) std::fclose(file_); }
 void FileLogSink::Write(const char* buffer, size_t size) { if (file_) std::fwrite(buffer, 1, size, file_); }
 void FileLogSink::Flush() { if (file_) std::fflush(file_); }
@@ -39,12 +42,19 @@ void AppendLogLine(LogLevel level, char prefix, std::string_view line) {
   if (!ShouldLog(level)) return;
   std::lock_guard lock(log_mutex);
   auto write = [&](FILE* out) {
+#if XE_PLATFORM_PS5
     std::fprintf(out, "%c> ", prefix);
+#else
+    // Host traces say which thread made each call.
+    std::fprintf(out, "%c> %08X ", prefix, xe::threading::current_thread_system_id());
+#endif
     std::fwrite(line.data(), 1, line.size(), out);
     std::fputc('\n', out);
     if (cvars::flush_log || level == LogLevel::Error) std::fflush(out);
   };
-  if (log_output) write(log_output);
+  // Debug lines (the kernel-call trace) are too many for a file flushed per line.
+  if (log_output && (level <= LogLevel::Warning || cvars::log_level >= 3)) write(log_output);
+  if (log_mirror) log_mirror(prefix, line.data(), line.size());
   if (cvars::log_to_stdout) write(stdout);
   if (!log_output && !cvars::log_to_stdout && level == LogLevel::Error) write(stderr);
 }

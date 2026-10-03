@@ -1,0 +1,152 @@
+// SPDX-License-Identifier: MIT
+#pragma once
+#include <atomic>
+#include <cstring>
+namespace xbox360ps5 {
+// Xbox language IDs. UI translations currently cover English, Portuguese and Spanish.
+inline std::atomic<int> ui_language{1};
+inline int ConsoleGameLanguage(int ps5) {
+  switch (ps5) {
+    case 0: return 2;
+    case 2: case 22: return 4;
+    case 3: case 20: return 5;
+    case 4: return 3;
+    case 5: return 6;
+    case 7: case 17: return 9;
+    default: return 1;
+  }
+}
+inline int SupportedUiLanguage(int id) { return id == 9 || id == 5 ? id : 1; }
+inline const char* Tr(const char* key) {
+  struct Entry { const char* pt; const char* en; const char* es; };
+  static constexpr Entry entries[] = {
+    {"Patches", "Patches", "Parches"},
+    {"Automático usa o idioma do PS5. Sem tradução da interface, usa inglês. A seleção também vale para o próximo jogo; os idiomas disponíveis dependem de cada jogo.", "Automatic follows the PS5 language. Unsupported interface languages use English. The selection also applies to the next game launched; available languages depend on each game.", "Automático usa el idioma de PS5. Sin traducción, la interfaz usa inglés. La selección también se aplica al siguiente juego; los idiomas disponibles dependen de cada juego."},
+    {"sem socket", "socket unavailable", "socket no disponible"},
+    {"PS5X360: emulador experimental de Xbox 360 para PlayStation 5.", "PS5X360: experimental Xbox 360 emulator for PlayStation 5.", "PS5X360: emulador experimental de Xbox 360 para PlayStation 5."},
+    {"Vídeo RADV (PS5_Vulkan), áudio XMA (FFmpeg) e patches Xenia Canary. Nenhum jogo, BIOS ou chave acompanha o emulador.", "RADV graphics (PS5_Vulkan), XMA audio (FFmpeg) and Xenia Canary patches. No games, BIOS or keys are included.", "Gráficos RADV (PS5_Vulkan), audio XMA (FFmpeg) y parches Xenia Canary. No se incluyen juegos, BIOS ni claves."},
+    {"Todos", "All", "Todos"},
+    {"Recentes", "Recent", "Recientes"},
+    {"Pastas", "Folders", "Carpetas"},
+    {"Imagens ISO", "ISO images", "Imágenes ISO"},
+    {"Arcade e GOD", "Arcade & GOD", "Arcade y GOD"},
+    {"Automático (console)", "Automatic (console)", "Automático (consola)"},
+    {"Idioma", "Language", "Idioma"},
+    {"Jogo", "Game", "Juego"},
+    {"Configurações", "Settings", "Configuración"},
+    {"Continuar jogo", "Resume game", "Continuar juego"},
+    {"Voltar para o menu de jogos", "Return to game library", "Volver a la biblioteca"},
+    {"Apertar BACK no jogo", "Press BACK in game", "Pulsar BACK en el juego"},
+    {"Fechar o emulador", "Exit emulator", "Cerrar el emulador"},
+    {"Mostrar FPS", "Show FPS", "Mostrar FPS"},
+    {"Som", "Sound", "Sonido"},
+    {"Ligado", "On", "Activado"},
+    {"Desligado", "Off", "Desactivado"},
+    {"Ligados", "On", "Activados"},
+    {"Desligados", "Off", "Desactivados"},
+    {"Mudo", "Muted", "Silenciado"},
+    {"Filtro de imagem", "Image filter", "Filtro de imagen"},
+    {"Clique do touchpad", "Touchpad click", "Clic del touchpad"},
+    {"Abre o guia", "Open guide", "Abrir guía"},
+    {"Botão Back", "Back button", "Botón Back"},
+    {"Touchpad: guia do emulador", "Touchpad: emulator guide", "Touchpad: guía del emulador"},
+    {"OPTIONS + touchpad: guia do emulador", "OPTIONS + touchpad: emulator guide", "OPTIONS + touchpad: guía del emulador"},
+    {"Guia PS5X360", "PS5X360 Guide", "Guía PS5X360"},
+    {"Em execução: ", "Playing: ", "En ejecución: "},
+    {"Selecionar", "Select", "Seleccionar"},
+    {"Alterar", "Change", "Cambiar"},
+    {"Voltar ao jogo", "Return to game", "Volver al juego"},
+    {"CAS (nitidez)", "CAS (sharpening)", "CAS (nitidez)"},
+    {"Simples", "Basic", "Básico"},
+    {"3x (2160p, muito pesado)", "3x (2160p, very demanding)", "3x (2160p, muy exigente)"},
+    {"2x (1440p, pesado)", "2x (1440p, demanding)", "2x (1440p, exigente)"},
+    {"1x (720p, original)", "1x (720p, native)", "1x (720p, original)"},
+    {"Jogo em ", "Game in ", "Juego en "},
+    {"O nome começa com uma letra.", "The name must start with a letter.", "El nombre debe comenzar con una letra."},
+    {"Digite um nome.", "Enter a name.", "Introduce un nombre."},
+    {"Não foi possível criar este perfil.", "Could not create this profile.", "No se pudo crear este perfil."},
+    {"Carregando o jogo", "Loading game", "Cargando juego"},
+    {"jogo", "game", "juego"},
+    {"jogos", "games", "juegos"},
+    {"Controle conectado", "Controller connected", "Mando conectado"},
+    {"Sem controle", "No controller", "Sin mando"},
+    {"Sua prateleira está vazia", "Your library is empty", "Tu biblioteca está vacía"},
+    {"Copie cada jogo por FTP para uma pasta em", "Copy each game by FTP into its own folder in", "Copia cada juego por FTP a su propia carpeta en"},
+    {"Vale pasta extraída (com default.xex), imagem .iso ou pacote GOD/STFS.", "Use an extracted folder (with default.xex), an .iso image or a GOD/STFS package.", "Usa una carpeta extraída (con default.xex), una imagen .iso o un paquete GOD/STFS."},
+    {"Depois aperte Quadrado e escolha Atualizar lista de jogos.", "Then press Square and choose Refresh game list.", "Después pulsa Cuadrado y elige Actualizar lista de juegos."},
+    {"Nenhum jogo neste filtro", "No games in this filter", "No hay juegos en este filtro"},
+    {"Use L1 e R1 para trocar de filtro.", "Use L1 and R1 to change filters.", "Usa L1 y R1 para cambiar de filtro."},
+    {"Jogar", "Play", "Jugar"},
+    {"Detalhes e patches", "Details & patches", "Detalles y parches"},
+    {"Trocar de jogo", "Change game", "Cambiar de juego"},
+    {"L1 / R1   Filtro", "L1 / R1   Filter", "L1 / R1   Filtro"},
+    {"Formato  ", "Format  ", "Formato  "},
+    {"     Tamanho  ", "     Size  ", "     Tamaño  "},
+    {"ID do título  ", "Title ID  ", "ID del título  "},
+    {"ainda não identificado", "not identified yet", "aún sin identificar"},
+    {"Abra este jogo uma vez: o emulador identifica o título e os patches dele passam a aparecer aqui.", "Launch this game once to identify its title and show its patches here.", "Inicia este juego una vez para identificar el título y mostrar sus parches aquí."},
+    {"Há patches para este jogo, mas feitos para outra versão do executável. Não são aplicados.", "Available patches target a different executable version and will not be applied.", "Los parches disponibles son para otra versión del ejecutable y no se aplicarán."},
+    {"Nenhum patch para este jogo na pasta de patches.", "No patches for this game in the patches folder.", "No hay parches para este juego en la carpeta de parches."},
+    {"Arquivos .patch.toml (formato do Xenia Canary) ficam em /data/homebrew/PPSA50011/assets/patches/.", "Place .patch.toml files (Xenia Canary format) in /data/homebrew/PPSA50011/assets/patches/.", "Coloca los archivos .patch.toml (formato Xenia Canary) en /data/homebrew/PPSA50011/assets/patches/."},
+    {"%d de %d", "%d of %d", "%d de %d"},
+    {"%d de %d patches ligados", "%d of %d patches enabled", "%d de %d parches activados"},
+    {"Sem descrição.", "No description.", "Sin descripción."},
+    {"Autor: ", "Author: ", "Autor: "},
+    {"Ligar ou desligar", "Enable or disable", "Activar o desactivar"},
+    {"Fechar", "Close", "Cerrar"},
+    {"Mover", "Navigate", "Mover"},
+    {"Nenhum", "None", "Ninguno"},
+    {"Perfil do jogador", "Player profile", "Perfil del jugador"},
+    {"Idioma dos jogos", "Interface & game language", "Idioma de interfaz y juegos"},
+    {"O perfil (gamertag) conectado no console emulado. Os jogos gravam os saves e as conquistas no perfil; cada perfil tem os seus.", "The signed-in gamertag. Each profile keeps its own saved games and achievements.", "El gamertag conectado. Cada perfil guarda sus propias partidas y logros."},
+    {"O idioma que o console emulado informa aos jogos. Vale para o próximo jogo iniciado; nem todo jogo tem todos os idiomas.", "Automatic follows the PS5 language. Unsupported interface languages use English. Games receive the chosen language on their next launch; translations depend on the game.", "Automático usa el idioma de PS5. La interfaz usa inglés si no hay traducción. El idioma del juego cambia al iniciarlo de nuevo; depende de sus traducciones."},
+    {"Silencia a saída de áudio dos jogos.", "Mute game audio.", "Silencia el audio de los juegos."},
+    {"Como a imagem do jogo é ampliada até a tela. Simples: mais leve. CAS: deixa a imagem mais nítida. FSR: upscale da AMD, bordas mais limpas. Quase não pesa.", "Screen scaling: Basic is fastest, CAS sharpens the image, and AMD FSR improves upscaling.", "Escalado de imagen: Básico es más rápido, CAS aumenta la nitidez y AMD FSR mejora el escalado."},
+    {"Abre o guia: o touchpad chama o guia do emulador durante o jogo, e o botão Back do Xbox fica dentro do guia. Botão Back: o touchpad é o Back do Xbox, e o guia abre com OPTIONS + touchpad.", "Open guide: touchpad opens this menu, which includes Xbox Back. Back button: touchpad sends Xbox Back; OPTIONS + touchpad opens the guide.", "Abrir guía: touchpad abre este menú, que incluye Back de Xbox. Botón Back: touchpad envía Back; OPTIONS + touchpad abre la guía."},
+    {"Registros detalhados", "Detailed logs", "Registros detallados"},
+    {"Grava cada chamada do jogo ao sistema no log. Deixa os jogos mais lentos; use só para investigar um problema.", "Log every game system call. Slows games down; enable only for troubleshooting.", "Registra cada llamada al sistema. Reduce el rendimiento; úsalo solo para investigar problemas."},
+    {"Mostrar FPS no jogo", "Show FPS in game", "Mostrar FPS en el juego"},
+    {"Mostra no canto da tela quantos quadros por segundo o jogo entrega.", "Show game frames per second in the corner of the screen.", "Muestra los fotogramas por segundo en la esquina de la pantalla."},
+    {"Baixar capas", "Download covers", "Descargar carátulas"},
+    {"Baixando...", "Downloading...", "Descargando..."},
+    {"Baixa do XboxUnity (o mesmo serviço do Aurora) as capas dos jogos que ainda não têm uma. Precisa de internet no PS5. Uma imagem cover.jpg na pasta do jogo sempre tem prioridade.", "Download missing covers from XboxUnity, also used by Aurora. Requires internet on PS5. A cover.jpg in the game folder takes priority.", "Descarga carátulas de XboxUnity, también usado por Aurora. Requiere internet en PS5. Un cover.jpg en la carpeta del juego tiene prioridad."},
+    {"Atualizar lista de jogos", "Refresh game list", "Actualizar lista de juegos"},
+    {"Procura de novo os jogos, as capas e os patches nas pastas.", "Scan folders again for games, covers and patches.", "Busca de nuevo juegos, carátulas y parches en las carpetas."},
+    {"Reiniciar o emulador", "Restart emulator", "Reiniciar el emulador"},
+    {"Fecha e abre o emulador de novo.", "Close and reopen the emulator.", "Cierra y vuelve a abrir el emulador."},
+    {"Sobre", "About", "Acerca de"},
+    {"Perfis", "Profiles", "Perfiles"},
+    {"Cada perfil guarda os seus próprios saves e conquistas. O perfil em uso vale para o próximo jogo iniciado.", "Each profile has its own saves and achievements. The selected profile applies to the next game launched.", "Cada perfil tiene sus propias partidas y logros. El perfil elegido se usa al iniciar el siguiente juego."},
+    {"Em uso", "Active", "En uso"},
+    {"Criar novo perfil", "Create new profile", "Crear nuevo perfil"},
+    {"Usar este perfil", "Use this profile", "Usar este perfil"},
+    {"Criar", "Create", "Crear"},
+    {"Voltar", "Back", "Volver"},
+    {"Novo perfil", "New profile", "Nuevo perfil"},
+    {"Escolha o nome do perfil (gamertag): até 15 letras e números, começando por uma letra.", "Choose a gamertag: up to 15 letters and numbers, starting with a letter.", "Elige un gamertag: hasta 15 letras y números, comenzando con una letra."},
+    {"Digitar", "Type", "Escribir"},
+    {"Apagar", "Delete", "Borrar"},
+    {"Criar perfil", "Create profile", "Crear perfil"},
+    {"Cancelar", "Cancel", "Cancelar"},
+    {"Não foi possível iniciar este jogo (erro %08X).", "Could not launch this game (error %08X).", "No se pudo iniciar este juego (error %08X)."},
+    {"sem conexão com ", "no connection to ", "sin conexión con "},
+    {" (o PS5 está na internet?)", " (is the PS5 online?)", " (¿PS5 tiene internet?)"},
+    {"resposta incompleta", "incomplete response", "respuesta incompleta"},
+    {"o servidor respondeu ", "server returned ", "el servidor respondió "},
+    {"imagem inválida", "invalid image", "imagen no válida"},
+    {"Baixando capas: ", "Downloading covers: ", "Descargando carátulas: "},
+    {" de ", " of ", " de "},
+    {" capa baixada", " cover downloaded", " carátula descargada"},
+    {" capas baixadas", " covers downloaded", " carátulas descargadas"},
+    {" sem capa no XboxUnity", " without a cover on XboxUnity", " sin carátula en XboxUnity"},
+    {" com erro (", " failed (", " con error ("},
+    {"Todos os jogos identificados já têm capa", "All identified games already have covers", "Todos los juegos identificados ya tienen carátula"},
+  };
+  const int language = ui_language.load(std::memory_order_relaxed);
+  if (language == 9) return key;
+  for (const auto& entry : entries) {
+    if (!std::strcmp(entry.pt, key)) return language == 5 ? entry.es : entry.en;
+  }
+  return key; // Literal symbols and external names remain untouched.
+}
+} // namespace xbox360ps5

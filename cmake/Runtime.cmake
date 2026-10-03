@@ -20,7 +20,11 @@ target_compile_definitions(xenia_cpu_runtime PRIVATE NDEBUG
 target_compile_options(xenia_cpu_runtime PRIVATE
   -ffunction-sections -fdata-sections -fno-char8_t -mavx)
 
-add_library(xenia_platform_memory STATIC platform/ps5/memory.cpp)
+if(CMAKE_CROSSCOMPILING)
+  add_library(xenia_platform_memory STATIC platform/ps5/memory_ps5.cpp)
+else()
+  add_library(xenia_platform_memory STATIC platform/ps5/memory.cpp)
+endif()
 target_link_libraries(xenia_platform_memory PUBLIC xenia_ppc_decoder)
 target_compile_options(xenia_platform_memory PRIVATE -ffunction-sections -fdata-sections)
 set(XENIA_BASE_RUNTIME_SOURCES platform/ps5/logging.cpp)

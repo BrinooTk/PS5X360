@@ -3,3 +3,7 @@ build/
 dist/
 __pycache__/
 *.log
+
+# Backing files left by an interrupted host run (tools: --run-xex)
+/xenia_memory_*
+/xenia_code_cache_*

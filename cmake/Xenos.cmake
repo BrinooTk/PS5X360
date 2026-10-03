@@ -13,13 +13,18 @@ add_library(xenia_snappy STATIC "${XENIA_SOURCE}/third_party/snappy/snappy.cc"
   "${XENIA_SOURCE}/third_party/snappy/snappy-sinksource.cc"
   "${XENIA_SOURCE}/third_party/snappy/snappy-stubs-internal.cc")
 file(GLOB XENOS_SOURCES CONFIGURE_DEPENDS "${XENIA_SOURCE}/src/xenia/gpu/*.cc")
-list(FILTER XENOS_SOURCES EXCLUDE REGEX "/(dxbc_[^/]*|trace_(dump|player|reader|viewer)|shader_compiler_main|texture_dump)\\.cc$")
+list(FILTER XENOS_SOURCES EXCLUDE REGEX "/(dxbc_[^/]*|trace_(dump|player|reader|viewer)|shader_compiler_main|texture_dump|command_processor|spirv_shader_translator_fetch)\\.cc$")
+list(APPEND XENOS_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/build/generated-sources/command_processor.cc"
+  "${CMAKE_CURRENT_SOURCE_DIR}/build/generated-sources/spirv_shader_translator_fetch.cc")
+set_property(SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/build/generated-sources/command_processor.cc" APPEND PROPERTY
+  INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}/include")
 add_library(xenia_xenos_gpu STATIC ${XENOS_SOURCES})
 target_link_libraries(xenia_xenos_gpu PUBLIC xenia_guest_kernel xenia_spirv_builder xenia_xxhash xenia_snappy)
 file(GLOB VULKAN_RENDERER_SOURCES CONFIGURE_DEPENDS "${XENIA_SOURCE}/src/xenia/gpu/vulkan/*.cc")
 list(FILTER VULKAN_RENDERER_SOURCES EXCLUDE REGEX "_main\\.cc$")
-list(FILTER VULKAN_RENDERER_SOURCES EXCLUDE REGEX "/vulkan_graphics_system\\.cc$")
-list(APPEND VULKAN_RENDERER_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/build/generated-sources/vulkan_graphics_system.cc")
+list(FILTER VULKAN_RENDERER_SOURCES EXCLUDE REGEX "/(vulkan_graphics_system|vulkan_command_processor)\\.cc$")
+list(APPEND VULKAN_RENDERER_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/build/generated-sources/vulkan_graphics_system.cc"
+  "${CMAKE_CURRENT_SOURCE_DIR}/build/generated-sources/vulkan_command_processor.cc")
 add_library(xenia_vulkan_renderer STATIC ${VULKAN_RENDERER_SOURCES})
 target_link_libraries(xenia_vulkan_renderer PUBLIC xenia_xenos_gpu)
 file(GLOB VULKAN_UI_SOURCES CONFIGURE_DEPENDS "${XENIA_SOURCE}/src/xenia/ui/vulkan/*.cc")
