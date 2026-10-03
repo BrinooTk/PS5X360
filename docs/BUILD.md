@@ -65,7 +65,7 @@ The staging folder `dist/PPSA50011` must contain the runtime, title metadata, ar
 python3 tools/package-release.py
 ```
 
-Output: `dist/PS5X360-release.zip`, including the English installation guide, release notes, license notices and a per-file SHA-256 manifest. Game files are not packaged.
+Output: `dist/PS5X360-v0.1.0-preview.zip`, including the English installation guide, release notes, license notices and a per-file SHA-256 manifest. Game files are not packaged.
 
 ## Historical documentation
 

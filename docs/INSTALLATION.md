@@ -8,7 +8,7 @@
 
 ## Install the release
 
-1. Download **PS5X360-release.zip** from the [GitHub Releases page](https://github.com/BrinooTk/PS5X360/releases). GitHub's automatic “Source code” archives are not the installable build.
+1. Download **PS5X360-v0.1.0-preview.zip** from the [GitHub Releases page](https://github.com/BrinooTk/PS5X360/releases). GitHub's automatic “Source code” archives are not the installable build.
 2. Extract the ZIP. You should see `PPSA50011`, `INSTALLATION.md`, `RELEASE_NOTES.md`, `MANIFEST.json` and license notices.
 3. Connect your FTP client to your PS5's IP address and configured FTP port.
 4. Copy the **entire** `PPSA50011` folder to `/data/homebrew/`. The final executable path must be `/data/homebrew/PPSA50011/eboot.bin`.

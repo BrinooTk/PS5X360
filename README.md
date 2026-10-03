@@ -29,7 +29,7 @@ An experimental **Xbox 360 emulator for PlayStation 5**, built on Xenia Canary w
 
 <img src="docs/images/installation.png" alt="Download the ZIP, copy PPSA50011 via FTP, add one folder per game, and launch PS5X360" width="100%">
 
-1. Download `PS5X360-release.zip` from [Releases](https://github.com/BrinooTk/PS5X360/releases).
+1. Download `PS5X360-v0.1.0-preview.zip` from [Releases](https://github.com/BrinooTk/PS5X360/releases).
 2. Extract it on your computer.
 3. Using FTP, copy the complete `PPSA50011` folder to **`/data/homebrew/PPSA50011`** on your PS5.
 4. Let ShadowMountPlus register the title, then open **PS5X360** from the PS5 home screen.
@@ -87,6 +87,16 @@ When [reporting a bug](https://github.com/BrinooTk/PS5X360/issues), include the 
 The active core is Xenia Canary at `b083312b8b18e07e6e410b82104191f126722794`. The PS5 core changes are stored in `patches/canary/xbox360ps5.patch`; the launcher and platform adapters live in this repository.
 
 [Build notes and source dependencies](docs/BUILD.md) · [Third-party credits](docs/CREDITS.md)
+
+The current release is **v0.1.0-preview**. See the [changelog](CHANGELOG.md) and
+[release versioning guide](docs/RELEASING.md) for future updates.
+
+## Support the projects
+
+If you would like to support development of PS5X360 and my other projects,
+you can contribute through [Ko-fi](https://ko-fi.com/brinoblitz).
+Contributions are optional and always appreciated. Testing, bug reports and
+sharing the project also help.
 
 Older M0–M8 milestones and Portuguese research notes are preserved in [the port history](docs/PORT_HISTORY_PT.md). They describe earlier stages and do not replace the current release status.
 

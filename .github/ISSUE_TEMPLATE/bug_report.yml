@@ -6,7 +6,7 @@ body:
     id: release
     attributes:
       label: Release version
-      placeholder: preview-2026.10.03
+      placeholder: v0.1.0-preview
     validations:
       required: true
   - type: input
