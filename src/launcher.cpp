@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include "xbox360ps5/i18n.hpp"
+#include "xbox360ps5/cover_geometry.hpp"
 #include "xbox360ps5/launcher.hpp"
 #include "xenia/base/cvar.h"
 #include "xenia/base/logging.h"
@@ -11,6 +12,7 @@
 #include <fstream>
 #include <functional>
 #include <iterator>
+#include <set>
 #define STB_IMAGE_IMPLEMENTATION
 #define STB_IMAGE_STATIC
 #define STBI_ONLY_PNG
@@ -20,6 +22,8 @@
 DECLARE_int32(user_language);
 DECLARE_int32(log_level);
 DECLARE_bool(mute);
+DECLARE_bool(vsync);
+DECLARE_bool(log_to_stdout);
 DECLARE_int32(draw_resolution_scale_x);
 DECLARE_int32(draw_resolution_scale_y);
 DECLARE_bool(gpu_allow_invalid_fetch_constants);
@@ -127,7 +131,12 @@ void Settings::Load() {
   if (result != 0) ps5_language = -1;
 #endif
   console_language = ConsoleGameLanguage(ps5_language);
+  if (!ReadGamePaths(kStorage / "game_paths.txt", game_paths)) {
+    ReadGamePaths("/app0/assets/game_paths.txt", game_paths);
+    WriteGamePaths(kStorage / "game_paths.txt", game_paths);
+  }
   std::ifstream input(kStorage / "settings.txt");
+  int logging_policy = 0;
   std::string line;
   while (std::getline(input, line)) {
     const size_t split = line.find('=');
@@ -138,7 +147,9 @@ void Settings::Load() {
     else if (key == "interface_language") interface_language = value;
     else if (key == "mute") mute = value != 0;
     else if (key == "detailed_logs") detailed_logs = value != 0;
+    else if (key == "logging_policy") logging_policy = value;
     else if (key == "show_fps") show_fps = value != 0;
+    else if (key == "vsync") vsync = value != 0;
     // resolution_scale: not read. Scaled rendering takes the PS5's memory away
     // from the game's threads (every game crashed at its first frame).
     else if (key == "image_filter") image_filter = std::clamp(value, 0, 2);
@@ -147,13 +158,16 @@ void Settings::Load() {
   if (language < 0 || language > 17) language = 0;
   if (interface_language < 0 || interface_language > 17) interface_language = 0;
   ui_language.store(SupportedUiLanguage(interface_language ? interface_language : console_language));
+  // One-time migration: previous builds could enable continuous tracing via
+  // a debug sentinel. Start with normal logging; explicit later choices persist.
+  if (logging_policy < 1) { detailed_logs = false; Save(); }
 }
 void Settings::Save() const {
   std::ofstream output(kStorage / "settings.txt", std::ios::trunc);
   output << "language=" << language << "\ninterface_language=" << interface_language
-         << "\nmute=" << int(mute) << "\ndetailed_logs=" << int(detailed_logs)
+         << "\nmute=" << int(mute) << "\nlogging_policy=1\ndetailed_logs=" << int(detailed_logs)
          << "\nshow_fps=" << int(show_fps) << "\nresolution_scale=" << resolution_scale << "\nimage_filter="
-         << image_filter << "\ntouchpad_menu=" << int(touchpad_menu) << "\n";
+         << image_filter << "\ntouchpad_menu=" << int(touchpad_menu) << "\nvsync=" << int(vsync) << "\n";
 }
 void Settings::Apply() const {
   cvars::gpu_allow_invalid_fetch_constants = true;
@@ -161,8 +175,11 @@ void Settings::Apply() const {
   cvars::user_language = GameLanguage();
   cvars::mute = mute;
   cvars::draw_resolution_scale_x = cvars::draw_resolution_scale_y = resolution_scale;
-  std::error_code error;
-  cvars::log_level = detailed_logs || fs::exists("/app0/assets/debug.txt", error) ? 3 : 2;
+  // Normal gameplay records warnings/errors plus explicit session metadata.
+  // Do not duplicate every line into the platform stdout transport, and do
+  // not let stale debug files silently override the user's visible setting.
+  cvars::log_to_stdout = false;
+  cvars::log_level = detailed_logs ? 3 : 1;
 }
 const char* Settings::ScaleName(int scale) {
   return scale >= 3 ? Tr("3x (2160p, muito pesado)") : scale == 2 ? Tr("2x (1440p, pesado)") : Tr("1x (720p, original)");
@@ -232,9 +249,16 @@ void Launcher::Scan() {
   games_.clear();
   textures_.clear();
   arts_.clear();
-  static const fs::path roots[] = {"/app0/assets/roms", "/data/xbox360", "/mnt/usb0/xbox360",
-                                   "/mnt/usb1/xbox360", "/mnt/ext0/xbox360", "/mnt/ext1/xbox360"};
+  std::set<std::string> seen_games, seen_roots;
   const auto add = [&](GameEntry game, const std::vector<uint8_t>& embedded_cover) {
+    // All scan paths are absolute. Keep the complete lexical path as the
+    // key without depending on the console's libc realpath implementation.
+    const auto identity = NormalizeGamePath(game.path.generic_string());
+    if (identity.empty() || !seen_games.insert(identity).second) {
+      XELOGI("LAUNCHER duplicate game {}", game.path.string());
+      return;
+    }
+    XELOGI("LAUNCHER game {}", identity);
     // What the first launch learned: the game's own name, id, hash and icon.
     const fs::path cache = kStorage / "library" / CacheKey(game.path.string());
     std::ifstream info(cache.string() + ".txt");
@@ -266,6 +290,7 @@ void Launcher::Scan() {
     std::error_code error;
     std::vector<fs::directory_entry> entries;
     for (fs::directory_iterator at(directory, error), end; !error && at != end; at.increment(error)) entries.push_back(*at);
+    XELOGI("LAUNCHER directory {} entries {} error {}", directory.string(), entries.size(), error.value());
     // An extracted game is its folder: default.xex, or the only .xex in it.
     fs::path executable;
     int executables = 0;
@@ -299,8 +324,11 @@ void Launcher::Scan() {
       }
     }
   };
-  for (const auto& root : roots) {
+  for (const auto& configured : settings_.game_paths) {
+    const fs::path root(configured);
     std::error_code error;
+    const auto identity = NormalizeGamePath(root.generic_string());
+    if (identity.empty() || !seen_roots.insert(identity).second) continue;
     const bool visible = fs::is_directory(root, error);
     XELOGI("LAUNCHER root {} {}", root.string(), visible ? "visible" : "not visible");
     if (visible) scan(root, 0, root);
@@ -376,7 +404,10 @@ void Launcher::SelectionChanged() {
   if (game.title_id.empty()) return;
   const uint32_t title_id = uint32_t(std::strtoul(game.title_id.c_str(), nullptr, 16));
   int enabled = 0;
-  for (auto& file : LoadPatchFiles(title_id)) {
+  auto patch_candidates = LoadPatchFiles(title_id);
+  for (const auto& file : patch_candidates)
+    if (game.hash && std::find(file.hashes.begin(), file.hashes.end(), game.hash) == file.hashes.end()) other_version_ = true;
+  for (auto& file : SelectPatchFiles(std::move(patch_candidates), game.hash)) {
     if (game.hash && std::find(file.hashes.begin(), file.hashes.end(), game.hash) == file.hashes.end()) {
       other_version_ = true;
       continue;
@@ -460,6 +491,13 @@ void Launcher::Press(Key key) {
         const PatchRow row = patch_rows_[size_t(patch_row_)];
         GamePatch& patch = patch_files_[row.file].patches[row.patch];
         patch.enabled = !patch.enabled;
+        if (patch.enabled) {
+          for (auto& file : patch_files_) for (auto& other : file.patches)
+            if (&other != &patch && other.enabled && PatchWritesConflict(patch, other)) {
+              other.enabled = false;
+              SavePatchChoice(file.title_id, other.name, false);
+            }
+        }
         SavePatchChoice(patch_files_[row.file].title_id, patch.name, patch.enabled);
         const int keep = patch_row_;
         SelectionChanged();
@@ -469,7 +507,7 @@ void Launcher::Press(Key key) {
       break;
     }
     case Mode::settings: {
-      const int rows = 10;
+      const int rows = 12;
       if (key == Key::up) settings_row_ = (settings_row_ + rows - 1) % rows;
       if (key == Key::down) settings_row_ = (settings_row_ + 1) % rows;
       if (key == Key::left || key == Key::right || key == Key::cross) {
@@ -488,16 +526,61 @@ void Launcher::Press(Key key) {
         else if (settings_row_ == 4) settings_.touchpad_menu = !settings_.touchpad_menu;
         else if (settings_row_ == 5) settings_.detailed_logs = !settings_.detailed_logs;
         else if (settings_row_ == 6) settings_.show_fps = !settings_.show_fps;
-        else if (settings_row_ == 7 && key == Key::cross) StartCoverDownload();
-        else if (settings_row_ == 8 && key == Key::cross) Scan();
-        else if (settings_row_ == 9 && key == Key::cross) { settings_.Save(); restart_ = true; }
-        if (settings_row_ >= 1 && settings_row_ < 7) settings_changed_ = true;
+        else if (settings_row_ == 7) { settings_.vsync = !settings_.vsync; restart_needed_ = settings_.vsync != cvars::vsync; }
+        else if (settings_row_ == 8 && key == Key::cross) StartCoverDownload();
+        else if (settings_row_ == 9 && key == Key::cross) { mode_ = Mode::paths; path_row_ = 0; path_error_.clear(); }
+        else if (settings_row_ == 10 && key == Key::cross) Scan();
+        else if (settings_row_ == 11 && key == Key::cross) { settings_.Save(); restart_ = true; }
+        if (settings_row_ >= 1 && settings_row_ < 8) settings_changed_ = true;
       }
       if (key == Key::circle || key == Key::square) {
         if (settings_changed_) { settings_.Save(); settings_.Apply(); settings_changed_ = false; }
         // The rendering resolution is set up with the emulator: start again.
         if (restart_needed_) restart_ = true;
         mode_ = Mode::shelf;
+      }
+      break;
+    }
+    case Mode::paths: {
+      const int rows = int(settings_.game_paths.size());
+      if (key == Key::up && rows) path_row_ = (path_row_ + rows - 1) % rows;
+      if (key == Key::down && rows) path_row_ = (path_row_ + 1) % rows;
+      if (key == Key::square || key == Key::cross) {
+        browser_path_ = key == Key::cross && rows ? fs::path(settings_.game_paths[size_t(path_row_)]) : fs::path("/mnt");
+        std::error_code error;
+        if (!fs::is_directory(browser_path_, error)) browser_path_ = "/";
+        RefreshFolders(); mode_ = Mode::folders;
+      }
+      if (key == Key::triangle && rows) {
+        auto changed = settings_.game_paths;
+        changed.erase(changed.begin() + path_row_);
+        if (WriteGamePaths(kStorage / "game_paths.txt", changed)) {
+          settings_.game_paths = std::move(changed);
+          path_row_ = std::max(0, std::min(path_row_, int(settings_.game_paths.size()) - 1));
+          Scan();
+        } else path_error_ = Tr("Não foi possível salvar as pastas.");
+      }
+      if (key == Key::circle) mode_ = Mode::settings;
+      break;
+    }
+    case Mode::folders: {
+      const int rows = int(browser_folders_.size());
+      if (key == Key::up && rows) folder_row_ = (folder_row_ + rows - 1) % rows;
+      if (key == Key::down && rows) folder_row_ = (folder_row_ + 1) % rows;
+      if (key == Key::cross && rows) { browser_path_ = browser_folders_[size_t(folder_row_)]; RefreshFolders(); }
+      if (key == Key::circle) {
+        if (browser_path_ == "/") mode_ = Mode::paths;
+        else { browser_path_ = browser_path_.parent_path(); RefreshFolders(); }
+      }
+      if (key == Key::square) mode_ = Mode::paths;
+      if (key == Key::triangle) {
+        const auto path = NormalizeGamePath(browser_path_.string());
+        if (path.empty()) { path_error_ = Tr("Selecione uma pasta de jogos."); break; }
+        auto changed = settings_.game_paths;
+        if (std::find(changed.begin(), changed.end(), path) == changed.end()) changed.push_back(path);
+        if (WriteGamePaths(kStorage / "game_paths.txt", changed)) {
+          settings_.game_paths = std::move(changed); path_error_.clear(); mode_ = Mode::paths; Scan();
+        } else path_error_ = Tr("Não foi possível salvar as pastas.");
       }
       break;
     }
@@ -716,6 +799,8 @@ void Launcher::Draw(ImGuiIO& io) {
     c.alpha = 1.0f;
     c.Fill(0, 0, 1920, 1080, 0x000000, 0.55f * sheet_);
     if (mode_ == Mode::settings) DrawSettingsSheet(c);
+    else if (mode_ == Mode::paths) DrawPaths(c);
+    else if (mode_ == Mode::folders) DrawFolders(c);
     else if (mode_ == Mode::profiles) DrawProfilesSheet(c);
     else if (mode_ == Mode::name) DrawNameSheet(c);
     else DrawGameSheet(c);
@@ -724,12 +809,36 @@ void Launcher::Draw(ImGuiIO& io) {
 }
 
 namespace {
-struct Quad { ImVec2 tl, tr, br, bl; };
+struct Quad { ImVec2 tl,tr,br,bl; std::array<float,4> depth{1,1,1,1}; };
 ImVec2 Mix(ImVec2 a, ImVec2 b, float t) { return ImVec2(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t); }
 // The part of a quad between two fractions of its width and of its height.
 Quad Part(const Quad& q, float u0, float v0, float u1, float v1) {
-  const auto point = [&](float u, float v) { return Mix(Mix(q.tl, q.tr, u), Mix(q.bl, q.br, u), v); };
-  return {point(u0, v0), point(u1, v0), point(u1, v1), point(u0, v1)};
+  const auto depth=[&](float u,float v) {
+    return (1-u)*(1-v)*q.depth[0]+u*(1-v)*q.depth[1]+u*v*q.depth[2]+(1-u)*v*q.depth[3];
+  };
+  const auto point=[&](float u,float v) {
+    const float a=(1-u)*(1-v),b=u*(1-v),d=(1-u)*v,e=u*v,z=depth(u,v);
+    return ImVec2((a*q.tl.x*q.depth[0]+b*q.tr.x*q.depth[1]+e*q.br.x*q.depth[2]+d*q.bl.x*q.depth[3])/z,
+                  (a*q.tl.y*q.depth[0]+b*q.tr.y*q.depth[1]+e*q.br.y*q.depth[2]+d*q.bl.y*q.depth[3])/z);
+  };
+  return {point(u0,v0),point(u1,v0),point(u1,v1),point(u0,v1),
+          {depth(u0,v0),depth(u1,v0),depth(u1,v1),depth(u0,v1)}};
+}
+Quad Projected(const Launcher::Canvas& c,const covers3d::Face& f) {
+  return {c.At(f[0].x,f[0].y),c.At(f[1].x,f[1].y),c.At(f[2].x,f[2].y),c.At(f[3].x,f[3].y),
+          {f[0].depth,f[1].depth,f[2].depth,f[3].depth}};
+}
+// Tessellation approximates perspective-correct UVs in ImGui's affine UI shader.
+void CoverImage(ImDrawList* list,ImTextureID texture,const Quad& q,
+                float u0,float v0,float u1,float v1,ImU32 color) {
+  constexpr int columns=8,rows=12;
+  for(int y=0;y<rows;++y) for(int x=0;x<columns;++x) {
+    const float a=float(x)/columns,b=float(x+1)/columns,d=float(y)/rows,e=float(y+1)/rows;
+    const Quad tile=Part(q,a,d,b,e);
+    list->AddImageQuad(texture,tile.tl,tile.tr,tile.br,tile.bl,
+      ImVec2(u0+(u1-u0)*a,v0+(v1-v0)*d),ImVec2(u0+(u1-u0)*b,v0+(v1-v0)*d),
+      ImVec2(u0+(u1-u0)*b,v0+(v1-v0)*e),ImVec2(u0+(u1-u0)*a,v0+(v1-v0)*e),color);
+  }
 }
 // A game case in the shelf, drawn as a box: its front (the quad q, which may
 // be slanted: the cases beside the selected one turn towards it) and the side
@@ -751,7 +860,7 @@ void Gradient(ImDrawList* list, ImVec2 tl, ImVec2 tr, ImVec2 br, ImVec2 bl, ImU3
 }
 void DrawCase(const Launcher::Canvas& c, const std::vector<std::unique_ptr<xe::ui::ImmediateTexture>>& textures,
               const std::vector<CoverArt>& arts, const GameEntry& game, const Quad& q, float light, bool label,
-              bool spine_left, float depth) {
+              bool spine_left, const Quad& side, const Quad& top) {
   const auto shade = [&](uint32_t rgb, float tone = 1.0f, float a = 1.0f) {
     const float k = light * tone;
     return IM_COL32(int((rgb >> 16 & 255) * k), int((rgb >> 8 & 255) * k), int((rgb & 255) * k),
@@ -770,19 +879,11 @@ void DrawCase(const Launcher::Canvas& c, const std::vector<std::unique_ptr<xe::u
                   1.5f * c.scale);
 
   // The side face: from the front's edge, back towards the vanishing point.
-  const float d = depth * c.scale;
-  const ImVec2 near_top = spine_left ? q.tl : q.tr, near_bottom = spine_left ? q.bl : q.br;
-  const float away = spine_left ? -d : d;
-  const float shrink = (near_bottom.y - near_top.y) * 0.035f;
-  const ImVec2 far_top(near_top.x + away, near_top.y + shrink), far_bottom(near_bottom.x + away, near_bottom.y - shrink * 0.2f);
-  if (d > 0.5f) {
-    const ImVec2 outer_top = spine_left ? far_top : near_top, inner_top = spine_left ? near_top : far_top;
-    const ImVec2 outer_bottom = spine_left ? far_bottom : near_bottom, inner_bottom = spine_left ? near_bottom : far_bottom;
+  {
+    const ImVec2 outer_top=side.tl,inner_top=side.tr,inner_bottom=side.br,outer_bottom=side.bl;
     if (spine_left && art.box && texture) {
       // The game's own spine, its right edge against the front.
-      c.list->AddImageQuad(texture, outer_top, inner_top, inner_bottom, outer_bottom, ImVec2(art.spine_u0, 0),
-                           ImVec2(art.spine_u1, 0), ImVec2(art.spine_u1, 1), ImVec2(art.spine_u0, 1),
-                           shade(0xffffff, 0.78f));
+      CoverImage(c.list,texture,side,art.spine_u0,0,art.spine_u1,1,shade(0xffffff,0.78f));
     } else if (spine_left) {
       c.list->AddQuadFilled(outer_top, inner_top, inner_bottom, outer_bottom, shade(0x1b2027));
       const ImVec2 band_outer = Mix(outer_top, outer_bottom, 0.085f), band_inner = Mix(inner_top, inner_bottom, 0.085f);
@@ -797,9 +898,11 @@ void DrawCase(const Launcher::Canvas& c, const std::vector<std::unique_ptr<xe::u
   }
 
   // The front.
+  Gradient(c.list,top.tl,top.tr,top.br,top.bl,shade(0x305622),shade(0x305622),
+           shade(0x9ac96a),shade(0xc9e9aa));
+  c.list->AddQuad(top.tl,top.tr,top.br,top.bl,shade(0xe1f5cf,1,0.4f),c.scale);
   if (art.box && texture) {
-    c.list->AddImageQuad(texture, q.tl, q.tr, q.br, q.bl, ImVec2(art.front_u0, 0), ImVec2(art.front_u1, 0),
-                         ImVec2(art.front_u1, 1), ImVec2(art.front_u0, 1), shade(0xffffff));
+    CoverImage(c.list,texture,q,art.front_u0,0,art.front_u1,1,shade(0xffffff));
   } else {
     c.list->AddQuadFilled(q.tl, q.tr, q.br, q.bl, shade(0x20262f));
     const Quad band = Part(q, 0.0f, 0.0f, 1.0f, 0.085f);
@@ -811,8 +914,7 @@ void DrawCase(const Launcher::Canvas& c, const std::vector<std::unique_ptr<xe::u
         c.list->AddQuadFilled(front.tl, front.tr, front.br, front.bl, shade(0x0f1319));
         front = Part(q, 0.045f, 0.24f, 0.955f, 0.24f + 0.91f * 0.72f * std::min(1.0f, 1.0f / art.aspect));
       }
-      c.list->AddImageQuad(texture, front.tl, front.tr, front.br, front.bl, ImVec2(art.front_u0, 0),
-                           ImVec2(art.front_u1, 0), ImVec2(art.front_u1, 1), ImVec2(art.front_u0, 1), shade(0xffffff));
+      CoverImage(c.list,texture,front,art.front_u0,0,art.front_u1,1,shade(0xffffff));
     } else {
       static constexpr uint32_t tints[] = {0x1f6f54, 0x275d8c, 0x7a4a21, 0x5b3a82, 0x8a2f43, 0x2f6f78};
       uint32_t pick = 0;
@@ -875,18 +977,10 @@ void Launcher::DrawShelf(Canvas& c) {
     // The cases stand on a floor that mirrors them faintly. The selected one
     // faces the viewer; its neighbours turn towards it and step back.
     const auto place = [&](float distance) {
-      const float away = std::fabs(distance), turn = std::min(1.0f, away);
-      const float side = distance < 0 ? -1.0f : 1.0f;
-      const float width = 330 - 130 * turn;
-      const float centre = 960 + side * (turn * 330 + std::max(0.0f, away - 1.0f) * 215);
-      const float inner = 462 * (1.0f - 0.12f * turn), outer = 462 * (1.0f - 0.26f * turn);
-      const float left = centre - width / 2, right_edge = centre + width / 2;
-      const float left_height = distance > 0 ? inner : outer, right_height = distance > 0 ? outer : inner;
-      return Quad{c.At(left, floor - left_height), c.At(right_edge, floor - right_height),
-                  c.At(right_edge, floor), c.At(left, floor)};
+      return Projected(c,covers3d::Project(distance,floor).front);
     };
     std::vector<int> order;
-    for (int n = 0; n < count; ++n) if (std::fabs(float(n) - scroll_) < 5.5f) order.push_back(n);
+    for (int n = 0; n < count; ++n) if (std::fabs(float(n) - scroll_) < 9.5f) order.push_back(n);
     std::sort(order.begin(), order.end(), [&](int a, int b) { return std::fabs(a - scroll_) > std::fabs(b - scroll_); });
     // Reflections first, then the floor's fade over them, then the cases.
     for (int n : order) {
@@ -908,7 +1002,7 @@ void Launcher::DrawShelf(Canvas& c) {
       }
       c.alpha = alpha;
     }
-    c.list->AddRectFilledMultiColor(c.At(0, floor), c.At(1920, floor + 220), c.Color(kInk, 0.25f), c.Color(kInk, 0.25f),
+    c.list->AddRectFilledMultiColor(c.At(0, floor), c.At(1920, floor + 260), c.Color(kInk, 0.25f), c.Color(kInk, 0.25f),
                                     c.Color(0x06080c, 1.0f), c.Color(0x06080c, 1.0f));
     c.Fill(0, floor, 1920, 2, kWhite, 0.06f);
     for (int n : order) {
@@ -928,9 +1022,10 @@ void Launcher::DrawShelf(Canvas& c) {
         }
       }
       // The spine shows on the middle case too, so the shelf reads as boxes.
-      const float depth = 26 + 30 * std::min(1.0f, std::fabs(distance));
+      const auto box=covers3d::Project(distance,floor);
       DrawCase(c, textures_, arts_, games_[size_t(view_[size_t(n)])], q,
-               1.0f - 0.5f * std::min(1.0f, std::fabs(distance)), true, distance >= -0.01f, depth);
+               1.0f - 0.5f * std::min(1.0f, std::fabs(distance)), true,box.spine,
+               Projected(c,box.side),Projected(c,box.top));
       if (chosen) c.list->AddQuad(q.tl, q.tr, q.br, q.bl, c.Color(kWhite, 0.75f), 2.0f * c.scale);
     }
     // The selected game in words, at the lower left; its place in the list at the right.
@@ -946,6 +1041,8 @@ void Launcher::DrawShelf(Canvas& c) {
     c.Text(Tr(kFilters[filter_]), 1824, 850, 20, kFaint, 1.0f, 2);
   }
   if (!message_.empty()) c.Text(message_, 96, 916, 24, kWarning, 1.0f, 0, 1700);
+  else if(Selected() && Lower(Selected()->name).find("garden warfare")!=std::string::npos)
+    c.Text(Tr("Este jogo exige serviços online. Autenticação Xbox Live/EA não está disponível."),96,916,24,kWarning,1,0,1700);
   c.Fill(96, 964, 1728, 1, kWhite, 0.08f);
   float x = 96;
   if (count) {
@@ -1029,20 +1126,22 @@ void Launcher::DrawSettingsSheet(Canvas& c) {
       {Tr("Clique do touchpad"), settings_.touchpad_menu ? Tr("Abre o guia") : Tr("Botão Back"), Tr("Abre o guia: o touchpad chama o guia do emulador durante o jogo, e o botão Back do Xbox fica dentro do guia. Botão Back: o touchpad é o Back do Xbox, e o guia abre com OPTIONS + touchpad.")},
       {Tr("Registros detalhados"), settings_.detailed_logs ? Tr("Ligados") : Tr("Desligados"), Tr("Grava cada chamada do jogo ao sistema no log. Deixa os jogos mais lentos; use só para investigar um problema.")},
       {Tr("Mostrar FPS no jogo"), settings_.show_fps ? Tr("Ligado") : Tr("Desligado"), Tr("Mostra no canto da tela quantos quadros por segundo o jogo entrega.")},
+      {Tr("VSync"), settings_.vsync ? Tr("Ligado") : Tr("Desligado"), Tr("Controla a sincronização vertical emulada. O ritmo automático permanece em 60 Hz mesmo quando desligado, para evitar acelerar o jogo. Ao fechar este painel, o emulador reinicia para aplicar a mudança.")},
       {Tr("Baixar capas"), covers_.Busy() ? Tr("Baixando...") : "", Tr("Baixa do XboxUnity (o mesmo serviço do Aurora) as capas dos jogos que ainda não têm uma. Precisa de internet no PS5. Uma imagem cover.jpg na pasta do jogo sempre tem prioridade.")},
+      {Tr("Pastas de jogos"), std::to_string(settings_.game_paths.size()), Tr("Adicione várias pastas, inclusive em dispositivos externos. Pastas desconectadas continuam salvas. Apenas locais acessíveis ao aplicativo podem ser lidos.")},
       {Tr("Atualizar lista de jogos"), "", Tr("Procura de novo os jogos, as capas e os patches nas pastas.")},
       {Tr("Reiniciar o emulador"), "", Tr("Fecha e abre o emulador de novo.")}};
-  for (int n = 0; n < 10; ++n) {
-    const float y = 122 + n * 54.0f;
+  for (int n = 0; n < 12; ++n) {
+    const float y = 122 + n * 45.0f;
     const bool focused = n == settings_row_;
-    c.Fill(x + 40, y, 780, 44, focused ? kSurfaceHigh : kSurface, focused ? 1.0f : 0.6f, 10);
-    if (focused) c.Edge(x + 40, y, 780, 44, kAccent, 0.9f, 10, 2.0f);
+    c.Fill(x + 40, y, 780, 40, focused ? kSurfaceHigh : kSurface, focused ? 1.0f : 0.6f, 10);
+    if (focused) c.Edge(x + 40, y, 780, 40, kAccent, 0.9f, 10, 2.0f);
     c.Text(rows[n].label, x + 64, y + 8, 24, focused ? kText : kBody);
     c.Text(rows[n].value, x + 796, y + 8, 24, focused ? kAccent : kMuted, 1.0f, 2, 420);
   }
   c.Wrapped(rows[settings_row_].about, x + 56, 684, 20, kBody, 750);
   const std::string covers = covers_.Status();
-  if (settings_row_ == 7 && !covers.empty()) c.Text(covers, x + 56, 770, 20, kAccent, 1.0f, 0, 750);
+  if (settings_row_ == 8 && !covers.empty()) c.Text(covers, x + 56, 770, 20, kAccent, 1.0f, 0, 750);
   c.Fill(x + 40, 808, 780, 1, kWhite, 0.10f);
   c.Text(Tr("Sobre"), x + 56, 820, 28, kText);
   c.Wrapped(std::string(Tr("PS5X360: emulador experimental de Xbox 360 para PlayStation 5.")) +
@@ -1053,6 +1152,59 @@ void Launcher::DrawSettingsSheet(Canvas& c) {
   c.Hint('v', Tr("Mover"), hint, 1004);
 }
 
+void Launcher::RefreshFolders() {
+  browser_folders_.clear(); folder_row_ = 0; path_error_.clear();
+  std::error_code error;
+  for (fs::directory_iterator it(browser_path_, error), end; !error && it != end; it.increment(error)) {
+    std::error_code entry_error;
+    if (it->is_directory(entry_error)) browser_folders_.push_back(it->path());
+  }
+  std::sort(browser_folders_.begin(), browser_folders_.end());
+  if (error) path_error_ = Tr("Esta pasta não está acessível ao aplicativo.");
+}
+void Launcher::DrawPaths(Canvas& c) {
+  const float x = 1920 - 860 * sheet_;
+  c.Fill(x, 0, 860, 1080, kSheet, 0.98f);
+  c.Text(Tr("Pastas de jogos"), x + 56, 64, 36, kText);
+  c.Wrapped(Tr("Adicione várias pastas, inclusive em dispositivos externos. Pastas desconectadas continuam salvas. Apenas locais acessíveis ao aplicativo podem ser lidos."), x + 56, 122, 20, kBody, 750);
+  const int count = int(settings_.game_paths.size()), first = std::max(0, path_row_ - 8);
+  for (int n = first; n < std::min(count, first + 9); ++n) {
+    const float y = 230 + (n - first) * 68.f;
+    const bool focused = n == path_row_;
+    c.Fill(x + 40, y, 780, 58, focused ? kSurfaceHigh : kSurface, 1, 8);
+    if (focused) c.Edge(x + 40, y, 780, 58, kAccent, 0.9f, 8);
+    c.Text(settings_.game_paths[size_t(n)], x + 56, y + 5, 20, kText, 1, 0, 744);
+    std::error_code error;
+    const bool visible = fs::is_directory(settings_.game_paths[size_t(n)], error);
+    c.Text(visible ? Tr("Disponível") : Tr("Desconectada ou indisponível"), x + 56, y + 31, 20, visible ? kAccent : kMuted);
+  }
+  if (!count) c.Text(Tr("Nenhuma pasta configurada."), x + 56, 240, 24, kMuted);
+  if (!path_error_.empty()) c.Wrapped(path_error_, x + 56, 868, 20, kWarning, 750);
+  c.Wrapped(Tr("Remover um local não apaga os jogos. Logs: /download0/xbox360ps5/LOGS"), x + 56, 920, 20, kMuted, 750);
+  float hint = c.Hint('s', Tr("Adicionar"), x + 56, 1004);
+  hint = c.Hint('t', Tr("Remover"), hint, 1004);
+  c.Hint('o', Tr("Voltar"), hint, 1004);
+}
+void Launcher::DrawFolders(Canvas& c) {
+  const float x = 1920 - 860 * sheet_;
+  c.Fill(x, 0, 860, 1080, kSheet, 0.98f);
+  c.Text(Tr("Escolher pasta"), x + 56, 64, 36, kText);
+  c.Wrapped(browser_path_.string(), x + 56, 122, 24, kAccent, 750);
+  const int count = int(browser_folders_.size()), first = std::max(0, folder_row_ - 8);
+  for (int n = first; n < std::min(count, first + 9); ++n) {
+    const float y = 230 + (n - first) * 62.f;
+    const bool focused = n == folder_row_;
+    c.Fill(x + 40, y, 780, 52, focused ? kSurfaceHigh : kSurface, 1, 8);
+    if (focused) c.Edge(x + 40, y, 780, 52, kAccent, 0.9f, 8);
+    c.Text(browser_folders_[size_t(n)].filename().string(), x + 56, y + 12, 24, kText, 1, 0, 744);
+  }
+  if (!count && path_error_.empty()) c.Text(Tr("Sem subpastas. Você pode adicionar a pasta atual."), x + 56, 240, 20, kMuted);
+  if (!path_error_.empty()) c.Wrapped(path_error_, x + 56, 860, 20, kWarning, 750);
+  c.Wrapped(Tr("Triângulo adiciona a pasta atual. Círculo sobe um nível."), x + 56, 920, 20, kBody, 750);
+  float hint = c.Hint('x', Tr("Abrir"), x + 56, 1004);
+  hint = c.Hint('t', Tr("Usar pasta"), hint, 1004);
+  c.Hint('s', Tr("Cancelar"), hint, 1004);
+}
 void Launcher::DrawProfilesSheet(Canvas& c) {
   const float x = 1920 - 860 * sheet_;
   c.Fill(x, 0, 860, 1080, kSheet, 0.98f);

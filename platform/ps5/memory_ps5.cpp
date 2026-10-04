@@ -7,7 +7,9 @@
 // the union of the access of its four guest pages.
 #include "xenia/base/memory.h"
 #include <cstdio>
+#include <atomic>
 #include <cstring>
+#include <ctime>
 #include <map>
 #include <mutex>
 #include <vector>
@@ -21,6 +23,14 @@ int32_t sceKernelReserveVirtualRange(void**, size_t, int, size_t);
 int32_t sceKernelMunmap(void*, size_t);
 int32_t sceKernelVirtualQuery(const void*, int, void*, size_t);
 int sceKernelDebugOutText(int, const char*);
+}
+// Counters for a performance measurement (read by the title's guide): calls to
+// Protect, kernel protection calls they made, and the time inside those.
+namespace xbox360ps5 {
+std::atomic<unsigned long long> protect_calls{0}, protect_syscalls{0}, protect_nanoseconds{0}, fault_count{0};
+// The same, for the protections that open pages for writing (after a fault)
+// and for the pages each kind covered.
+std::atomic<unsigned long long> open_syscalls{0}, open_nanoseconds{0}, protect_pages{0};
 }
 namespace xe::memory {
 namespace {
@@ -52,8 +62,8 @@ uintptr_t anywhere = kAnywhereStart;
 
 size_t RoundUp(size_t value, size_t unit) { return (value + unit - 1) / unit * unit; }
 void Note(const char* what, uintptr_t address, size_t bytes, int result) {
-  static int notes = 0;
-  if (++notes > 60) return;  // A caller retrying in a loop must not flood the kernel log.
+  static std::atomic<unsigned> notes{0};
+  if (notes.fetch_add(1, std::memory_order_relaxed) >= 60) return;
   char text[160];
   std::snprintf(text, sizeof(text), "[X360] MEMORY %s address=%llx bytes=%llx result=%x\n", what,
                 static_cast<unsigned long long>(address), static_cast<unsigned long long>(bytes),
@@ -76,9 +86,13 @@ bool RangeFree(uintptr_t address, size_t bytes) {
 void* Reserve(uintptr_t wanted, size_t bytes) {
   if (wanted) {
     void* at = reinterpret_cast<void*>(wanted);
-    if (sceKernelReserveVirtualRange(&at, bytes, 0, kPage) == 0) {
+    const int32_t result = sceKernelReserveVirtualRange(&at, bytes, 0, kPage);
+    if (result == 0) {
       if (at == reinterpret_cast<void*>(wanted)) return at;
+      Note("reserve-moved", reinterpret_cast<uintptr_t>(at), bytes, 0);
       sceKernelMunmap(at, bytes);
+    } else {
+      Note("reserve", wanted, bytes, result);
     }
     // The kernel moved the hint. Below 4 GiB, take a verified free range.
     if (wanted + bytes <= 0x100000000ull && RangeFree(wanted, bytes)) {
@@ -138,8 +152,16 @@ bool Apply(uintptr_t base, View& view, size_t first_guest, size_t guest_count) {
     if (view.host[page] == bits) { ++page; continue; }
     size_t end = page + 1;
     while (end <= last && view.host[end] != bits && wanted(end) == bits) ++end;
+    timespec before{}, after{};
+    clock_gettime(CLOCK_MONOTONIC, &before);
     const int32_t result = sceKernelMprotect(reinterpret_cast<void*>(base + page * kPage),
                                              (end - page) * kPage, bits);
+    clock_gettime(CLOCK_MONOTONIC, &after);
+    const long long taken = (after.tv_sec - before.tv_sec) * 1000000000ll + (after.tv_nsec - before.tv_nsec);
+    ++xbox360ps5::protect_syscalls;
+    xbox360ps5::protect_nanoseconds += taken;
+    xbox360ps5::protect_pages += end - page;
+    if (bits & 2) { ++xbox360ps5::open_syscalls; xbox360ps5::open_nanoseconds += taken; }
     if (result) { Note("protect", base + page * kPage, (end - page) * kPage, result); good = false; }
     else std::fill(view.host.begin() + page, view.host.begin() + end, bits);
     page = end;
@@ -270,6 +292,7 @@ bool DeallocFixed(void* address, size_t length, DeallocationType type) {
   return true;
 }
 bool Protect(void* address, size_t length, PageAccess access, PageAccess* previous) {
+  ++xbox360ps5::protect_calls;
   std::lock_guard lock(guard);
   return SetAccess(reinterpret_cast<uintptr_t>(address), length, access, previous, true);
 }

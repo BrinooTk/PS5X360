@@ -10,31 +10,47 @@
 #include "xenia/ui/window.h"
 #include "xenia/ui/windowed_app_context.h"
 #include "xbox360ps5/i18n.hpp"
+#include "xbox360ps5/frame_watch.hpp"
+#include "xbox360ps5/session_log.hpp"
 #include "xbox360ps5/crash_report.hpp"
 #include "xbox360ps5/ui_sounds.hpp"
 #include "xbox360ps5/display_surface.hpp"
 #include "xbox360ps5/dualsense_input.hpp"
 #include "xbox360ps5/autotest.hpp"
 #include "xbox360ps5/launcher.hpp"
+#include "xbox360ps5/game_patches.hpp"
+#include "xbox360ps5/patch_runtime.hpp"
 #include "xenia/kernel/xam/xam_module.h"
+#include "xbox360ps5/utility_cache.hpp"
 #include "xbox360ps5/canary_audio.hpp"
 #include "xenia/base/cvar.h"
 #include "xenia/kernel/kernel_state.h"
+#include "xenia/kernel/user_module.h"
 #include "xenia/kernel/xam/profile_manager.h"
 #include "xenia/kernel/xthread.h"
+#include "xenia/cpu/backend/backend.h"
+#include "xenia/cpu/backend/code_cache.h"
+#include "xenia/cpu/function.h"
+#include "xenia/cpu/processor.h"
 #include "xenia/kernel/util/object_table.h"
 #include "xenia/kernel/xam/xam_state.h"
 #include "third_party/imgui/imgui.h"
 #include <algorithm>
+#include <atomic>
 #include <array>
 #include <chrono>
 #include <condition_variable>
 #include <filesystem>
 #include <fstream>
+#include <csetjmp>
 #include <cstdio>
+#include <exception>
+#include <stdexcept>
+#include <thread>
 #include <cstdlib>
 #include <unistd.h>
 DECLARE_path(log_file);
+DECLARE_bool(vsync);
 DECLARE_int32(log_level);
 DECLARE_bool(headless);
 // The launcher's language setting. Canary declares this variable in its kernel
@@ -53,31 +69,45 @@ int sceKernelDebugOutText(int, const char*);
 int sceSystemServiceLoadExec(const char*, const char**);
 int sceSystemServiceHideSplashScreen();
 }
+namespace xbox360ps5 {
+extern std::atomic<unsigned long long> protect_calls, protect_syscalls, protect_nanoseconds, fault_count;
+extern std::atomic<unsigned long long> open_syscalls, open_nanoseconds, protect_pages;
+}
 namespace {
 using xbox360ps5::Tr;
 // The frame counter drawn over a game when the setting asks for it.
 class FpsOverlay final : public xe::ui::ImGuiDialog {
  public:
-  FpsOverlay(xe::ui::ImGuiDrawer* drawer, const float& fps, const bool& shown)
-      : ImGuiDialog(drawer), fps_(fps), shown_(shown) {}
+  FpsOverlay(xe::ui::ImGuiDrawer* drawer,const float& fps,const bool& shown,const bool& stalled,
+             const bool& touchpad_menu)
+      : ImGuiDialog(drawer),fps_(fps),shown_(shown),stalled_(stalled),touchpad_menu_(touchpad_menu) {}
  protected:
   void OnDraw(ImGuiIO& io) override {
-    if (!shown_) return;
+    if (!shown_ && !stalled_) return;
     char text[32];
     std::snprintf(text, sizeof(text), "%.0f FPS", fps_);
     ImDrawList* list = ImGui::GetForegroundDrawList();
     const float scale = io.DisplaySize.y / 1080.0f;
+    if(stalled_) {
+      const char* notice=touchpad_menu_ ? Tr("Sem frames novos. Touchpad: guia") : Tr("Sem frames novos. OPTIONS + touchpad: guia");
+      const ImVec2 size=ImGui::GetFont()->CalcTextSizeA(24*scale,4096,0,notice);
+      list->AddRectFilled(ImVec2(24*scale,1000*scale),ImVec2((60+size.x/scale)*scale,1048*scale),IM_COL32(0,0,0,180),8*scale);
+      list->AddText(ImGui::GetFont(),24*scale,ImVec2(42*scale,1010*scale),IM_COL32(245,204,137,255),notice);
+    }
+    if(!shown_) return;
     list->AddRectFilled(ImVec2(24 * scale, 24 * scale), ImVec2(150 * scale, 64 * scale), IM_COL32(0, 0, 0, 150), 8 * scale);
     list->AddText(ImGui::GetFont(), 28 * scale, ImVec2(36 * scale, 30 * scale), IM_COL32(120, 230, 140, 255), text);
   }
  private:
   const float& fps_;
   const bool& shown_;
+  const bool& stalled_;
+  const bool& touchpad_menu_;
 };
 // The emulator's guide over a running game, after the Xbox 360's: a light
 // panel that unfolds from the middle of the screen, a page of actions and a page
 // of settings. The loop that reads the pad drives it; the dialog only draws.
-enum class GuideAction { resume, shelf, back_button, quit, fps, sound, filter, scale, touchpad };
+enum class GuideAction { resume, shelf, back_button, quit, fps, sound, filter, scale, touchpad, measure };
 struct GuideItem { GuideAction action; std::string label, value; };
 struct GuideState {
   bool open = false;
@@ -98,7 +128,8 @@ std::vector<GuideItem> GuideItems(int page, const xbox360ps5::Settings& settings
   return {{GuideAction::fps, Tr("Mostrar FPS"), settings.show_fps ? Tr("Ligado") : Tr("Desligado")},
           {GuideAction::sound, Tr("Som"), settings.mute ? Tr("Mudo") : Tr("Ligado")},
           {GuideAction::filter, Tr("Filtro de imagem"), Settings::FilterName(settings.image_filter)},
-          {GuideAction::touchpad, Tr("Clique do touchpad"), settings.touchpad_menu ? Tr("Abre o guia") : Tr("Botão Back")}};
+          {GuideAction::touchpad, Tr("Clique do touchpad"), settings.touchpad_menu ? Tr("Abre o guia") : Tr("Botão Back")},
+          {GuideAction::measure, Tr("Medir desempenho (5 s)"), ""}};
 }
 class Guide final : public xe::ui::ImGuiDialog {
  public:
@@ -252,6 +283,76 @@ void ReportStall(xe::Emulator& emulator, int pass) {
     xbox360ps5::ProbeThread(thread->thread()->native_handle(), name);
   }
 }
+// Where the time goes in a slow scene: every guest and emulator thread is
+// sampled for a few seconds, and the log gets, per thread, the share spent in
+// generated guest code, in the emulator and in system libraries, with the
+// commonest places of each. Offsets are symbolized afterwards with the build's
+// kept ELF. The picture freezes meanwhile; the game keeps running.
+void MeasurePerformance(xe::Emulator& emulator, float fps) {
+  struct Place { uint64_t key; uint32_t count; };
+  struct Tally {
+    xe::kernel::object_ref<xe::kernel::XThread> thread;
+    uint32_t total = 0, guest = 0, title = 0, system = 0;
+    std::vector<Place> places[3];  // Guest functions, title code, callers into system libraries.
+    void Add(int kind, uint64_t key) {
+      for (auto& place : places[kind]) if (place.key == key) { ++place.count; return; }
+      places[kind].push_back({key, 1});
+    }
+  };
+  std::vector<Tally> tallies;
+  for (auto& thread : emulator.kernel_state()->object_table()->GetObjectsByType<xe::kernel::XThread>())
+    if (thread->thread()) tallies.push_back({thread});
+  auto* code_cache = emulator.processor()->backend()->code_cache();
+  const auto started = std::chrono::steady_clock::now();
+  const uint64_t swaps = emulator.graphics_system()->command_processor()->swap_count();
+  const unsigned long long protects = xbox360ps5::protect_calls, syscalls = xbox360ps5::protect_syscalls,
+                           spent = xbox360ps5::protect_nanoseconds, faults = xbox360ps5::fault_count,
+                           opens = xbox360ps5::open_syscalls, open_spent = xbox360ps5::open_nanoseconds,
+                           pages = xbox360ps5::protect_pages;
+  int rounds = 0;
+  while (std::chrono::steady_clock::now() - started < std::chrono::seconds(5)) {
+    for (auto& tally : tallies) {
+      xbox360ps5::ThreadSample sample;
+      if (!xbox360ps5::SampleThread(tally.thread->thread()->native_handle(), &sample)) continue;
+      ++tally.total;
+      if (sample.in_title) { ++tally.title; tally.Add(1, sample.rip & ~uint64_t(0x3F)); }
+      else if (sample.rip >= 0x40000000 && sample.rip < 0x50000000) {
+        ++tally.guest;
+        auto* function = code_cache->LookupFunction(sample.rip);
+        tally.Add(0, function ? function->address() : 0);
+      } else { ++tally.system; tally.Add(2, sample.caller); }
+    }
+    ++rounds;
+    std::this_thread::sleep_for(std::chrono::milliseconds(4));
+  }
+  const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
+  XELOGW("MEASURE {}: {} rounds in {:.1f} s, {} threads, {:.1f} swaps/s during it, {:.0f} FPS before",
+         emulator.title_name(), rounds, seconds, tallies.size(),
+         double(emulator.graphics_system()->command_processor()->swap_count() - swaps) / seconds, fps);
+  XELOGW("MEASURE memory: {:.0f} protect calls/s, {:.0f} kernel protections/s taking {:.1f} ms/s, {:.0f} faults/s",
+         double(xbox360ps5::protect_calls - protects) / seconds, double(xbox360ps5::protect_syscalls - syscalls) / seconds,
+         double(xbox360ps5::protect_nanoseconds - spent) / seconds / 1e6, double(xbox360ps5::fault_count - faults) / seconds);
+  XELOGW("MEASURE memory: of those, {:.0f}/s open pages for writing taking {:.1f} ms/s; {:.0f} kernel pages/s changed",
+         double(xbox360ps5::open_syscalls - opens) / seconds, double(xbox360ps5::open_nanoseconds - open_spent) / seconds / 1e6,
+         double(xbox360ps5::protect_pages - pages) / seconds);
+  for (auto& tally : tallies) {
+    if (!tally.total) continue;
+    std::string line = fmt::format("MEASURE thread {:08X} '{}' samples {} guest {}% title {}% system {}%",
+                                   tally.thread->handle(), tally.thread->thread_name(), tally.total,
+                                   100 * tally.guest / tally.total, 100 * tally.title / tally.total,
+                                   100 * tally.system / tally.total);
+    const char* const kinds[] = {" | guest", " | title", " | system-from"};
+    for (int kind = 0; kind < 3; ++kind) {
+      auto& places = tally.places[kind];
+      std::sort(places.begin(), places.end(), [](const Place& a, const Place& b) { return a.count > b.count; });
+      line += kinds[kind];
+      for (size_t n = 0; n < places.size() && n < 6; ++n)
+        line += fmt::format(" {:X}:{}%", places[n].key, 100 * places[n].count / tally.total);
+    }
+    XELOGW("{}", line);
+  }
+  xe::FlushLog();
+}
 // The profile the user chose in the launcher, kept between runs.
 const char kProfileFile[] = "/download0/xbox360ps5/profile.txt";
 uint64_t SavedProfile() {
@@ -370,6 +471,12 @@ struct DetachPresentation {
 }
 // Canary's log lines also go to the network stream (everything) and to the
 // console's kernel log (warnings and errors only: it is a small, slow ring).
+class GameLogSink final : public xe::LogSink {
+ public:
+  xbox360ps5::SessionLog session;
+  void Write(const char* text, size_t size) override { session.Write(text, size); }
+  void Flush() override { session.Flush(); }
+};
 class ConsoleLogSink final : public xe::LogSink {
  public:
   void Write(const char* text, size_t size) override {
@@ -404,9 +511,25 @@ int main(int argc, char** argv) {
   std::error_code error;
   std::filesystem::create_directories(storage, error);
   if (error) { std::fprintf(stderr, "Writable storage unavailable: %s\n", error.message().c_str()); return 1; }
-  xbox360ps5::InstallCrashReport("/download0/xbox360ps5/boot.log");
+  std::error_code boot_log_error;
+  std::filesystem::create_directories("/app0/logs", boot_log_error);
+  xbox360ps5::InstallCrashReport(boot_log_error ? "/download0/xbox360ps5/boot.log" : "/app0/logs/boot.log");
   using xbox360ps5::Stage;
   Stage("BOOT main entered");
+  // Whether a C++ exception can be thrown and caught on this console. The
+  // emulator core relies on it in places; if the unwinder does not work every
+  // throw ends the title, and the boot log says so here.
+  {
+    static std::jmp_buf escape;
+    const auto previous = std::set_terminate([] { std::longjmp(escape, 1); });
+    bool caught = false;
+    if (!setjmp(escape)) {
+      try { throw std::runtime_error("probe"); } catch (const std::exception&) { caught = true; }
+    }
+    std::set_terminate(previous);
+    Stage(caught ? "BOOT exceptions: thrown and caught" : "BOOT exceptions: NOT caught (unwinding fails)");
+  }
+  Stage("BOOT version " XBOX360PS5_VERSION);
   // Relative paths must resolve to "no such file" rather than a sandbox error.
   if (chdir("/download0/xbox360ps5")) Stage("BOOT chdir refused");
   xbox360ps5::ReportPlatformMemory();
@@ -414,11 +537,34 @@ int main(int argc, char** argv) {
   xbox360ps5::Settings settings;
   settings.Load();
   settings.Apply();
-  cvars::log_file = storage / "engine.log";
+  // Canary caches the vblank period at graphics setup. Apply only on startup;
+  // the library saves changes and restarts rather than mutating a live flag.
+  cvars::vsync = settings.vsync;
+  auto owned_game_log = std::make_unique<GameLogSink>();
+  auto* game_log = owned_game_log.get();
+  std::filesystem::path log_root;
+  bool log_ready = false;
+  // Prefer the visible installation folder. Some title mounts deny writes
+  // outside download0, so preserve logging even in those environments.
+  for (const auto& candidate : {std::filesystem::path("/data/homebrew/PPSA50011/logs"),
+                                std::filesystem::path("/app0/logs"), storage / "LOGS"}) {
+    if (game_log->session.Begin(candidate, "Launcher", "", "library", XBOX360PS5_VERSION)) {
+      log_root = candidate;
+      log_ready = true;
+      break;
+    }
+  }
+  // The dedicated sink owns file routing; the core's fixed file sink is unused.
+  cvars::log_file = log_ready ? std::filesystem::path("/dev/null") : storage / "engine.log";
   // The kernel's dialogs (sign-in, messages) answer themselves for now.
   cvars::headless = true;
   xe::InitializeLogging("PS5X360");
+  xe::AddLogSink(std::move(owned_game_log));
   xe::AddLogSink(std::make_unique<ConsoleLogSink>());
+  if (log_ready) XELOGW("Logs: {}", game_log->session.Path().string());
+  XELOGW("Logging: {} (level {}), platform stdout disabled", settings.detailed_logs ? "detailed" : "normal", cvars::log_level);
+  if (log_ready && log_root == storage / "LOGS")
+    XELOGW("Installation folder is not writable; desktop log downloader exports sessions to /data/homebrew/PPSA50011/logs");
   std::filesystem::path game;
   if (argc > 1 && argv[1]) game = argv[1];
   else {
@@ -449,13 +595,61 @@ int main(int argc, char** argv) {
   if (fonts.f28) drawer.GetIO().FontDefault = fonts.f28;
   else { drawer.GetIO().FontGlobalScale = 2.5f; Stage("BOOT launcher font missing, using the built-in one"); }
   xbox360ps5::Launcher launcher(fonts, settings);
+  // Why the previous run could not start a game, when it left a note.
+  {
+    std::ifstream notice(storage / "notice.txt");
+    std::string reason;
+    if (std::getline(notice, reason) && !reason.empty()) {
+      launcher.SetMessage(std::string(Tr("Não foi possível iniciar o jogo: ")) + reason);
+      notice.close();
+      std::error_code notice_error;
+      std::filesystem::remove(storage / "notice.txt", notice_error);
+    }
+  }
   Stage("BOOT pad");
   NativePad pad;
   int result = 0;
   bool restart = false;
   {
+    // The title's own storage (/download0) is an image of a few hundred
+    // megabytes: enough for saves and profiles, not for shader and module
+    // caches and the guest's cache partitions, which filled it. Once full, a
+    // game not started before could not even make its cache folder and the
+    // title aborted. What can be made again goes to the installation folder
+    // when that is writable (the console's whole disk), and the copies in the
+    // save storage are removed to give the room back to saves.
+    std::filesystem::path bulk = storage;
+    {
+      std::error_code bulk_error;
+      const std::filesystem::path candidate = "/app0/cache";
+      std::filesystem::create_directories(candidate, bulk_error);
+      bool writable = false;
+      if (!bulk_error) {
+        { std::ofstream probe(candidate / ".probe", std::ios::trunc); probe << "probe"; probe.flush(); writable = probe.good(); }
+        std::filesystem::remove(candidate / ".probe", bulk_error);
+      }
+      if (writable) {
+        bulk = candidate;
+        for (const char* old : {"cache", "utility-cache"}) {
+          std::error_code remove_error;
+          const auto removed = std::filesystem::remove_all(storage / old, remove_error);
+          if (!remove_error && removed) XELOGW("Storage: removed {} cache entries from {}", removed, (storage / old).string());
+          else if (remove_error) XELOGW("Storage: could not clear {}: {}", (storage / old).string(), remove_error.message());
+        }
+      }
+      // How much of the save storage is in use: its real size is not reported
+      // by the system (it answers with the size of the disk).
+      uint64_t used = 0;
+      std::error_code walk_error;
+      for (std::filesystem::recursive_directory_iterator entry(storage, walk_error), end; !walk_error && entry != end;
+           entry.increment(walk_error)) {
+        std::error_code size_error;
+        if (entry->is_regular_file(size_error)) { const auto size = entry->file_size(size_error); if (!size_error) used += size; }
+      }
+      XELOGW("Storage: caches in {}; save storage {} holds {} KiB", bulk.string(), storage.string(), used / 1024);
+    }
     Stage("BOOT emulator constructor");
-    xe::Emulator emulator("", storage, storage / "content", storage / "cache");
+    xe::Emulator emulator("", storage, storage / "content", bulk / (bulk == storage ? "cache" : "core"));
     Stage("BOOT emulator setup");
     xbox360ps5::DualSenseInput* input = nullptr;
     auto status = emulator.Setup(&window, &drawer, true,
@@ -475,6 +669,10 @@ int main(int argc, char** argv) {
     xbox360ps5::ReportPlatformMemory();
     if (status) { result = 4; }
     else {
+      if (!xbox360ps5::MountUtilityCache(*emulator.file_system(), bulk)) {
+        XELOGE("Required utility cache is unavailable; launch cancelled");
+        return 7;
+      }
       auto immediate = emulator.graphics_system()->provider()->CreateImmediateDrawer();
       if (!immediate || !emulator.graphics_system()->presenter()) {
         XELOGE("Native Vulkan presentation/UI initialization failed");
@@ -584,7 +782,8 @@ int main(int argc, char** argv) {
           chosen = {game.parent_path().filename().string(), game, "XEX", game.parent_path().string()};
         }
       }
-      if (!game.empty()) chosen = {game.filename().string(), game, "XEX", game.parent_path().string()};
+      if (!game.empty()) chosen = {game.extension() == ".xex" ? game.parent_path().filename().string() : game.stem().string(),
+                                  game, "XEX", game.parent_path().string()};
       while (!launched && !restart && !context.HasQuitFromUIThread()) {
         xbox360ps5::LauncherDialog* dialog = nullptr;
         if (game.empty()) {
@@ -629,6 +828,24 @@ int main(int argc, char** argv) {
           // Show the loading screen before the launch blocks this thread.
           for (int frame = 0; frame < 3; ++frame) { context.Tick(); window.Paint(); }
         }
+        xe::FlushLog();
+        std::string log_id = chosen.title_id;
+        if (log_id.empty()) log_id = xbox360ps5::ReadXexTitleId(game);
+        if (game_log->session.Begin(log_root, chosen.name, log_id, game.string(), XBOX360PS5_VERSION)) {
+          const auto log_path = game_log->session.Path();
+          if (!xbox360ps5::SetCrashReportFile(log_path.c_str())) XELOGW("Crash report remains in boot.log");
+          XELOGW("Game log: {}", log_path.string());
+        } else XELOGE("Could not create game log; retaining the current destination");
+        std::error_code space_error;
+        const auto save_space = std::filesystem::space(storage, space_error);
+        XELOGW("Save storage: {} available {} bytes, capacity {} bytes, query error {}",
+               storage.string(), space_error ? 0 : save_space.available,
+               space_error ? 0 : save_space.capacity, space_error.value());
+        if (!space_error && save_space.available < 16u * 1024 * 1024) {
+          XELOGW("Save storage is low; game saves may fail. No user data was removed.");
+        }
+        const std::string launch_stage = "BOOT game " + chosen.name + " source " + game.string();
+        Stage(launch_stage.c_str());
         Stage("BOOT launch");
         XELOGI("GAME FILE {}", game.string());
         window.TakeIcon();
@@ -642,12 +859,24 @@ int main(int argc, char** argv) {
             xe::kernel::XCONFIG_USER_CATEGORY_ENTRIES::XCONFIG_USER_LANGUAGE, &game_language);
         XELOGI("Language: interface {}, game {}, console {}", xbox360ps5::ui_language.load(),
                settings.GameLanguage(), settings.console_language);
-        status = emulator.LaunchPath(game);
+        try {
+          status = emulator.LaunchPath(game);
+        } catch (const std::exception& error) {
+          // The core is half way into the game: only a fresh start is safe.
+          // The reason is kept for the library to show.
+          XELOGE("Launch of {} failed with an exception: {}", game.string(), error.what());
+          Stage("BOOT launch threw; restarting");
+          std::ofstream(storage / "notice.txt", std::ios::trunc) << chosen.name << ": " << error.what() << "\n";
+          restart = true;
+          break;
+        }
         XELOGI("GAME LAUNCH {:08X}", status);
+        XELOGW("Game: '{}' title {:08X}, launch status {:08X}", emulator.title_name(), emulator.title_id(), status);
+        XELOGW("Graphics: emulated VSync {}", xbox360ps5::EffectiveVsync(settings.vsync) ? "on" : "off");
         Stage("BOOT launch returned");
         // After a switch the running executable is not the one the library lists.
         if (!status && !switched) launcher.RecordLaunch(chosen, emulator.title_id(), emulator.title_name(), window.TakeIcon(),
-                                           0);
+                                           emulator.kernel_state()->GetExecutableModule()->hash().value_or(0));
         launcher.SetLoading("");
         if (dialog) { dialog->Dismiss(); context.Tick(); window.Paint(); }
         if (!status) { launched = true; break; }
@@ -660,7 +889,8 @@ int main(int argc, char** argv) {
       if (launched) {
         // The game's frame rate: shown when asked for, and in the log every 30 seconds.
         float fps = 0.0f;
-        new FpsOverlay(&drawer, fps, settings.show_fps);
+        bool stalled_notice=false;
+        new FpsOverlay(&drawer,fps,settings.show_fps,stalled_notice,settings.touchpad_menu);
         // The emulator's guide over the game.
         GuideState guide;
         if (autotest.active) guide.hint = 0.0f;
@@ -670,15 +900,16 @@ int main(int argc, char** argv) {
         bool trigger_was = true, swallow = false, quit = false;
         uint32_t guide_held = ~0u;
         auto back_until = std::chrono::steady_clock::time_point::min();
+        auto measure_at = std::chrono::steady_clock::time_point::max();
         // The watch for a game that stops showing frames.
-        auto last_frame_at = std::chrono::steady_clock::now();
-        uint64_t last_frame = 0;
-        int stall_stage = 0;
+        const auto watch_started=std::chrono::steady_clock::now();
+        xbox360ps5::FrameWatch frame_watch(emulator.graphics_system()->command_processor()->refreshed_output_count(),0);
         const int32_t usual_log_level = cvars::log_level;
         auto sample_at = std::chrono::steady_clock::now();
-        uint64_t sampled_frames = emulator.graphics_system()->command_processor()->swap_count();
+        uint64_t sampled_frames = emulator.graphics_system()->command_processor()->refreshed_output_count();
+        uint64_t sampled_swaps = emulator.graphics_system()->command_processor()->swap_count();
         int samples = 0;
-        float fps_sum = 0.0f, fps_low = 1e9f;
+        float fps_sum = 0.0f, fps_low = 1e9f, swaps_sum = 0.0f;
         const auto game_started = std::chrono::steady_clock::now();
         double next_shot = 5;
         while (!context.HasQuitFromUIThread()) {
@@ -749,6 +980,11 @@ int main(int argc, char** argv) {
                 case GuideAction::filter: settings.image_filter = (settings.image_filter + step + 3) % 3; break;
                 case GuideAction::scale: settings.resolution_scale = (settings.resolution_scale - 1 + step + 3) % 3 + 1; break;
                 case GuideAction::touchpad: settings.touchpad_menu = !settings.touchpad_menu; trigger_was = true; break;
+                case GuideAction::measure:
+                  guide.open = false;
+                  changed = false;
+                  measure_at = std::chrono::steady_clock::now() + std::chrono::seconds(4);
+                  break;
               }
               if (changed) {
                 settings.Save();
@@ -771,32 +1007,55 @@ int main(int argc, char** argv) {
           input->Submit(sample);
           window.SubmitUiPad(sample);
           context.Tick(); window.Paint();
+          // A measurement asked for in the guide starts once the game is back in play.
+          if (std::chrono::steady_clock::now() >= measure_at) {
+            measure_at = std::chrono::steady_clock::time_point::max();
+            MeasurePerformance(emulator, fps);
+          }
           if (std::chrono::steady_clock::now() - sample_at >= std::chrono::seconds(1)) {
             const auto at = std::chrono::steady_clock::now();
-            const uint64_t frames = emulator.graphics_system()->command_processor()->swap_count();
-            fps = float(frames - sampled_frames) / std::chrono::duration<float>(at - sample_at).count();
+            auto* processor = emulator.graphics_system()->command_processor();
+            const uint64_t frames = processor->refreshed_output_count();
+            const uint64_t swaps = processor->swap_count();
+            const float elapsed = std::chrono::duration<float>(at - sample_at).count();
+            fps = float(frames - sampled_frames) / elapsed;
+            swaps_sum += float(swaps - sampled_swaps) / elapsed;
+            sampled_swaps = swaps;
             sample_at = at; sampled_frames = frames;
-            // A game that showed frames and then none for ten seconds: report it.
-            if (frames != last_frame) {
-              last_frame = frames; last_frame_at = at;
-              if (stall_stage) { XELOGW("STALL over: frames again"); cvars::log_level = usual_log_level; }
-              stall_stage = 0;
-            } else if (frames) {
-              const auto stalled = std::chrono::duration_cast<std::chrono::seconds>(at - last_frame_at).count();
-              if (stall_stage == 0 && stalled >= 10) {
+            const double watch_seconds=std::chrono::duration<double>(at-watch_started).count();
+            switch(frame_watch.Observe(frames,watch_seconds)) {
+              case xbox360ps5::FrameWatch::capture:
+                XELOGW("STALL title {:08X} '{}' after {:.0f}s, {} refreshed outputs, {} submitted swaps; no output is not proof of deadlock",
+                       emulator.title_id(),game_name,watch_seconds,frames,swaps);
                 ReportStall(emulator, 1);
                 cvars::log_level = 3;  // Every system call, for a moment.
-                stall_stage = 1;
-              } else if (stall_stage == 1 && stalled >= 13) {
+                break;
+              case xbox360ps5::FrameWatch::finish_capture:
                 cvars::log_level = usual_log_level;
                 ReportStall(emulator, 2);
-                stall_stage = 2;
-              }
+                break;
+              case xbox360ps5::FrameWatch::recovered:
+                XELOGW("STALL over: frames again"); cvars::log_level=usual_log_level;
+                break;
+              default: break;
             }
+            stalled_notice=frame_watch.Notice(watch_seconds);
             fps_sum += fps; fps_low = std::min(fps_low, fps);
             if (++samples == 30) {
-              XELOGW("Desempenho: media {:.1f} quadros/s, minimo {:.0f} nos ultimos 30 s", fps_sum / 30, fps_low);
-              samples = 0; fps_sum = 0.0f; fps_low = 1e9f;
+              XELOGW("Performance: rendered output {:.1f}/s, minimum {:.0f}; submitted swaps {:.1f}/s over 30 samples",
+                     fps_sum / 30, fps_low, swaps_sum / 30);
+              // What the memory watches cost in the same half minute.
+              {
+                static unsigned long long closes = 0, opens = 0, spent = 0, open_spent = 0, faults = 0;
+                const unsigned long long all = xbox360ps5::protect_syscalls, open = xbox360ps5::open_syscalls,
+                                         time = xbox360ps5::protect_nanoseconds, open_time = xbox360ps5::open_nanoseconds,
+                                         fault = xbox360ps5::fault_count;
+                XELOGW("Performance: memory watches {:.0f} closes/s ({:.1f} ms/s), {:.0f} opens/s ({:.1f} ms/s), {:.0f} faults/s",
+                       double(all - open - closes) / 30, double(time - open_time - spent) / 30e6, double(open - opens) / 30,
+                       double(open_time - open_spent) / 30e6, double(fault - faults) / 30);
+                closes = all - open; opens = open; spent = time - open_time; open_spent = open_time; faults = fault;
+              }
+              samples = 0; fps_sum = swaps_sum = 0.0f; fps_low = 1e9f;
             }
           }
         }
@@ -830,6 +1089,10 @@ int main(int argc, char** argv) {
 }
 // main returned: ask the system to end the title. The C library's exit() is
 // answered with a signal in a native title, which the system reports as a crash.
+extern "C" void Xbox360PS5LoaderStage(const char* stage) {
+  xbox360ps5::Stage(stage);
+}
+
 extern "C" void catchReturnFromMain(int status) {
   char text[64];
   std::snprintf(text, sizeof(text), "BOOT main returned %d", status);

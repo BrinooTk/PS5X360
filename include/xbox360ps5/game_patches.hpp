@@ -27,6 +27,10 @@ bool ReadPatchFile(const std::string& path, PatchFile& file);
 // The patch files for a title, with the user's on/off choices applied.
 std::vector<PatchFile> LoadPatchFiles(uint32_t title_id);
 void SavePatchChoice(uint32_t title_id, const std::string& name, bool enabled);
+// Shared selection for UI and execution: match version before deduplicating.
+std::vector<PatchFile> SelectPatchFiles(std::vector<PatchFile> files, uint64_t hash);
+bool PatchWritesConflict(const GamePatch& a, const GamePatch& b);
+bool PatchRequiresVsyncOff(const GamePatch& patch);
 // Hash of the loaded executable's code, as Xenia Canary computes it.
 uint64_t ModuleHash(xe::Memory* memory, xe::kernel::UserModule* module);
 // Writes the enabled patches whose file lists this executable's hash.

@@ -1,0 +1,14 @@
+{
+  "name": "ps5x360-log-relay",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "miniflare": "^5.20261001.0-alpha",
+    "wrangler": "^4.0.0"
+  }
+}

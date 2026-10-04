@@ -24,6 +24,8 @@ An experimental **Xbox 360 emulator for PlayStation 5**, built on Xenia Canary w
 - Automatic PS5 language detection, with **English as the interface fallback**.
 - Community Xenia Canary patches, matched to the game's executable version and disabled by default.
 - Optional FPS display, CAS sharpening and FSR image upscaling.
+- Development v0.3.0-preview: per-game log files and configurable game folders,
+  including external locations visible to the application.
 
 ## Quick installation
 
@@ -58,7 +60,10 @@ PPSA50011/
             └── ...matching .data folder, if required...
 ```
 
-Keep all extracted game data together. The launcher reads games inside the title's `assets/roms` folder. External USB paths are not currently scanned.
+Keep all extracted game data together. In development v0.3.0-preview, use
+**Settings → Game folders** to add multiple locations, including accessible
+external mounts. Earlier public builds only scan the title's `assets/roms` folder.
+See the [folder configuration guide](docs/INSTALLATION.md#multiple-locations-and-external-devices-development-v030-preview).
 
 **No games, console BIOS or keys are included.**
 
@@ -80,7 +85,7 @@ The guide offers resume, return to the library, Xbox BACK and exit. To use the t
 
 Booting into a menu is not the same as completing gameplay. Some titles still fail during scenes or fights. [Current compatibility notes](docs/COMPATIBILITY.md) distinguish console observations from host tests.
 
-When [reporting a bug](https://github.com/BrinooTk/PS5X360/issues), include the game, title ID, region/version, enabled patches, firmware, release version and the exact point where it fails. Include a short video or screenshot and the relevant `engine.log` excerpt when possible.
+When [reporting a bug](https://github.com/BrinooTk/PS5X360/issues), include the game, title ID, region/version, enabled patches, firmware, release version and the exact point where it fails. Include a short video or screenshot and the matching game-session logs from `LOGS` (development v0.3.0-preview), or `engine.log` for older builds. The included log downloader can create a ZIP ready to share.
 
 ## Development
 
@@ -107,3 +112,25 @@ Based on [Xenia Canary](https://github.com/xenia-canary/xenia-canary), with the 
 Original project code is licensed under MIT. Bundled third-party components keep their own licenses, including BSD, LGPL and GPL components. See [LICENSE](LICENSE), [licenses/](licenses/) and the font's [SIL Open Font License](assets/fonts/OFL.txt).
 
 PS5X360 is an independent community project and is not affiliated with Sony or Microsoft. README artwork is illustrative branding, not an emulator screenshot.
+
+## Latest release
+
+**0.5.3-preview** fixes accidental game acceleration when emulated VSync is
+disabled with the automatic frame limit. Guest video pacing stays at 60 Hz;
+this does not guarantee 60 FPS. See [release notes](docs/releases/v0.5.3-preview.md).
+
+The [release download](https://github.com/BrinooTk/PS5X360/releases/tag/v0.5.3-preview)
+includes the emulator ZIP, optional **AutoLog 1.0.5-preview**, and a combined
+testing bundle. Install the emulator folder as usual. AutoLog is loaded separately
+once per console boot; it sends diagnostic excerpts to the developer. Read its
+[reporting notice and instructions](native/autolog/README.md) before enabling it.
+
+## Automatic diagnostic reports
+
+A separate **AutoLog ELF preview** reads game logs on the PS5 and submits them
+to the preconfigured Cloudflare-to-Discord relay, without a PC collector.
+Load it once per console boot after reading the reporting notice. Direct game
+report delivery was verified on the owner's PS5 with firmware 13.60. Keep the
+console FTP service enabled for the directory fallback; other firmware is unverified.
+See [console collector instructions](native/autolog/README.md) for opt-out and
+limits, or [AutoLog setup](docs/AUTOLOG.md) for the optional PC fallback.

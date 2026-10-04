@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: MIT
 #include "xbox360ps5/game_patches.hpp"
+#include "xbox360ps5/patch_runtime.hpp"
 #include "xenia/base/logging.h"
 #include "xenia/base/platform.h"
+#include "xenia/base/cvar.h"
+DECLARE_bool(vsync);
 #include "xenia/cpu/xex_module.h"
 #include "xenia/kernel/user_module.h"
 #include "xenia/memory.h"
@@ -35,6 +38,7 @@ fs::path ChoiceFile(uint32_t title_id) {
 #if XE_PLATFORM_PS5
   return fs::path("/download0/xbox360ps5/patches") / name;
 #else
+  if (const char* folder = std::getenv("XBOX360PS5_PATCH_CHOICES")) return fs::path(folder) / name;
   return fs::temp_directory_path() / "xbox360ps5-patches" / name;
 #endif
 }
@@ -216,6 +220,7 @@ std::vector<PatchFile> LoadPatchFiles(uint32_t title_id) {
   // The user's choices: one "1|name" or "0|name" per line.
   std::ifstream choices(ChoiceFile(title_id));
   for (std::string line; std::getline(choices, line);) {
+    line = Trim(line);
     if (line.size() < 3 || line[1] != '|') continue;
     for (auto& file : files) for (auto& patch : file.patches)
       if (patch.name == line.substr(2)) patch.enabled = line[0] == '1';
@@ -238,7 +243,59 @@ void SavePatchChoice(uint32_t title_id, const std::string& name, bool enabled) {
   for (const auto& line : lines) output << line << "\n";
 }
 
+namespace {
+std::string PatchNameKey(std::string name) {
+  name = Trim(name);
+  std::transform(name.begin(), name.end(), name.begin(), [](unsigned char c) { return char(std::tolower(c)); });
+  return name;
+}
+bool SameWrites(const GamePatch& a, const GamePatch& b) {
+  if (a.writes.size() != b.writes.size() || a.writes.empty()) return false;
+  for (size_t n = 0; n < a.writes.size(); ++n)
+    if (a.writes[n].address != b.writes[n].address || a.writes[n].bytes != b.writes[n].bytes) return false;
+  return true;
+}
+}
+bool PatchRequiresVsyncOff(const GamePatch& patch) {
+  const auto desc = PatchNameKey(patch.description);
+  return desc.find("disable v-sync") != std::string::npos || desc.find("disable vsync") != std::string::npos ||
+         desc.find("vsync must be disabled") != std::string::npos;
+}
+bool PatchWritesConflict(const GamePatch& a, const GamePatch& b) {
+  for (const auto& x : a.writes) for (const auto& y : b.writes) {
+    const uint64_t begin = std::max<uint64_t>(x.address, y.address);
+    const uint64_t end = std::min(uint64_t(x.address) + x.bytes.size(), uint64_t(y.address) + y.bytes.size());
+    for (uint64_t at = begin; at < end; ++at)
+      if (x.bytes[size_t(at - x.address)] != y.bytes[size_t(at - y.address)]) return true;
+  }
+  return false;
+}
+std::vector<PatchFile> SelectPatchFiles(std::vector<PatchFile> files, uint64_t hash) {
+  std::stable_sort(files.begin(), files.end(), [](const auto& a, const auto& b) { return a.file < b.file; });
+  std::vector<PatchFile> result;
+  std::vector<GamePatch> seen;
+  for (auto& file : files) {
+    if (hash && std::find(file.hashes.begin(), file.hashes.end(), hash) == file.hashes.end()) continue;
+    std::vector<GamePatch> unique;
+    for (auto& patch : file.patches) {
+      bool duplicate = false;
+      for (const auto& previous : seen)
+        if (PatchNameKey(previous.name) == PatchNameKey(patch.name) || SameWrites(previous, patch)) { duplicate = true; break; }
+      if (duplicate) continue;
+      seen.push_back(patch);
+      unique.push_back(std::move(patch));
+    }
+    file.patches = std::move(unique);
+    if (!file.patches.empty()) result.push_back(std::move(file));
+  }
+  return result;
+}
+
 uint64_t ModuleHash(xe::Memory* memory, xe::kernel::UserModule* module) {
+#if defined(XBOX360PS5_CANARY)
+  // Canary calculated this before any patch writes or JIT precompilation.
+  return module->hash().value_or(0);
+#else
   const auto* xex = module->xex_module();
   const xe::BaseHeap* heap = memory->LookupHeap(xex->base_address());
   if (!heap) return 0;
@@ -257,28 +314,88 @@ uint64_t ModuleHash(xe::Memory* memory, xe::kernel::UserModule* module) {
   const uint32_t start = xex->base_address() + first * page_size;
   const uint32_t end = xex->base_address() + (last + 1) * page_size;
   return XXH3_64bits(memory->TranslateVirtual(start), end - start);
+#endif
 }
 
 void ApplyGamePatches(xe::Memory* memory, xe::kernel::UserModule* module, uint32_t title_id) {
+  if (!module->is_dll_module()) patch_vsync_off.store(false, std::memory_order_relaxed);
   last_hash = ModuleHash(memory, module);
   last_applied = 0;
-  XELOGI("Patches: title {:08X}, executable hash {:016X}", title_id, last_hash);
-  for (const PatchFile& file : LoadPatchFiles(title_id)) {
+  XELOGW("Patches: title {:08X}, executable hash {:016X}", title_id, last_hash);
+  auto files = LoadPatchFiles(title_id);
+  for (const auto& file : files) if (std::find(file.hashes.begin(), file.hashes.end(), last_hash) == file.hashes.end())
+    XELOGW("Patches: {} is for another version of this game (hash not listed)", file.file);
+  std::vector<GamePatch> accepted;
+  for (const PatchFile& file : SelectPatchFiles(std::move(files), last_hash)) {
     if (std::find(file.hashes.begin(), file.hashes.end(), last_hash) == file.hashes.end()) {
       XELOGW("Patches: {} is for another version of this game (hash not listed)", file.file);
       continue;
     }
     for (const GamePatch& patch : file.patches) {
       if (!patch.enabled) continue;
+      bool conflict = false;
+      for (const auto& previous : accepted) if (PatchWritesConflict(previous, patch)) {
+        XELOGE("Patches: skipped {} because its writes conflict with {}", patch.name, previous.name);
+        conflict = true;
+        break;
+      }
+      if (conflict) continue;
+      struct Pending {
+        const PatchWrite* write;
+        xe::BaseHeap* heap;
+        uint32_t protection;
+      };
+      std::vector<Pending> pending;
+      bool applied = !patch.writes.empty();
+      // Validate every range and make every page writable before changing bytes.
+      // An invalid multi-write patch must not leave a half-patched executable.
       for (const PatchWrite& write : patch.writes) {
         xe::BaseHeap* heap = memory->LookupHeap(write.address);
-        if (!heap) continue;
         uint32_t protection = 0;
-        heap->QueryProtect(write.address, &protection);
-        heap->Protect(write.address, uint32_t(write.bytes.size()), xe::kMemoryProtectRead | xe::kMemoryProtectWrite);
-        std::memcpy(memory->TranslateVirtual(write.address), write.bytes.data(), write.bytes.size());
-        heap->Protect(write.address, uint32_t(write.bytes.size()), protection);
+        const uint64_t end = uint64_t(write.address) + write.bytes.size();
+        xe::HeapAllocationInfo info;
+        if (!heap || write.bytes.empty() || end > 0x100000000ull ||
+            !heap->QueryRegionInfo(write.address, &info) ||
+            !(info.state & xe::kMemoryAllocationCommit) ||
+            end > uint64_t(info.base_address) + info.region_size ||
+            !heap->QueryProtect(write.address, &protection)) {
+          XELOGE("Patches: invalid/uncommitted write for {} at {:08X}", patch.name, write.address);
+          applied = false;
+          break;
+        }
+        pending.push_back({&write, heap, protection});
       }
+      size_t writable = 0;
+      if (applied) for (const auto& entry : pending) {
+        if (!entry.heap->Protect(entry.write->address, uint32_t(entry.write->bytes.size()),
+                                xe::kMemoryProtectRead | xe::kMemoryProtectWrite)) {
+          applied = false;
+          break;
+        }
+        ++writable;
+      }
+      if (applied) for (const auto& entry : pending) {
+        const auto& write = *entry.write;
+        std::memcpy(memory->TranslateVirtual(write.address), write.bytes.data(), write.bytes.size());
+        applied &= !std::memcmp(memory->TranslateVirtual(write.address), write.bytes.data(), write.bytes.size());
+      }
+      for (size_t n = 0; n < writable; ++n) {
+        const auto& entry = pending[n];
+        applied &= entry.heap->Protect(entry.write->address, uint32_t(entry.write->bytes.size()), entry.protection);
+      }
+      if (!applied) {
+        XELOGE("Patches: {} failed validation/write/protection restoration; not counted as applied", patch.name);
+        continue;
+      }
+      std::string description = patch.description;
+      std::transform(description.begin(), description.end(), description.begin(), [](unsigned char c) { return char(std::tolower(c)); });
+      if (EffectiveVsync(cvars::vsync) && !PatchRequiresVsyncOff(patch) && (description.find("v-sync") != std::string::npos || description.find("vsync") != std::string::npos))
+        XELOGW("Patches: {} mentions VSync in its requirements; currently ON. Check the patch description and restart after changing Settings", patch.name);
+      if (PatchRequiresVsyncOff(patch)) {
+        patch_vsync_off.store(true, std::memory_order_relaxed);
+        XELOGW("Patches: {} requires VSync off; enabling the per-title override", patch.name);
+      }
+      accepted.push_back(patch);
       ++last_applied;
       XELOGW("Patches: applied \"{}\" ({} writes)", patch.name, patch.writes.size());
     }
@@ -287,3 +404,9 @@ void ApplyGamePatches(xe::Memory* memory, xe::kernel::UserModule* module, uint32
 uint64_t LastModuleHash() { return last_hash; }
 int LastAppliedPatches() { return last_applied; }
 }
+
+#if defined(XBOX360PS5_CANARY)
+extern "C" void Xbox360PS5ApplyGamePatches(xe::Memory* memory, xe::kernel::UserModule* module, uint32_t title_id) {
+  xbox360ps5::ApplyGamePatches(memory, module, title_id);
+}
+#endif

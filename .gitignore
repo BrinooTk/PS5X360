@@ -3,6 +3,10 @@ build/
 dist/
 __pycache__/
 *.log
+node_modules/
+.wrangler/
+.dev.vars
+server/autolog/.env*
 
 # Backing files left by an interrupted host run (tools: --run-xex)
 /xenia_memory_*

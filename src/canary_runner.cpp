@@ -10,10 +10,18 @@
 #include "xbox360ps5/dualsense_input.hpp"
 #include "xbox360ps5/canary_audio.hpp"
 #include "xbox360ps5/gpu_upload_check.hpp"
+#include "xbox360ps5/utility_cache.hpp"
+#include "xbox360ps5/game_patches.hpp"
+#include "xbox360ps5/content_header_check.hpp"
+#include "xbox360ps5/patch_selection_check.hpp"
+#include "xbox360ps5/utility_cache_check.hpp"
+#include "xbox360ps5/module_path_check.hpp"
+#include "xbox360ps5/file_open_check.hpp"
 #include "xenia/base/cvar.h"
 #include "xenia/base/logging.h"
 #include "xenia/emulator.h"
 #include "xenia/kernel/kernel_state.h"
+#include "xenia/kernel/user_module.h"
 #include "xenia/kernel/xam/profile_manager.h"
 #include "xenia/kernel/xam/xam_module.h"
 #include "xenia/kernel/xam/xam_state.h"
@@ -64,10 +72,26 @@ class HeadlessWindow final : public xe::ui::Window {
 }
 
 int main(int argc, char** argv) {
+  if (argc == 2 && std::strcmp(argv[1], "--check-module-paths") == 0) {
+    return xbox360ps5::CheckModulePaths();
+  }
+  if (argc == 2 && std::strcmp(argv[1], "--check-file-opening") == 0) {
+    xe::InitializeLogging("xbox360ps5-file-check");
+    return xbox360ps5::CheckFileOpening();
+  }
+  if (argc == 2 && std::strcmp(argv[1], "--check-utility-cache") == 0) {
+    xe::InitializeLogging("xbox360ps5-cache-check");
+    return xbox360ps5::CheckUtilityCache();
+  }
   if (argc == 2 && std::strcmp(argv[1], "--check-upload-pages") == 0) {
     xe::InitializeLogging("xbox360ps5-upload-check");
     return xbox360ps5::CheckGpuUploadPages();
   }
+  if (argc == 2 && std::strcmp(argv[1], "--check-content-headers") == 0) {
+    xe::InitializeLogging("xbox360ps5-header-check");
+    return xbox360ps5::CheckContentHeaders();
+  }
+  if (argc == 2 && std::strcmp(argv[1], "--check-patch-selection") == 0) { return xbox360ps5::CheckPatchSelection(); }
   if (argc != 3 && argc != 4) {
     std::fprintf(stderr, "usage: %s <game> <seconds> [screenshot folder]\n", argv[0]);
     return 3;
@@ -110,6 +134,7 @@ int main(int argc, char** argv) {
       });
   std::printf("RUNNER SETUP %08x\n", unsigned(status));
   if (status) return 1;
+  if (!xbox360ps5::MountUtilityCache(*emulator.file_system(), root)) return 7;
   // Games give the controller to a signed-in profile: make one the first time.
   auto profiles = emulator.kernel_state()->xam_state()->profile_manager();
   if (!profiles->GetAccountCount()) {
@@ -137,11 +162,44 @@ int main(int argc, char** argv) {
   // Kept with a later request, so the restart finds the game again.
   xam->loader_data().host_path = xe::path_to_utf8(game);
   const auto launched = emulator.LaunchPath(game);
+  if (!launched && std::getenv("XBOX360PS5_CHECK_MODULE_LOOKUP")) {
+    auto* kernel = emulator.kernel_state();
+    auto module = kernel->GetExecutableModule();
+    if (!module || kernel->GetModule(module->name()).get() != module.get() ||
+        kernel->GetModule(module->path()).get() != module.get() ||
+        kernel->GetModule("PS5X360_nonexistent_module")) {
+      std::fprintf(stderr, "FAIL: loaded module name/path or absent-module lookup\n");
+      std::_Exit(10);
+    }
+    std::puts("PASS: loaded module name/path and absent-module lookup");
+  }
+  if (const char* expected = std::getenv("XBOX360PS5_EXPECT_PATCHES")) {
+    if (xbox360ps5::LastAppliedPatches() != std::atoi(expected)) {
+      std::fprintf(stderr, "PATCH CHECK FAIL: expected %s applied, got %d\n", expected, xbox360ps5::LastAppliedPatches());
+      std::_Exit(9);
+    }
+    std::printf("PATCH CHECK PASS: hash %016llX, %d applied\n", (unsigned long long)xbox360ps5::LastModuleHash(), xbox360ps5::LastAppliedPatches());
+  }
   std::printf("RUNNER LAUNCH %08x %s\n", unsigned(launched), game.string().c_str());
   std::fflush(stdout);
   const auto started = std::chrono::steady_clock::now();
   const auto end = started + std::chrono::seconds(std::atoi(argv[2]));
   auto next_shot = started + std::chrono::seconds(5);
+  // XBOX360PS5_DUMP=addr,addr,...: the guest code at each address (hex), to
+  // read what a hot function found by a console measurement does.
+  if (const char* dump = std::getenv("XBOX360PS5_DUMP")) {
+    for (const char* at = dump; *at;) {
+      char* end = nullptr;
+      const uint32_t address = uint32_t(std::strtoul(at, &end, 16));
+      const uint8_t* bytes = emulator.memory()->TranslateVirtual<const uint8_t*>(address);
+      std::printf("DUMP %08X ", address);
+      for (int n = 0; n < 0x600; ++n) std::printf("%02x", bytes[n]);
+      std::putchar('\n');
+      at = *end == ',' ? end + 1 : end;
+      if (end == at) break;
+    }
+    std::fflush(stdout);
+  }
   const bool autopress = !std::getenv("XBOX360PS5_NO_AUTOPRESS");
   // XBOX360PS5_AUTOPRESS_AFTER=<seconds>: no presses before that time.
   const long press_after_ms = std::getenv("XBOX360PS5_AUTOPRESS_AFTER") ? std::atol(std::getenv("XBOX360PS5_AUTOPRESS_AFTER")) * 1000 : 0;
@@ -176,5 +234,12 @@ int main(int argc, char** argv) {
     }
   }
   std::fflush(stdout);
+  if (!launched && emulator.graphics_system()->command_processor()) {
+    auto* processor = emulator.graphics_system()->command_processor();
+    std::printf("RUNNER OUTPUT: %llu refreshed, %llu submitted swaps\n",
+                (unsigned long long)processor->refreshed_output_count(),
+                (unsigned long long)processor->swap_count());
+    std::fflush(stdout);
+  }
   std::_Exit(0);
 }

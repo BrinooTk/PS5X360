@@ -10,6 +10,7 @@ import argparse
 import ftplib
 import importlib.util
 import json
+import re
 from pathlib import Path
 from urllib.request import Request, urlopen
 
@@ -359,9 +360,113 @@ def covers(host):
     ftp.quit()
 
 
+def ftp_entries(ftp, folder):
+    lines = []
+    ftp.retrlines(f"LIST {folder}", lines.append)
+    entries = []
+    for line in lines:
+        fields = line.split(None, 8)
+        if len(fields) != 9:
+            continue
+        name = fields[-1]
+        if name in (".", "..") or any(ord(c) < 32 for c in name) or "/" in name or "\\" in name:
+            continue
+        entries.append((name, line.startswith("d")))
+    return entries
+
+
+def game_logs(host):
+    """Read visible session logs and export any mounted sandbox logs there.
+    The persistent download0.dat is an image, not a plain FTP directory."""
+    import hashlib
+    import zipfile
+    from datetime import datetime, timezone
+    ftp = ftplib.FTP()
+    ftp.connect(host, 2121, timeout=25)
+    ftp.login()
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S-%f-UTC")
+    destination = ROOT / "build" / ("PS5X360-logs-" + stamp)
+    downloaded = []
+    try:
+        visible_logs = FOLDER + "/logs"
+        try:
+            entries = ftp_entries(ftp, visible_logs)
+        except ftplib.error_perm:
+            entries = []
+        for name, directory in sorted(entries):
+            if directory or not name.endswith(".log"):
+                continue
+            local = destination / "logs" / name
+            local.parent.mkdir(parents=True, exist_ok=True)
+            with local.open("wb") as output:
+                ftp.retrbinary(f"RETR {visible_logs}/{name}", output.write, blocksize=128 * 1024)
+            downloaded.append(local)
+            print(f"Saved {name}: {local.stat().st_size} bytes")
+        try:
+            ftp.mkd(visible_logs)
+        except (ftplib.error_perm, ftplib.error_reply):
+            pass
+        try:
+            sandboxes = [name for name, directory in ftp_entries(ftp, "/mnt/sandbox")
+                         if directory and re.fullmatch(r"PPSA50011_[A-Za-z0-9]+", name)]
+        except ftplib.error_perm:
+            sandboxes = []
+        for sandbox in sorted(sandboxes):
+            storage = f"/mnt/sandbox/{sandbox}/download0/xbox360ps5"
+            try:
+                entries = ftp_entries(ftp, storage + "/LOGS")
+                remote = storage + "/LOGS"
+                if ("boot.log", False) in ftp_entries(ftp, storage):
+                    entries.append(("boot.log", False))
+            except ftplib.error_perm:
+                # Old builds: still let users retrieve their existing logs.
+                try:
+                    entries = [(name, kind) for name, kind in ftp_entries(ftp, storage)
+                               if name in ("engine.log", "boot.log")]
+                    remote = storage
+                except ftplib.error_perm:
+                    continue
+            for name, directory in sorted(entries):
+                if directory or not name.endswith(".log"):
+                    continue
+                local = destination / sandbox / name
+                local.parent.mkdir(parents=True, exist_ok=True)
+                with local.open("wb") as output:
+                    folder = storage if name == "boot.log" else remote
+                    ftp.retrbinary(f"RETR {folder}/{name}", output.write, blocksize=128 * 1024)
+                downloaded.append(local)
+                print(f"Saved {name}: {local.stat().st_size} bytes")
+                # Export sandbox-only logs into the user-visible installation
+                # folder. Session filenames already identify game/date/source;
+                # separate legacy boot/engine names by sandbox.
+                exported = f"{sandbox}-{name}" if name in ("engine.log", "boot.log") else name
+                try:
+                    with local.open("rb") as stream:
+                        ftp.storbinary(f"STOR {visible_logs}/{exported}", stream, blocksize=128 * 1024)
+                    print(f"Console copy: {visible_logs}/{exported}")
+                except ftplib.all_errors as exc:
+                    print(f"Could not export console copy (download is preserved): {exc}")
+    finally:
+        ftp.quit()
+    if not downloaded:
+        print("No logs found in the installation folder or mounted storage. Open PS5X360 and run this command while the title is open.")
+        return
+    archive_path = destination.with_suffix(".zip")
+    manifest = {}
+    with zipfile.ZipFile(archive_path, "x", zipfile.ZIP_DEFLATED) as archive:
+        for local in downloaded:
+            relative = local.relative_to(destination).as_posix()
+            archive.write(local, relative)
+            manifest[relative] = {"bytes": local.stat().st_size,
+                                  "sha256": hashlib.sha256(local.read_bytes()).hexdigest()}
+        archive.writestr("MANIFEST.json", json.dumps(manifest, indent=2) + "\n")
+    print(f"{len(downloaded)} log files, ready to share: {archive_path}")
+    return archive_path
+
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", choices=("update", "restore", "logs", "watch", "netlog", "covers"))
+    parser.add_argument("command", choices=("update", "restore", "logs", "game-logs", "watch", "netlog", "covers"))
     parser.add_argument("--seconds", type=int, default=90)
     parser.add_argument("--host", required=True)
     parser.add_argument("--all", action="store_true")
@@ -376,6 +481,8 @@ def main():
         watch(args.host, args.seconds)
     elif args.command == "covers":
         covers(args.host)
+    elif args.command == "game-logs":
+        game_logs(args.host)
     elif args.command == "netlog":
         netlog(args.host, args.seconds, args.follow)
     else:

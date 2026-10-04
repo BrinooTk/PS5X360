@@ -1,0 +1,9 @@
+name = "ps5x360-logs"
+main = "src/worker.js"
+compatibility_date = "2026-10-04"
+workers_dev = true
+
+[[ratelimits]]
+name = "UPLOAD_LIMITER"
+namespace_id = "51036001"
+simple = { limit = 6, period = 60 }

@@ -35,6 +35,7 @@ set(XBOX360PS5_CANARY_LIBRARIES
 if(NOT CMAKE_CROSSCOMPILING)
   add_executable(xbox360ps5-runner
     "${XBOX360PS5_ROOT}/src/canary_runner.cpp"
+    "${XBOX360PS5_ROOT}/src/game_patches.cpp"
     "${XBOX360PS5_ROOT}/platform/ps5/dualsense_input.cpp"
     "${XBOX360PS5_ROOT}/platform/ps5/canary_audio.cpp")
   target_include_directories(xbox360ps5-runner PRIVATE
@@ -48,6 +49,22 @@ if(NOT CMAKE_CROSSCOMPILING)
     stdc++fs dl lz4 pthread rt)
   # Canary's libraries are LLVM bitcode (thin LTO): link with lld like Canary does.
   target_link_options(xbox360ps5-runner PRIVATE -fuse-ld=lld -flto=thin)
+  # Offline visual check of the actual launcher draw list, without a GPU or ROM.
+  add_executable(xbox360ps5-launcher-preview EXCLUDE_FROM_ALL
+    "${XBOX360PS5_ROOT}/tools/preview-launcher.cpp"
+    "${XBOX360PS5_ROOT}/src/launcher.cpp"
+    "${XBOX360PS5_ROOT}/src/covers.cpp"
+    "${XBOX360PS5_ROOT}/src/game_patches.cpp")
+  target_include_directories(xbox360ps5-launcher-preview PRIVATE
+    "${XBOX360PS5_ROOT}/include" "${XENIA_CANARY}" "${XENIA_CANARY}/src"
+    "${XENIA_CANARY}/third_party" "${XENIA_CANARY}/third_party/fmt/include"
+    "${XENIA_CANARY}/third_party/Vulkan-Headers/include")
+  target_compile_definitions(xbox360ps5-launcher-preview PRIVATE XBOX360PS5_CANARY=1)
+  target_compile_options(xbox360ps5-launcher-preview PRIVATE -mavx)
+  target_link_libraries(xbox360ps5-launcher-preview PRIVATE
+    -Wl,--start-group ${XBOX360PS5_CANARY_LIBRARIES} -Wl,--end-group
+    stdc++fs dl lz4 pthread rt)
+  target_link_options(xbox360ps5-launcher-preview PRIVATE -fuse-ld=lld -flto=thin)
 endif()
 
 if(CMAKE_CROSSCOMPILING)
@@ -75,6 +92,9 @@ if(CMAKE_CROSSCOMPILING)
     "${XBOX360PS5_ROOT}/include" "${XENIA_CANARY}" "${XENIA_CANARY}/src"
     "${XENIA_CANARY}/third_party" "${XENIA_CANARY}/third_party/fmt/include"
     "${XENIA_CANARY}/third_party/Vulkan-Headers/include")
-  target_compile_definitions(xbox360ps5-title-objects PRIVATE XBOX360PS5_CANARY=1 NDEBUG)
+  file(STRINGS "${XBOX360PS5_ROOT}/VERSION" XBOX360PS5_VERSION LIMIT_COUNT 1)
+  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${XBOX360PS5_ROOT}/VERSION")
+  target_compile_definitions(xbox360ps5-title-objects PRIVATE XBOX360PS5_CANARY=1 NDEBUG
+    XBOX360PS5_VERSION="${XBOX360PS5_VERSION}")
   target_compile_options(xbox360ps5-title-objects PRIVATE -O2 -mavx)
 endif()

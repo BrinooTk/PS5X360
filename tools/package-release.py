@@ -55,6 +55,8 @@ def main():
         archive.write(ROOT / "docs/CREDITS.md", "CREDITS.md")
         archive.write(ROOT / "LICENSE", "LICENSE")
         archive.write(notes, "RELEASE_NOTES.md")
+        for name in ("console.py", "download-logs.py", "Download PS5 logs.bat"):
+            archive.write(ROOT / "tools" / name, "tools/" + name)
         archive.writestr("VERSION", version + "\n")
         archive.writestr("RELEASE.json", json.dumps({"version": version, "tag": "v" + version,
                             "executable_sha256": hashlib.sha256(current.read_bytes()).hexdigest()}, indent=2) + "\n")

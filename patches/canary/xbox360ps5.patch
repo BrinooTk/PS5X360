@@ -134,6 +134,259 @@ index 0541413f2..8b9aa1f9d 100644
  void FlushLog();
  
  namespace logging {
+diff --git a/src/xenia/base/mapped_memory.h b/src/xenia/base/mapped_memory.h
+index ce89b651a..1c003ec3a 100644
+--- a/src/xenia/base/mapped_memory.h
++++ b/src/xenia/base/mapped_memory.h
+@@ -10,6 +10,7 @@
+ #ifndef XENIA_BASE_MAPPED_MEMORY_H_
+ #define XENIA_BASE_MAPPED_MEMORY_H_
+ 
++#include <cstring>
+ #include <filesystem>
+ #include <memory>
+ #include <string_view>
+@@ -28,6 +29,12 @@ class MappedMemory {
+   static std::unique_ptr<MappedMemory> Open(const std::filesystem::path& path,
+                                             Mode mode, size_t offset = 0,
+                                             size_t length = 0);
++  // Xbox360PS5: a file opened to be read with ReadAt. Where mapping a large
++  // file is not workable (the PS5: a disc image stopped the title while it
++  // was being mapped) nothing is mapped: data() is null, is_mapped() is false
++  // and ReadAt and Slice work on the file. Elsewhere it is Open(kRead).
++  static std::unique_ptr<MappedMemory> OpenForReading(
++      const std::filesystem::path& path);
+ #if XE_PLATFORM_ANDROID
+   static std::unique_ptr<MappedMemory> OpenForAndroidContentUri(
+       const std::string_view uri, Mode mode, size_t offset = 0,
+@@ -44,13 +51,26 @@ class MappedMemory {
+ 
+   // The mapping is still backed by the object the slice was created from, a
+   // slice is not owning.
+-  std::unique_ptr<MappedMemory> Slice(size_t offset, size_t length) {
++  virtual std::unique_ptr<MappedMemory> Slice(size_t offset, size_t length) {
+     return std::unique_ptr<MappedMemory>(
+         new MappedMemory(data() + offset, length));
+   }
+ 
+   uint8_t* data() const { return reinterpret_cast<uint8_t*>(data_); }
+   size_t size() const { return size_; }
++  bool is_mapped() const { return data_ != nullptr; }
++
++  // Xbox360PS5: copies bytes of the mapped file into a buffer. By default it
++  // reads through the mapping. A platform may read the file itself instead,
++  // so that a whole disc image read this way does not end up mapped into the
++  // process a page at a time (see mapped_memory_posix.cc).
++  virtual bool ReadAt(size_t offset, void* buffer, size_t length) const {
++    if (offset > size_ || length > size_ - offset) {
++      return false;
++    }
++    std::memcpy(buffer, data() + offset, length);
++    return true;
++  }
+ 
+   // Close, and optionally truncate file to size
+   virtual void Close(uint64_t truncate_size = 0) {}
+diff --git a/src/xenia/base/mapped_memory_posix.cc b/src/xenia/base/mapped_memory_posix.cc
+index db6507564..ff7c798ca 100644
+--- a/src/xenia/base/mapped_memory_posix.cc
++++ b/src/xenia/base/mapped_memory_posix.cc
+@@ -13,17 +13,98 @@
+ #include <sys/mman.h>
+ #include <sys/stat.h>
+ #include <unistd.h>
++#include <cerrno>
++#include <cstdlib>
+ #include <memory>
++#include <limits>
+ 
+ #include "xenia/base/filesystem.h"
++#include "xenia/base/logging.h"
+ #include "xenia/base/platform.h"
+ 
+ namespace xe {
+ 
+ class PosixMappedMemory : public MappedMemory {
+  public:
+-  PosixMappedMemory(void* data, size_t size, int file_descriptor)
+-      : MappedMemory(data, size), file_descriptor_(file_descriptor) {}
++  PosixMappedMemory(void* data, size_t size, int file_descriptor,
++                    size_t file_offset = 0)
++      : MappedMemory(data, size),
++        file_descriptor_(file_descriptor),
++        file_offset_(file_offset) {}
++
++  // Xbox360PS5: on the console, file data is read with pread. Reading a disc
++  // image or a package of several gigabytes through its mapping leaves every
++  // page that was read mapped into the title, whose memory for that is a few
++  // hundred megabytes; reports of images and packages that froze the console
++  // part of the way into loading fit that. Elsewhere the mapping is read as
++  // before, unless XE_MAPPED_READ_FILE is set (to test this path on a PC).
++  bool ReadAt(size_t offset, void* buffer, size_t length) const override {
++    if (offset > size() || length > size() - offset) {
++      return false;
++    }
++#if XE_PLATFORM_PS5
++    const bool from_file = true;
++#else
++    static const bool from_file = std::getenv("XE_MAPPED_READ_FILE") != nullptr;
++#endif
++    if ((from_file || !is_mapped()) && file_descriptor_ >= 0) {
++      auto* out = static_cast<uint8_t*>(buffer);
++      size_t done = 0;
++      while (done < length) {
++        const ssize_t got = pread(file_descriptor_, out + done, length - done,
++                                  off_t(file_offset_ + offset + done));
++        if (got < 0 && errno == EINTR) {
++          continue;
++        }
++        if (got <= 0) {
++          break;
++        }
++        done += size_t(got);
++      }
++      if (done == length) {
++        return true;
++      }
++      XELOGE("File mapping: read of {} bytes at {} stopped at {} (errno {})",
++             length, file_offset_ + offset, done, errno);
++    }
++    if (!is_mapped()) {
++      return false;
++    }
++    return MappedMemory::ReadAt(offset, buffer, length);
++  }
++
++  // A part of an unmapped file is another unmapped view, with a descriptor of
++  // its own so that it does not depend on this object.
++  std::unique_ptr<MappedMemory> Slice(size_t offset, size_t length) override {
++    if (is_mapped()) {
++      return MappedMemory::Slice(offset, length);
++    }
++    if (offset > size() || length > size() - offset) {
++      return nullptr;
++    }
++    const int copy = dup(file_descriptor_);
++    if (copy < 0) {
++      return nullptr;
++    }
++    return std::make_unique<PosixMappedMemory>(nullptr, length, copy,
++                                               file_offset_ + offset);
++  }
++
++  static std::unique_ptr<PosixMappedMemory> OpenUnmapped(
++      const std::filesystem::path& path) {
++    const int file_descriptor = open(path.c_str(), O_RDONLY);
++    if (file_descriptor < 0) {
++      XELOGE("File open failed for {}, errno {}", path, errno);
++      return nullptr;
++    }
++    struct stat file_stat;
++    if (fstat(file_descriptor, &file_stat) || file_stat.st_size <= 0) {
++      close(file_descriptor);
++      return nullptr;
++    }
++    return std::make_unique<PosixMappedMemory>(
++        nullptr, size_t(file_stat.st_size), file_descriptor, 0);
++  }
+ 
+   ~PosixMappedMemory() override {
+     if (data_) {
+@@ -48,15 +129,26 @@ class PosixMappedMemory : public MappedMemory {
+ 
+     struct stat file_stat;
+     if (fstat(file_descriptor, &file_stat)) {
++      XELOGE("File mapping: fstat failed, errno {}", errno);
+       close(file_descriptor);
+       return nullptr;
+     }
+-    uint64_t file_size = uint64_t(file_stat.st_size);
+-
+-    size_t map_length = length;
+-    if (!length) {
+-      map_length = size_t(file_size);
++    // Xbox360PS5: default length is bytes remaining from offset. Mapping the
++    // whole size at a nonzero offset exposes pages beyond the actual file.
++    if (file_stat.st_size < 0 ||
++        uint64_t(file_stat.st_size) > std::numeric_limits<size_t>::max()) {
++      close(file_descriptor);
++      return nullptr;
++    }
++    const size_t file_size = size_t(file_stat.st_size);
++    if (offset > file_size ||
++        (mode == Mode::kRead && length > file_size - offset)) {
++      XELOGE("File mapping: range offset {} length {} exceeds size {}",
++             offset, length, file_size);
++      close(file_descriptor);
++      return nullptr;
+     }
++    const size_t map_length = length ? length : file_size - offset;
+ 
+     if (!map_length) {
+       close(file_descriptor);
+@@ -66,12 +158,14 @@ class PosixMappedMemory : public MappedMemory {
+     void* data =
+         mmap(0, map_length, protection, MAP_SHARED, file_descriptor, offset);
+     if (data == MAP_FAILED) {
++      XELOGE("File mapping: mmap failed, errno {}, offset {}, bytes {}, file size {}",
++             errno, offset, map_length, file_size);
+       close(file_descriptor);
+       return nullptr;
+     }
+ 
+     return std::make_unique<PosixMappedMemory>(data, map_length,
+-                                               file_descriptor);
++                                               file_descriptor, offset);
+   }
+ 
+   void Close(uint64_t truncate_size) override {
+@@ -92,8 +186,21 @@ class PosixMappedMemory : public MappedMemory {
+ 
+  private:
+   int file_descriptor_;
++  size_t file_offset_ = 0;
+ };
+ 
++std::unique_ptr<MappedMemory> MappedMemory::OpenForReading(
++    const std::filesystem::path& path) {
++#if XE_PLATFORM_PS5
++  return PosixMappedMemory::OpenUnmapped(path);
++#else
++  if (std::getenv("XE_MAPPED_READ_FILE")) {
++    return PosixMappedMemory::OpenUnmapped(path);
++  }
++  return Open(path, Mode::kRead);
++#endif
++}
++
+ std::unique_ptr<MappedMemory> MappedMemory::Open(
+     const std::filesystem::path& path, Mode mode, size_t offset,
+     size_t length) {
+@@ -108,6 +215,7 @@ std::unique_ptr<MappedMemory> MappedMemory::Open(
+   }
+   int file_descriptor = open(path.c_str(), open_flags);
+   if (file_descriptor < 0) {
++    XELOGE("File mapping: open failed for {}, errno {}", path, errno);
+     return nullptr;
+   }
+   return PosixMappedMemory::WrapFileDescriptor(file_descriptor, mode, offset,
+diff --git a/src/xenia/base/mapped_memory_win.cc b/src/xenia/base/mapped_memory_win.cc
+index 9c1e52bdb..0e86c57c7 100644
+--- a/src/xenia/base/mapped_memory_win.cc
++++ b/src/xenia/base/mapped_memory_win.cc
+@@ -99,6 +99,12 @@ class Win32MappedMemory : public MappedMemory {
+   DWORD view_access_ = 0;
+ };
+ 
++// Xbox360PS5: see mapped_memory.h; on Windows the file is mapped as before.
++std::unique_ptr<MappedMemory> MappedMemory::OpenForReading(
++    const std::filesystem::path& path) {
++  return Open(path, Mode::kRead);
++}
++
+ std::unique_ptr<MappedMemory> MappedMemory::Open(
+     const std::filesystem::path& path, Mode mode, size_t offset,
+     size_t length) {
 diff --git a/src/xenia/base/memory.h b/src/xenia/base/memory.h
 index 8ef40bbff..39dca8bfd 100644
 --- a/src/xenia/base/memory.h
@@ -774,14 +1027,50 @@ index 4878e9725..d93d10ec4 100644
  
    ThreadState* thread_state_ = nullptr;
    std::unique_ptr<xe::threading::Thread> thread_ = nullptr;
+diff --git a/src/xenia/cpu/xex_module.cc b/src/xenia/cpu/xex_module.cc
+index 0796b5380..2fb69e5fe 100644
+--- a/src/xenia/cpu/xex_module.cc
++++ b/src/xenia/cpu/xex_module.cc
+@@ -1422,6 +1422,11 @@ void XexInfoCache::Init(XexModule* xexmod) {
+ 
+   infocache_path.append(xexmod->image_sha_str_);
+ 
++  // Xbox360PS5: this cache is optional. When its folder or file cannot be
++  // made (a full or read-only storage) the std::filesystem calls below throw,
++  // and with nothing to catch them the game aborted while loading. The module
++  // runs without the cache instead.
++  try {
+   std::filesystem::create_directories(infocache_path);
+   infocache_path.append("executable_addr_flags.bin");
+ 
+@@ -1463,6 +1468,11 @@ void XexInfoCache::Init(XexModule* xexmod) {
+       try_open();
+     }
+   }
++  } catch (const std::exception& error) {
++    XELOGW("Instruction info cache unavailable ({}); continuing without it",
++           error.what());
++    executable_addr_flags_.reset();
++  }
+ }
+ InfoCacheFlags* XexModule::GetInstructionAddressFlags(uint32_t guest_addr) {
+   if (guest_addr < low_address_ || guest_addr > high_address_) {
 diff --git a/src/xenia/emulator.cc b/src/xenia/emulator.cc
-index eadd15ccf..fb3b333be 100644
+index eadd15ccf..770578fab 100644
 --- a/src/xenia/emulator.cc
 +++ b/src/xenia/emulator.cc
-@@ -11,6 +11,18 @@
+@@ -11,6 +11,26 @@
  
  #include "xenia/emulator.h"
  
++// Xbox360PS5: small persisted phase markers, independent of verbose logging.
++extern "C" void Xbox360PS5LoaderStage(const char*) __attribute__((weak));
++namespace {
++void LoaderStage(const char* stage) {
++  if (Xbox360PS5LoaderStage) Xbox360PS5LoaderStage(stage);
++}
++}
++
 +#include "xenia/base/platform.h"
 +#ifndef XE_PLATFORM_PS5
 +#define XE_PLATFORM_PS5 0
@@ -797,7 +1086,111 @@ index eadd15ccf..fb3b333be 100644
  #include "config.h"
  #include "third_party/fmt/include/fmt/format.h"
  #include "third_party/tabulate/single_include/tabulate/tabulate.hpp"
-@@ -1680,8 +1692,10 @@ X_STATUS Emulator::CompleteLaunch(const std::filesystem::path& path,
+@@ -447,8 +467,15 @@ void Emulator::SetPersistentEmulatorFlags(uint64_t new_flags) {
+ 
+ X_STATUS Emulator::MountPath(const std::filesystem::path& path,
+                              const std::string_view mount_path) {
++  LoaderStage("LOAD create device");
+   auto device = CreateVfsDevice(path, mount_path);
+-  if (!device || !device->Initialize()) {
++  if (!device) {
++    LoaderStage("LOAD create device failed");
++    return X_STATUS_NO_SUCH_FILE;
++  }
++  LoaderStage("LOAD initialize device");
++  if (!device->Initialize()) {
++    LoaderStage("LOAD initialize device failed");
+     XELOGE(
+         "Unable to mount the selected file, it is an unsupported format or "
+         "corrupted.");
+@@ -456,6 +483,7 @@ X_STATUS Emulator::MountPath(const std::filesystem::path& path,
+   }
+ 
+   const std::string mpath = std::string(device->mount_path());
++  LoaderStage("LOAD device ready");
+ 
+   if (!file_system_->RegisterDevice(std::move(device))) {
+     XELOGE("Unable to register the input file to {}.", mount_path);
+@@ -475,27 +503,30 @@ X_STATUS Emulator::MountPath(const std::filesystem::path& path,
+ 
+ Emulator::FileSignatureType Emulator::GetFileSignature(
+     const std::filesystem::path& path) {
+-  FILE* file = xe::filesystem::OpenFile(path, "rb");
++  // Xbox360PS5: close every probe path, including short/unreadable files.
++  const std::unique_ptr<FILE, decltype(&fclose)> file(
++      xe::filesystem::OpenFile(path, "rb"), &fclose);
+ 
+   if (!file) {
+     return FileSignatureType::Unknown;
+   }
+ 
+-  const uint64_t file_size = std::filesystem::file_size(path);
++  std::error_code file_error;
++  const uint64_t file_size = std::filesystem::file_size(path, file_error);
+   constexpr int64_t header_size = 4;
+ 
+-  if (file_size < header_size) {
++  if (file_error || file_size < header_size) {
+     return FileSignatureType::Unknown;
+   }
+ 
+   char file_magic[header_size];
+-  fread(file_magic, sizeof(file_magic), 1, file);
++  if (fread(file_magic, 1, sizeof(file_magic), file.get()) != sizeof(file_magic)) {
++    return FileSignatureType::Unknown;
++  }
+ 
+   fourcc_t magic_value =
+       make_fourcc(file_magic[0], file_magic[1], file_magic[2], file_magic[3]);
+ 
+-  fclose(file);
+-
+   switch (magic_value) {
+     case xe::cpu::kXEX0Signature:
+       return FileSignatureType::XEX0;
+@@ -531,10 +562,10 @@ Emulator::FileSignatureType Emulator::GetFileSignature(
+     return FileSignatureType::EXE;
+   }
+ 
+-  file = xe::filesystem::OpenFile(path, "rb");
+-  xe::filesystem::Seek(file, -header_size, SEEK_END);
+-  fread(file_magic, 1, header_size, file);
+-  fclose(file);
++  if (!xe::filesystem::Seek(file.get(), -header_size, SEEK_END) ||
++      fread(file_magic, 1, header_size, file.get()) != header_size) {
++    return FileSignatureType::Unknown;
++  }
+ 
+   magic_value =
+       make_fourcc(file_magic[0], file_magic[1], file_magic[2], file_magic[3]);
+@@ -543,13 +574,10 @@ Emulator::FileSignatureType Emulator::GetFileSignature(
+     return FileSignatureType::ZAR;
+   }
+ 
+-  // Check if XISO
+-  std::unique_ptr<vfs::Device> device =
+-      std::make_unique<vfs::DiscImageDevice>("", path);
+-
+-  XELOGI("Checking for XISO");
+-
+-  if (device->Initialize()) {
++  // Xbox360PS5: classification must not map/traverse the full image. LaunchPath
++  // and CreateVfsDevice both classify it; MountPath performs the actual parse.
++  XELOGI("Checking XISO header: {}", path);
++  if (vfs::DiscImageDevice::ProbeHeader(file.get())) {
+     return FileSignatureType::XISO;
+   }
+ 
+@@ -560,6 +588,8 @@ Emulator::FileSignatureType Emulator::GetFileSignature(
+ X_STATUS Emulator::LaunchPath(const std::filesystem::path& path) {
+   X_STATUS mount_result = X_STATUS_SUCCESS;
+ 
++  LoaderStage("LOAD classify source");
++
+   switch (GetFileSignature(path)) {
+     case FileSignatureType::XEX0:
+     case FileSignatureType::XEXQ:
+@@ -1680,8 +1710,10 @@ X_STATUS Emulator::CompleteLaunch(const std::filesystem::path& path,
        XELOGI("Title name: {}", title_name_);
  
        // Show achievments data
@@ -809,7 +1202,7 @@ index eadd15ccf..fb3b333be 100644
        table.add_row({"ID", "Title", "Description", "Type", "Gamerscore"});
  
        const std::vector<kernel::util::GameInfoDatabase::Achievement>
-@@ -1696,7 +1710,7 @@ X_STATUS Emulator::CompleteLaunch(const std::filesystem::path& path,
+@@ -1696,7 +1728,7 @@ X_STATUS Emulator::CompleteLaunch(const std::filesystem::path& path,
                         fmt::format("{}", entry.gamerscore)});
        }
        XELOGI("\n-------------------- ACHIEVEMENTS --------------------\n{}",
@@ -818,7 +1211,7 @@ index eadd15ccf..fb3b333be 100644
  
        const std::vector<kernel::util::GameInfoDatabase::Property>
            properties_list = game_info_database_->GetProperties();
-@@ -1706,7 +1720,7 @@ X_STATUS Emulator::CompleteLaunch(const std::filesystem::path& path,
+@@ -1706,7 +1738,7 @@ X_STATUS Emulator::CompleteLaunch(const std::filesystem::path& path,
            properties_list | std::views::take(150);
  
        table = tabulate::Table();
@@ -827,7 +1220,7 @@ index eadd15ccf..fb3b333be 100644
        table.add_row({"ID", "Name", "Matchmaking", "Data Size"});
  
        for (const kernel::util::GameInfoDatabase::Property& entry :
-@@ -1728,13 +1742,13 @@ X_STATUS Emulator::CompleteLaunch(const std::filesystem::path& path,
+@@ -1728,13 +1760,13 @@ X_STATUS Emulator::CompleteLaunch(const std::filesystem::path& path,
        }
  
        XELOGI("\n-------------------- PROPERTIES --------------------{}\n{}",
@@ -843,7 +1236,7 @@ index eadd15ccf..fb3b333be 100644
        table.add_row(
            {"ID", "Name", "Matchmaking", "Default Value", "Max Value"});
  
-@@ -1749,7 +1763,7 @@ X_STATUS Emulator::CompleteLaunch(const std::filesystem::path& path,
+@@ -1749,7 +1781,7 @@ X_STATUS Emulator::CompleteLaunch(const std::filesystem::path& path,
                         fmt::format("{}", entry.max_value)});
        }
        XELOGI("\n-------------------- CONTEXTS --------------------\n{}",
@@ -852,7 +1245,7 @@ index eadd15ccf..fb3b333be 100644
  
        const std::vector<kernel::util::GameInfoDatabase::StatsView> stats_views =
            game_info_database_->GetStatsViews();
-@@ -1758,7 +1772,7 @@ X_STATUS Emulator::CompleteLaunch(const std::filesystem::path& path,
+@@ -1758,7 +1790,7 @@ X_STATUS Emulator::CompleteLaunch(const std::filesystem::path& path,
        const auto stats_views_limit = stats_views | std::views::take(100);
  
        table = tabulate::Table();
@@ -861,7 +1254,7 @@ index eadd15ccf..fb3b333be 100644
        table.add_row({"ID", "View Type", "Name", "Skilled", "Arbitrated",
                       "Hidden", "Team View", "Online Only"});
  
-@@ -1785,13 +1799,13 @@ X_STATUS Emulator::CompleteLaunch(const std::filesystem::path& path,
+@@ -1785,13 +1817,13 @@ X_STATUS Emulator::CompleteLaunch(const std::filesystem::path& path,
              "\nViews: {}/{}", stats_views_limit.size(), stats_views.size());
        }
        XELOGI("\n-------------------- STATS VIEWS --------------------{}\n{}",
@@ -877,7 +1270,7 @@ index eadd15ccf..fb3b333be 100644
        table.add_row({"Context Value", "Contexts Count", "Properties Count"});
  
        for (const kernel::util::GameInfoDatabase::PresenceMode& entry :
-@@ -1802,7 +1816,7 @@ X_STATUS Emulator::CompleteLaunch(const std::filesystem::path& path,
+@@ -1802,7 +1834,7 @@ X_STATUS Emulator::CompleteLaunch(const std::filesystem::path& path,
               fmt::format("{}", entry.property_bag.properties.size())});
        }
        XELOGI("\n-------------------- PRESENCE MODES --------------------\n{}",
@@ -887,35 +1280,128 @@ index eadd15ccf..fb3b333be 100644
        auto icon_block = game_info_database_->GetIcon();
        if (!icon_block.empty()) {
 diff --git a/src/xenia/gpu/command_processor.h b/src/xenia/gpu/command_processor.h
-index dfe42737f..9f1f5a8d7 100644
+index dfe42737f..8e349e5be 100644
 --- a/src/xenia/gpu/command_processor.h
 +++ b/src/xenia/gpu/command_processor.h
-@@ -126,6 +126,8 @@ class CommandProcessor {
+@@ -126,6 +126,12 @@ class CommandProcessor {
                     kernel::KernelState* kernel_state);
    virtual ~CommandProcessor();
    uint32_t counter() const { return counter_; }
-+  // Xbox360PS5: frames the guest presented since the start.
++  // Xbox360PS5: submitted swap packets, including failed output refreshes.
 +  uint64_t swap_count() const { return swap_count_.load(); }
++  // Valid guest outputs refreshed by the renderer, not physical display flips.
++  uint64_t refreshed_output_count() const {
++    return refreshed_output_count_.load(std::memory_order_relaxed);
++  }
    void increment_counter() { counter_++; }
  
    Shader* active_vertex_shader() const { return active_vertex_shader_; }
-@@ -600,6 +602,7 @@ class CommandProcessor {
+@@ -600,6 +606,8 @@ class CommandProcessor {
    std::vector<uint32_t> me_bin_;
  
    uint32_t counter_ = 0;
 +  std::atomic<uint64_t> swap_count_{0};
++  std::atomic<uint64_t> refreshed_output_count_{0};
  
    uint32_t primary_buffer_ptr_ = 0;
    uint32_t primary_buffer_size_ = 0;
+diff --git a/src/xenia/gpu/graphics_system.cc b/src/xenia/gpu/graphics_system.cc
+index 059fee0f1..ed44986ab 100644
+--- a/src/xenia/gpu/graphics_system.cc
++++ b/src/xenia/gpu/graphics_system.cc
+@@ -8,6 +8,10 @@
+  */
+ 
+ #include "xenia/gpu/graphics_system.h"
++#if __has_include("xbox360ps5/patch_runtime.hpp")
++#include "xbox360ps5/patch_runtime.hpp"
++#define XBOX360PS5_PATCH_PACING 1
++#endif
+ 
+ #include "xenia/base/byte_stream.h"
+ #include "xenia/base/clock.h"
+@@ -110,21 +114,7 @@ X_STATUS GraphicsSystem::Setup(cpu::Processor* processor,
+       kernel::object_ref<kernel::XHostThread>(new kernel::XHostThread(
+           kernel_state_, 128 * 1024, 0,
+           [this]() {
+-            uint64_t normalized_framerate_limit =
+-                std::max<uint64_t>(0, cvars::framerate_limit);
+-
+-            // If VSYNC is enabled, but frames are not limited,
+-            // lock framerate at default value of 60
+-            if (normalized_framerate_limit == 0 && cvars::vsync) {
+-              normalized_framerate_limit = 60;
+-            }
+-
+-            const double vsync_duration_d =
+-                cvars::vsync
+-                    ? std::max<double>(5.0,
+-                                       1000.0 / static_cast<double>(
+-                                                    normalized_framerate_limit))
+-                    : 1.0;
++            bool previous_vsync = cvars::vsync;
+             uint64_t last_frame_time = Clock::QueryGuestTickCount();
+             // Deadline the Linux branch paces to, and the most lateness it
+             // will try to make up before giving the missed beats up.
+@@ -150,11 +140,26 @@ X_STATUS GraphicsSystem::Setup(cpu::Processor* processor,
+                 continue;
+               }
+ 
++              // Xbox360PS5: patches may change pacing after graphics setup.
++#if XBOX360PS5_PATCH_PACING
++              const bool effective_vsync = xbox360ps5::EffectiveVsync(cvars::vsync);
++#else
++              const bool effective_vsync = cvars::vsync;
++#endif
++              uint64_t normalized_framerate_limit = std::max<uint64_t>(0, cvars::framerate_limit);
++              // Xbox360PS5: disabling VSync must not turn the guest video clock into 1000 Hz.
++              if (!normalized_framerate_limit) normalized_framerate_limit = 60;
++              const double vsync_duration_d = effective_vsync ? std::max<double>(5.0, 1000.0 / normalized_framerate_limit) : 1.0;
++              if (previous_vsync != effective_vsync) {
++                next_vblank_deadline = steady_time_point();
++                last_frame_time = Clock::QueryGuestTickCount();
++                previous_vsync = effective_vsync;
++              }
+               register_file()->values[XE_GPU_REG_D1MODE_V_COUNTER] +=
+                   GetResolution().second;
+ 
+ #if XE_PLATFORM_WIN32
+-              if (cvars::vsync) {
++              if (effective_vsync) {
+                 const uint64_t current_time = Clock::QueryGuestTickCount();
+                 const uint64_t tick_freq = Clock::guest_tick_frequency();
+                 const uint64_t time_delta = current_time - last_frame_time;
+@@ -173,7 +178,7 @@ X_STATUS GraphicsSystem::Setup(cpu::Processor* processor,
+                 }
+               }
+ 
+-              if (!cvars::vsync) {
++              if (!effective_vsync) {
+                 MarkVblank();
+                 if (normalized_framerate_limit > 0) {
+                   // framerate_limit is over 0, vsync disabled
+@@ -191,10 +196,10 @@ X_STATUS GraphicsSystem::Setup(cpu::Processor* processor,
+ #if XE_PLATFORM_LINUX
+               MarkVblank();
+ 
+-              if (cvars::vsync || normalized_framerate_limit > 0) {
++              if (effective_vsync || normalized_framerate_limit > 0) {
+                 uint64_t sleep_duration_ns =
+                     static_cast<uint64_t>(vsync_duration_d * 1000000.0);
+-                if (!cvars::vsync && normalized_framerate_limit > 0) {
++                if (!effective_vsync && normalized_framerate_limit > 0) {
+                   sleep_duration_ns = 1000000000 / normalized_framerate_limit;
+                 }
+                 // Sleeping a flat period from wherever the thread woke makes
 diff --git a/src/xenia/gpu/pm4_command_processor_implement.h b/src/xenia/gpu/pm4_command_processor_implement.h
-index bd3b995dd..32325d05a 100644
+index bd3b995dd..f01cf15b8 100644
 --- a/src/xenia/gpu/pm4_command_processor_implement.h
 +++ b/src/xenia/gpu/pm4_command_processor_implement.h
 @@ -660,6 +660,7 @@ bool COMMAND_PROCESSOR::ExecutePacketType3_XE_SWAP(uint32_t packet,
    uint32_t frontbuffer_height = reader_.ReadAndSwap<uint32_t>();
    reader_.AdvanceRead((count - 4) * sizeof(uint32_t));
  
-+  ++swap_count_;  // Xbox360PS5: frames presented, for the frame rate.
++  ++swap_count_;  // Xbox360PS5: swap requests, including unavailable frontbuffers.
    COMMAND_PROCESSOR::IssueSwap(frontbuffer_ptr, frontbuffer_width,
                                 frontbuffer_height);
  
@@ -959,6 +1445,252 @@ index 3afb39120..13bd7373a 100644
  }
  
  SharedMemory::~SharedMemory() { ShutdownCommon(); }
+diff --git a/src/xenia/gpu/vulkan/vulkan_command_processor.cc b/src/xenia/gpu/vulkan/vulkan_command_processor.cc
+index 71fb8a828..ed2c8df1c 100644
+--- a/src/xenia/gpu/vulkan/vulkan_command_processor.cc
++++ b/src/xenia/gpu/vulkan/vulkan_command_processor.cc
+@@ -1488,7 +1488,7 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
+ 
+   auto aspect = graphics_system_->GetScaledAspectRatio();
+ 
+-  presenter->RefreshGuestOutput(
++  const bool refreshed_output = presenter->RefreshGuestOutput(
+       frontbuffer_width_scaled, frontbuffer_height_scaled, aspect.first,
+       aspect.second,
+       [this, frontbuffer_width_scaled, frontbuffer_height_scaled,
+@@ -1803,6 +1803,9 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
+ 
+   // End the frame even if did not present for any reason (the image refresher
+   // was not called), to prevent leaking per-frame resources.
++  if (refreshed_output) {
++    refreshed_output_count_.fetch_add(1, std::memory_order_relaxed);
++  }
+   EndSubmission(true);
+ }
+ 
+diff --git a/src/xenia/kernel/kernel_state.cc b/src/xenia/kernel/kernel_state.cc
+index e50200848..76a3e7d13 100644
+--- a/src/xenia/kernel/kernel_state.cc
++++ b/src/xenia/kernel/kernel_state.cc
+@@ -40,6 +40,13 @@ DEFINE_uint32(kernel_build_version, 1888, "Define current kernel version",
+ 
+ DECLARE_string(cl);
+ 
++// Xbox360PS5: the launcher and host runner share the same patch choices.
++// Keep the standard Canary patcher for binaries without the integration.
++#if defined(__GNUC__)
++extern "C" void Xbox360PS5ApplyGamePatches(xe::Memory*, xe::kernel::UserModule*, uint32_t)
++    __attribute__((weak));
++#endif
++
+ namespace xe {
+ namespace kernel {
+ 
+@@ -376,6 +383,18 @@ object_ref<KernelModule> KernelState::GetKernelModule(
+   return nullptr;
+ }
+ 
++// Xbox360PS5: shared path policy, also exercised by the host regression runner.
++std::string ResolveUserModulePath(std::string_view requested,
++                                 std::string_view executable_path) {
++  const bool relative = !requested.empty() && requested.find(':') == std::string_view::npos &&
++                        requested.front() != '\\' && requested.front() != '/';
++  if (!relative || executable_path.empty()) return std::string(requested);
++  std::string normalized(requested);
++  std::replace(normalized.begin(), normalized.end(), '/', '\\');
++  return xe::utf8::join_guest_paths(
++      xe::utf8::find_base_guest_path(executable_path), normalized);
++}
++
+ object_ref<XModule> KernelState::GetModule(const std::string_view name,
+                                            bool user_only) {
+   if (name.empty()) {
+@@ -397,10 +416,18 @@ object_ref<XModule> KernelState::GetModule(const std::string_view name,
+     }
+   }
+ 
+-  auto path(name);
++  // Xbox360PS5: module handle queries are name lookups, not file loads.
++  // Search loaded names before asking VFS to resolve a path. A bare name
++  // has no device prefix and ResolvePath would only emit a misleading error.
++  for (auto user_module : user_modules_) {
++    if (user_module->Matches(name)) return retain_object(user_module.get());
++  }
++  if (name.find_first_of(":\\/") == std::string_view::npos) return nullptr;
++
++  auto path = ResolveUserModulePath(name, executable_module_ ? executable_module_->path() : "");
+ 
+   // Resolve the path to an absolute path.
+-  auto entry = file_system_->ResolvePath(name);
++  auto entry = file_system_->ResolvePath(path);
+   if (entry) {
+     path = entry->absolute_path();
+   }
+@@ -572,18 +599,11 @@ void KernelState::LoadKernelModule(object_ref<KernelModule> kernel_module) {
+ object_ref<UserModule> KernelState::LoadUserModule(
+     const std::string_view raw_name, bool call_entry) {
+   // Some games try to load relative to launch module, others specify full path.
+-  auto name = xe::utf8::find_name_from_guest_path(raw_name);
+-  std::string path(raw_name);
+-  if (name == raw_name) {
+-    if (!executable_module_) {
+-      path = xe::utf8::join_guest_paths(
+-          xe::utf8::find_base_guest_path((*user_modules_.cbegin())->path()),
+-          name);
+-    } else {
+-      path = xe::utf8::join_guest_paths(
+-          xe::utf8::find_base_guest_path(executable_module_->path()), name);
+-    }
+-  }
++  // Xbox360PS5: include relative subdirectories and handle the first module
++  // without dereferencing an empty module list.
++  const std::string base = executable_module_ ? executable_module_->path()
++      : (!user_modules_.empty() ? (*user_modules_.cbegin())->path() : "");
++  const std::string path = ResolveUserModulePath(raw_name, base);
+ 
+   object_ref<UserModule> module;
+   {
+@@ -655,8 +675,14 @@ X_RESULT KernelState::FinishLoadingUserModule(
+     return result;
+   }
+   module->Dump();
+-  emulator_->patcher()->ApplyPatchesForTitle(memory_, module->title_id(),
+-                                             module->hash());
++#if defined(__GNUC__)
++  if (Xbox360PS5ApplyGamePatches) {
++    Xbox360PS5ApplyGamePatches(memory_, module.get(), module->title_id());
++  } else
++#endif
++  {
++    emulator_->patcher()->ApplyPatchesForTitle(memory_, module->title_id(), module->hash());
++  }
+   emulator_->on_patch_apply();
+   if (module->xex_module()) {
+     module->xex_module()->Precompile();
+diff --git a/src/xenia/kernel/util/shim_utils.h b/src/xenia/kernel/util/shim_utils.h
+index 4a243539f..de4b75840 100644
+--- a/src/xenia/kernel/util/shim_utils.h
++++ b/src/xenia/kernel/util/shim_utils.h
+@@ -564,18 +564,25 @@ struct ExportRegistrerHelper {
+             PrintKernelCall(export_entry, params);
+           }
+         }
+-        if constexpr (std::is_void<R>::value) {
+-          KernelTrampoline(fn, std::forward<std::tuple<Ps...>>(params),
+-                           std::make_index_sequence<sizeof...(Ps)>());
+-        } else {
+-          auto result =
+-              KernelTrampoline(fn, std::forward<std::tuple<Ps...>>(params),
+-                               std::make_index_sequence<sizeof...(Ps)>());
+-          result.Store(ppc_context);
+-          if (TAGS &
+-              (xe::cpu::ExportTag::kLog | xe::cpu::ExportTag::kLogResult)) {
+-            // TODO(benvanik): log result.
++        // Xbox360PS5: a C++ exception thrown inside a kernel call (a
++        // std::filesystem call that fails, a bad conversion) cannot unwind
++        // through the generated guest code that called it, and the whole
++        // title aborted. The call fails instead, with an unsuccessful status
++        // for the game to handle.
++        try {
++          if constexpr (std::is_void<R>::value) {
++            KernelTrampoline(fn, std::forward<std::tuple<Ps...>>(params),
++                             std::make_index_sequence<sizeof...(Ps)>());
++          } else {
++            auto result =
++                KernelTrampoline(fn, std::forward<std::tuple<Ps...>>(params),
++                                 std::make_index_sequence<sizeof...(Ps)>());
++            result.Store(ppc_context);
+           }
++        } catch (const std::exception& error) {
++          XELOGE("Kernel call {} threw: {}; returning X_STATUS_UNSUCCESSFUL",
++                 export_entry->name, error.what());
++          ppc_context->r[3] = 0xC0000001u;
+         }
+       }
+     };
+diff --git a/src/xenia/kernel/xam/content_manager.cc b/src/xenia/kernel/xam/content_manager.cc
+index 6373909db..72325b208 100644
+--- a/src/xenia/kernel/xam/content_manager.cc
++++ b/src/xenia/kernel/xam/content_manager.cc
+@@ -12,6 +12,9 @@
+ #include "xenia/kernel/xam/xcontent/xcontent_package_container.h"
+ #include "xenia/kernel/xam/xcontent/xcontent_package_directory.h"
+ 
++#include <array>
++#include <cerrno>
++
+ #include "third_party/fmt/include/fmt/format.h"
+ #include "xenia/base/filesystem.h"
+ #include "xenia/base/logging.h"
+@@ -45,27 +48,49 @@ std::string ContentManager::GeneratePackageDevicePath(
+ X_STATUS ContentManager::ExtractContentHeader(
+     const std::filesystem::path& header_path,
+     const XContentContainerHeader& container_header) {
+-  if (!std::filesystem::exists(header_path.parent_path())) {
+-    if (!std::filesystem::create_directories(header_path.parent_path())) {
+-      return X_STATUS_ACCESS_DENIED;
+-    }
+-  }
+-
+-  xe::filesystem::CreateEmptyFile(header_path);
+-  if (!std::filesystem::exists(header_path)) {
+-    return X_STATUS_NO_SUCH_FILE;
+-  }
+-
+-  std::filesystem::resize_file(
+-      header_path, xe::round_up(sizeof(XContentContainerHeader), 0x1000));
+-
+-  auto file = xe::filesystem::OpenFile(header_path, "r+b");
++  // Xbox360PS5: profile teardown calls this from a noexcept destructor.
++  // Use status-returning filesystem operations and a complete temporary file;
++  // resize_file previously threw and aborted the entire frontend at startup.
++  std::error_code error;
++  const auto parent = header_path.parent_path();
++  if (!parent.empty()) std::filesystem::create_directories(parent, error);
++  if (error) {
++    XELOGE("Content header: cannot create {} ({}: {})", parent, error.value(), error.message());
++      return error == std::errc::no_space_on_device ? X_STATUS_DISK_FULL : X_STATUS_ACCESS_DENIED;
++  }
++  auto temporary = header_path;
++  temporary += ".tmp";
++  auto file = xe::filesystem::OpenFile(temporary, "wb");
+   if (!file) {
+-    return X_STATUS_UNSUCCESSFUL;
++      const int failure = errno;
++      XELOGE("Content header: cannot open temporary {} (errno {})", temporary, failure);
++      return failure == ENOSPC ? X_STATUS_DISK_FULL : X_STATUS_ACCESS_DENIED;
++  }
++  const size_t padding_size = xe::round_up(sizeof(XContentContainerHeader), 0x1000) - sizeof(XContentContainerHeader);
++  const std::array<uint8_t, 0x1000> padding{};
++  bool written = fwrite(&container_header, 1, sizeof(container_header), file) == sizeof(container_header);
++  if (written && padding_size) written = fwrite(padding.data(), 1, padding_size, file) == padding_size;
++    int failure = written ? 0 : errno;
++  const int close_status = fclose(file);
++    if (close_status && !failure) failure = errno;
++  if (!written || close_status) {
++      XELOGE("Content header: incomplete write for {} (errno {})", temporary, failure);
++      if (failure == ENOSPC) {
++        std::error_code space_error;
++        const auto space = std::filesystem::space(parent, space_error);
++        XELOGE("Save storage full at {}: available {} bytes (query error {}). Existing header retained.",
++               parent, space_error ? 0 : space.available, space_error.value());
++      }
++    std::filesystem::remove(temporary, error);
++      return failure == ENOSPC ? X_STATUS_DISK_FULL : X_STATUS_UNSUCCESSFUL;
++  }
++  std::filesystem::rename(temporary, header_path, error);
++  if (error) {
++    XELOGE("Content header: cannot replace {} ({}: {})", header_path, error.value(), error.message());
++      const bool full = error == std::errc::no_space_on_device;
++    std::filesystem::remove(temporary, error);
++      return full ? X_STATUS_DISK_FULL : X_STATUS_ACCESS_DENIED;
+   }
+-
+-  fwrite(&container_header, 1, sizeof(XContentContainerHeader), file);
+-  fclose(file);
+   return X_STATUS_SUCCESS;
+ }
+ 
 diff --git a/src/xenia/kernel/xam/xam_info.cc b/src/xenia/kernel/xam/xam_info.cc
 index 9b908fad5..fa4bf9d33 100644
 --- a/src/xenia/kernel/xam/xam_info.cc
@@ -1098,6 +1830,122 @@ index 11bc26872..fe81f54f7 100644
        xe::threading::Sleep(kUIDelayMillis);
        kernel_state()->BroadcastNotification(kXNotificationSystemUI, false);
      });
+diff --git a/src/xenia/kernel/xam/xcontent/xcontent_package_container.cc b/src/xenia/kernel/xam/xcontent/xcontent_package_container.cc
+index 1ffa131e0..238abab4d 100644
+--- a/src/xenia/kernel/xam/xcontent/xcontent_package_container.cc
++++ b/src/xenia/kernel/xam/xcontent/xcontent_package_container.cc
+@@ -80,14 +80,24 @@ bool ContentPackageContainer::LoadPackage(
+     return false;
+   }
+ 
+-  package_ = xe::MappedMemory::Open(package_path, open_mode);
++  // Xbox360PS5: a package opened for reading (a game: XBLA, Games on Demand)
++  // is not mapped on the console, and its header is read from the file. One
++  // opened for writing (a save, a profile) is mapped as before.
++  package_ = open_mode == MappedMemory::Mode::kRead
++                 ? xe::MappedMemory::OpenForReading(package_path)
++                 : xe::MappedMemory::Open(package_path, open_mode);
+ 
+   if (!package_) {
+     return false;
+   }
+ 
+-  const auto package_header =
+-      reinterpret_cast<XContentContainerHeader*>(package_->data());
++  XContentContainerHeader package_header_copy;
++  if (!package_->ReadAt(0, &package_header_copy,
++                        sizeof(package_header_copy))) {
++    package_->Close();
++    return false;
++  }
++  const auto package_header = &package_header_copy;
+   if (!package_header->content_header.is_magic_valid()) {
+     package_->Close();
+     return false;
+diff --git a/src/xenia/kernel/xconfig.cc b/src/xenia/kernel/xconfig.cc
+index 57cc50f95..9a2540d19 100644
+--- a/src/xenia/kernel/xconfig.cc
++++ b/src/xenia/kernel/xconfig.cc
+@@ -39,8 +39,22 @@ XConfig::XConfig(const std::filesystem::path& xconfig_path)
+     return;
+   }
+ 
+-  fread(&xconfig_data_, sizeof(XConfigData), 1, file);
++  const size_t loaded = fread(&xconfig_data_, sizeof(XConfigData), 1, file);
+   fclose(file);
++
++  // Xbox360PS5: a settings file cut short (a full disk, or the title closed
++  // while it was being written) loads as zeros, and a zero screen size is a
++  // division by zero in every game's video-mode query. Such a file is replaced
++  // by the defaults.
++  const Resolution screen(ReadSetting<uint32_t>(
++      XCONFIG_USER_CATEGORY, XCONFIG_USER_AV_COMPOSITE_SCREENSZ));
++  if (loaded != 1 || !screen.width_.get() || !screen.height_.get()) {
++    XELOGW("XConfig: {} is incomplete or invalid; using the defaults",
++           xe::path_to_utf8(xconfig_path));
++    xconfig_data_ = {};
++    SetDefaults();
++    FlushToFile();
++  }
+ }
+ 
+ void XConfig::ReadSetting(const X_CONFIG_CATEGORY category,
+@@ -125,13 +139,37 @@ void XConfig::FlushToFile() {
+     return;
+   }
+ 
+-  FILE* file = xe::filesystem::OpenFile(file_path_, "wb");
++  // Xbox360PS5: written beside the file and renamed over it, so that a write
++  // that fails or is interrupted leaves the previous settings in place.
++  std::filesystem::path temporary = file_path_;
++  temporary += ".tmp";
++  FILE* file = xe::filesystem::OpenFile(temporary, "wb");
+   if (!file) {
+     return;
+   }
+ 
+-  fwrite(&xconfig_data_, 1, sizeof(XConfigData), file);
+-  fclose(file);
++  const bool written =
++      fwrite(&xconfig_data_, 1, sizeof(XConfigData), file) ==
++      sizeof(XConfigData);
++  const bool closed = fclose(file) == 0;
++  std::error_code error;
++  if (written && closed) {
++    std::filesystem::rename(temporary, file_path_, error);
++  }
++  if (!written || !closed || error) {
++    // Where the replacement is refused, the file is written in place.
++    std::filesystem::remove(temporary, error);
++    file = xe::filesystem::OpenFile(file_path_, "wb");
++    const bool direct =
++        file && fwrite(&xconfig_data_, 1, sizeof(XConfigData), file) ==
++                    sizeof(XConfigData);
++    if (file) {
++      fclose(file);
++    }
++    if (!direct) {
++      XELOGW("XConfig: could not save {}", xe::path_to_utf8(file_path_));
++    }
++  }
+ }
+ 
+ const XConfig::FieldDescriptor* XConfig::FindField(X_CONFIG_CATEGORY category,
+diff --git a/src/xenia/kernel/xconfig.h b/src/xenia/kernel/xconfig.h
+index 82b35e070..cf5956673 100644
+--- a/src/xenia/kernel/xconfig.h
++++ b/src/xenia/kernel/xconfig.h
+@@ -403,6 +403,10 @@ struct Resolution {
+ 
+   std::pair<uint16_t, uint16_t> aspect_ratio() const {
+     const uint16_t divisor = std::gcd(width_.get(), height_.get());
++    // Xbox360PS5: an unset size must not divide by zero.
++    if (!divisor) {
++      return {16, 9};
++    }
+     return {width_.get() / divisor, height_.get() / divisor};
+   }
+ 
 diff --git a/src/xenia/memory.cc b/src/xenia/memory.cc
 index 706bd4809..0e1358561 100644
 --- a/src/xenia/memory.cc
@@ -1395,6 +2243,437 @@ index 68b97e788..cfdfab0aa 100644
  #if XE_PLATFORM_ANDROID
        case Surface::kTypeIndex_AndroidNativeWindow: {
          auto& android_native_window_surface =
+diff --git a/src/xenia/vfs/devices/disc_image_device.cc b/src/xenia/vfs/devices/disc_image_device.cc
+index 123d5a262..f0b9bce4c 100644
+--- a/src/xenia/vfs/devices/disc_image_device.cc
++++ b/src/xenia/vfs/devices/disc_image_device.cc
+@@ -10,6 +10,7 @@
+ #include "xenia/vfs/devices/disc_image_device.h"
+ 
+ #include "xenia/base/literals.h"
++#include "xenia/base/filesystem.h"
+ #include "xenia/base/logging.h"
+ #include "xenia/base/math.h"
+ #include "xenia/vfs/devices/disc_image_entry.h"
+@@ -20,6 +21,11 @@ namespace vfs {
+ using namespace xe::literals;
+ 
+ constexpr size_t kXESectorSize = 2_KiB;
++namespace {
++constexpr size_t kGameOffsets[] = {
++    0x00000000, 0x0000FB20, 0x00020600, 0x02080000, 0x0FD90000,
++};
++}
+ 
+ DiscImageDevice::DiscImageDevice(const std::string_view mount_path,
+                                  const std::filesystem::path& host_path)
+@@ -27,17 +33,31 @@ DiscImageDevice::DiscImageDevice(const std::string_view mount_path,
+ 
+ DiscImageDevice::~DiscImageDevice() = default;
+ 
++bool DiscImageDevice::ProbeHeader(FILE* file) {
++  if (!file) return false;
++  char magic[20];
++  for (size_t game_offset : kGameOffsets) {
++    if (filesystem::Seek(file, game_offset + 32 * kXESectorSize, SEEK_SET) &&
++        fread(magic, 1, sizeof(magic), file) == sizeof(magic) &&
++        std::memcmp(magic, "MICROSOFT*XBOX*MEDIA", sizeof(magic)) == 0) {
++      return true;
++    }
++    clearerr(file);
++  }
++  return false;
++}
++
+ bool DiscImageDevice::Initialize() {
+-  mmap_ = MappedMemory::Open(host_path_, MappedMemory::Mode::kRead);
++  XELOGI("Disc mount: mapping {}", host_path_);
++  mmap_ = MappedMemory::OpenForReading(host_path_);
+   if (!mmap_) {
+-    XELOGE("Disc image could not be mapped");
++    XELOGE("Disc image could not be opened");
+     return false;
+   } else {
+     XELOGFS("DiscImageDevice::Initialize");
+   }
+ 
+   ParseState state = {0};
+-  state.ptr = mmap_->data();
+   state.size = mmap_->size();
+   auto result = Verify(&state);
+   if (result != Error::kSuccess) {
+@@ -46,12 +66,13 @@ bool DiscImageDevice::Initialize() {
+     return false;
+   }
+ 
+-  result = ReadAllEntries(&state, state.ptr + state.root_offset);
++  result = ReadAllEntries(&state);
+   if (result != Error::kSuccess) {
+     XELOGE("Failed to read all GDFX entries: {}", static_cast<int32_t>(result));
+     return false;
+   }
+ 
++  XELOGI("Disc mount: directory ready for {}", host_path_);
+   return true;
+ }
+ 
+@@ -70,12 +91,9 @@ Entry* DiscImageDevice::ResolvePath(const std::string_view path) {
+ 
+ DiscImageDevice::Error DiscImageDevice::Verify(ParseState* state) {
+   // Find sector 32 of the game partition - try at a few points.
+-  static constexpr size_t likely_offsets[] = {
+-      0x00000000, 0x0000FB20, 0x00020600, 0x02080000, 0x0FD90000,
+-  };
+   bool magic_found = false;
+-  for (size_t n = 0; n < xe::countof(likely_offsets); n++) {
+-    state->game_offset = likely_offsets[n];
++  for (size_t game_offset : kGameOffsets) {
++    state->game_offset = game_offset;
+     if (VerifyMagic(state, state->game_offset + (32 * kXESectorSize))) {
+       magic_found = true;
+       break;
+@@ -90,7 +108,11 @@ DiscImageDevice::Error DiscImageDevice::Verify(ParseState* state) {
+   if (state->size < state->game_offset + (32 * kXESectorSize)) {
+     return Error::kErrorReadError;
+   }
+-  uint8_t* fs_ptr = state->ptr + state->game_offset + (32 * kXESectorSize);
++  uint8_t fs_ptr[32];
++  if (!mmap_->ReadAt(state->game_offset + (32 * kXESectorSize), fs_ptr,
++                     sizeof(fs_ptr))) {
++    return Error::kErrorReadError;
++  }
+   state->root_sector = xe::load<uint32_t>(fs_ptr + 20);
+   state->root_size = xe::load<uint32_t>(fs_ptr + 24);
+   state->root_offset =
+@@ -108,16 +130,23 @@ bool DiscImageDevice::VerifyMagic(ParseState* state, size_t offset) {
+   }
+ 
+   // Simple check to see if the given offset contains the magic value.
+-  return std::memcmp(state->ptr + offset, "MICROSOFT*XBOX*MEDIA", 20) == 0;
++  char magic[20];
++  return mmap_->ReadAt(offset, magic, sizeof(magic)) &&
++         std::memcmp(magic, "MICROSOFT*XBOX*MEDIA", sizeof(magic)) == 0;
+ }
+ 
+-DiscImageDevice::Error DiscImageDevice::ReadAllEntries(
+-    ParseState* state, const uint8_t* root_buffer) {
++DiscImageDevice::Error DiscImageDevice::ReadAllEntries(ParseState* state) {
+   auto root_entry = new DiscImageEntry(this, nullptr, "", mmap_.get());
+   root_entry->attributes_ = kFileAttributeDirectory;
+   root_entry_ = std::unique_ptr<Entry>(root_entry);
+ 
+-  if (!ReadEntry(state, root_buffer, 0, root_entry)) {
++  std::vector<uint8_t> root_buffer(state->root_size);
++  if (!mmap_->ReadAt(state->root_offset, root_buffer.data(),
++                     root_buffer.size())) {
++    return Error::kErrorReadError;
++  }
++  if (!ReadEntry(state, root_buffer.data(), root_buffer.size(), 0,
++                 root_entry)) {
+     return Error::kErrorOutOfMemory;
+   }
+ 
+@@ -125,9 +154,13 @@ DiscImageDevice::Error DiscImageDevice::ReadAllEntries(
+ }
+ 
+ bool DiscImageDevice::ReadEntry(ParseState* state, const uint8_t* buffer,
+-                                uint16_t entry_ordinal,
++                                size_t buffer_size, uint16_t entry_ordinal,
+                                 DiscImageEntry* parent) {
+-  const uint8_t* p = buffer + (entry_ordinal * 4);
++  const size_t entry_offset = size_t(entry_ordinal) * 4;
++  if (entry_offset + 14 > buffer_size) {
++    return false;
++  }
++  const uint8_t* p = buffer + entry_offset;
+ 
+   uint16_t node_l = xe::load<uint16_t>(p + 0);
+   uint16_t node_r = xe::load<uint16_t>(p + 2);
+@@ -135,9 +168,12 @@ bool DiscImageDevice::ReadEntry(ParseState* state, const uint8_t* buffer,
+   size_t length = xe::load<uint32_t>(p + 8);
+   uint8_t attributes = xe::load<uint8_t>(p + 12);
+   uint8_t name_length = xe::load<uint8_t>(p + 13);
++  if (entry_offset + 14 + name_length > buffer_size) {
++    return false;
++  }
+   auto name_buffer = reinterpret_cast<const char*>(p + 14);
+ 
+-  if (node_l && !ReadEntry(state, buffer, node_l, parent)) {
++  if (node_l && !ReadEntry(state, buffer, buffer_size, node_l, parent)) {
+     return false;
+   }
+ 
+@@ -166,14 +202,18 @@ bool DiscImageDevice::ReadEntry(ParseState* state, const uint8_t* buffer,
+     entry->data_size_ = 0;
+     if (length) {
+       // Not a leaf - read in children.
+-      if (state->size < state->game_offset + (sector * kXESectorSize)) {
++      if (state->size < state->game_offset + (sector * kXESectorSize) ||
++          length > 32_MiB) {
+         // Out of bounds read.
+         return false;
+       }
+       // Read child list.
+-      uint8_t* folder_ptr =
+-          state->ptr + state->game_offset + (sector * kXESectorSize);
+-      if (!ReadEntry(state, folder_ptr, 0, entry.get())) {
++      std::vector<uint8_t> folder(length);
++      if (!mmap_->ReadAt(state->game_offset + (sector * kXESectorSize),
++                         folder.data(), folder.size())) {
++        return false;
++      }
++      if (!ReadEntry(state, folder.data(), folder.size(), 0, entry.get())) {
+         return false;
+       }
+     }
+@@ -187,7 +227,7 @@ bool DiscImageDevice::ReadEntry(ParseState* state, const uint8_t* buffer,
+   parent->children_.emplace_back(std::move(entry));
+ 
+   // Read next file in the list.
+-  if (node_r && !ReadEntry(state, buffer, node_r, parent)) {
++  if (node_r && !ReadEntry(state, buffer, buffer_size, node_r, parent)) {
+     return false;
+   }
+ 
+diff --git a/src/xenia/vfs/devices/disc_image_device.h b/src/xenia/vfs/devices/disc_image_device.h
+index 3b098944c..ef830581a 100644
+--- a/src/xenia/vfs/devices/disc_image_device.h
++++ b/src/xenia/vfs/devices/disc_image_device.h
+@@ -11,6 +11,7 @@
+ #define XENIA_VFS_DEVICES_DISC_IMAGE_DEVICE_H_
+ 
+ #include <memory>
++#include <cstdio>
+ #include <string>
+ 
+ #include "xenia/base/mapped_memory.h"
+@@ -29,6 +30,10 @@ class DiscImageDevice : public Device {
+                   const std::filesystem::path& host_path);
+   ~DiscImageDevice() override;
+ 
++  // Xbox360PS5: format detection reads only candidate volume signatures.
++  // Directory parsing and mapping are deferred to Initialize, at mount time.
++  static bool ProbeHeader(FILE* file);
++
+   bool Initialize() override;
+   void Dump(StringBuffer* string_buffer) override;
+   Entry* ResolvePath(const std::string_view path) override;
+@@ -60,7 +65,6 @@ class DiscImageDevice : public Device {
+   std::unique_ptr<MappedMemory> mmap_;
+ 
+   typedef struct {
+-    uint8_t* ptr;
+     size_t size;         // Size (bytes) of total image.
+     size_t game_offset;  // Offset (bytes) of game partition.
+     size_t root_sector;  // Offset (sector) of root.
+@@ -70,8 +74,11 @@ class DiscImageDevice : public Device {
+ 
+   Error Verify(ParseState* state);
+   bool VerifyMagic(ParseState* state, size_t offset);
+-  Error ReadAllEntries(ParseState* state, const uint8_t* root_buffer);
+-  bool ReadEntry(ParseState* state, const uint8_t* buffer,
++  // Xbox360PS5: directory tables are read from the file into buffers (the
++  // image is not mapped on the console), and entries are checked against the
++  // table they are in.
++  Error ReadAllEntries(ParseState* state);
++  bool ReadEntry(ParseState* state, const uint8_t* buffer, size_t buffer_size,
+                  uint16_t entry_ordinal, DiscImageEntry* parent);
+ };
+ 
+diff --git a/src/xenia/vfs/devices/disc_image_entry.cc b/src/xenia/vfs/devices/disc_image_entry.cc
+index 7c71c2f70..e7b437280 100644
+--- a/src/xenia/vfs/devices/disc_image_entry.cc
++++ b/src/xenia/vfs/devices/disc_image_entry.cc
+@@ -44,6 +44,10 @@ std::unique_ptr<MappedMemory> DiscImageEntry::OpenMapped(
+     return nullptr;
+   }
+ 
++  if (!mmap_->is_mapped()) {
++    return nullptr;
++  }
++
+   size_t real_offset = data_offset_ + offset;
+   size_t real_length = length ? std::min(length, data_size_) : data_size_;
+   return mmap_->Slice(real_offset, real_length);
+diff --git a/src/xenia/vfs/devices/disc_image_entry.h b/src/xenia/vfs/devices/disc_image_entry.h
+index fd458d84f..198f95552 100644
+--- a/src/xenia/vfs/devices/disc_image_entry.h
++++ b/src/xenia/vfs/devices/disc_image_entry.h
+@@ -37,7 +37,8 @@ class DiscImageEntry : public Entry {
+ 
+   X_STATUS Open(uint32_t desired_access, File** out_file) override;
+ 
+-  bool can_map() const override { return true; }
++  // Xbox360PS5: only when the image is mapped (it is not on the console).
++  bool can_map() const override { return mmap_->is_mapped(); }
+   std::unique_ptr<MappedMemory> OpenMapped(MappedMemory::Mode mode,
+                                            size_t offset,
+                                            size_t length) override;
+diff --git a/src/xenia/vfs/devices/disc_image_file.cc b/src/xenia/vfs/devices/disc_image_file.cc
+index d1db59d68..f8a6a94db 100644
+--- a/src/xenia/vfs/devices/disc_image_file.cc
++++ b/src/xenia/vfs/devices/disc_image_file.cc
+@@ -35,7 +35,10 @@ X_STATUS DiscImageFile::ReadSync(std::span<uint8_t> buffer, size_t byte_offset,
+   size_t real_offset = entry_->data_offset() + byte_offset;
+   size_t real_length =
+       std::min(buffer.size(), entry_->data_size() - byte_offset);
+-  std::memcpy(buffer.data(), entry_->mmap()->data() + real_offset, real_length);
++  // Xbox360PS5: through ReadAt, which reads the file itself on the console.
++  if (!entry_->mmap()->ReadAt(real_offset, buffer.data(), real_length)) {
++    return X_STATUS_END_OF_FILE;
++  }
+   *out_bytes_read = real_length;
+   return X_STATUS_SUCCESS;
+ }
+diff --git a/src/xenia/vfs/devices/xcontent_devices/stfs_container_device.cc b/src/xenia/vfs/devices/xcontent_devices/stfs_container_device.cc
+index ea79e19d1..02c051222 100644
+--- a/src/xenia/vfs/devices/xcontent_devices/stfs_container_device.cc
++++ b/src/xenia/vfs/devices/xcontent_devices/stfs_container_device.cc
+@@ -55,7 +55,10 @@ StfsContainerDevice::Result StfsContainerDevice::Read() {
+   size_t n = 0;
+   for (n = 0; n < descriptor_->file_table_block_count; n++) {
+     const size_t offset = BlockToOffset(table_block_index);
+-    directory = *reinterpret_cast<StfsDirectoryBlock*>(data_->data() + offset);
++    // Xbox360PS5: read from the file; the package is not mapped on the console.
++    if (!data_->ReadAt(offset, &directory, sizeof(directory))) {
++      return Result::kReadError;
++    }
+ 
+     for (size_t m = 0; m < kEntriesPerDirectoryBlock; m++) {
+       const StfsDirectoryEntry& dir_entry = directory.entries[m];
+@@ -230,8 +233,9 @@ void StfsContainerDevice::UpdateCachedHashTable(
+   const size_t hash_offset = BlockToHashBlockOffset(block_index, hash_level);
+   // Do nothing. It's already there.
+   if (!cached_hash_tables_.count(hash_offset)) {
+-    cached_hash_tables_[hash_offset] = *reinterpret_cast<StfsHashTable*>(
+-        data_->data() + hash_offset + secondary_table_offset);
++    StfsHashTable table = {};
++    data_->ReadAt(hash_offset + secondary_table_offset, &table, sizeof(table));
++    cached_hash_tables_[hash_offset] = table;
+   }
+ 
+   uint32_t record = block_index % kBlocksPerHashLevel[0];
+diff --git a/src/xenia/vfs/devices/xcontent_devices/stfs_container_file.cc b/src/xenia/vfs/devices/xcontent_devices/stfs_container_file.cc
+index 1ee035dd1..352f377af 100644
+--- a/src/xenia/vfs/devices/xcontent_devices/stfs_container_file.cc
++++ b/src/xenia/vfs/devices/xcontent_devices/stfs_container_file.cc
+@@ -23,8 +23,10 @@ void StfsContainerFile::Destroy() { delete this; }
+ 
+ size_t StfsContainerFile::Read(std::span<uint8_t> buffer, size_t offset,
+                                size_t record_file) {
+-  std::memcpy(buffer.data(), entry_->data()->data() + offset, buffer.size());
+-  return buffer.size();
++  // Xbox360PS5: through ReadAt, which reads the file itself on the console.
++  return entry_->data()->ReadAt(offset, buffer.data(), buffer.size())
++             ? buffer.size()
++             : 0;
+ }
+ 
+ }  // namespace vfs
+diff --git a/src/xenia/vfs/devices/xcontent_devices/svod_container_device.cc b/src/xenia/vfs/devices/xcontent_devices/svod_container_device.cc
+index 5ecf483f9..034ca20c1 100644
+--- a/src/xenia/vfs/devices/xcontent_devices/svod_container_device.cc
++++ b/src/xenia/vfs/devices/xcontent_devices/svod_container_device.cc
+@@ -58,7 +58,8 @@ SvodContainerDevice::Result SvodContainerDevice::LoadHostFiles(
+     auto& fragment = fragment_files.at(i);
+     auto path = fragment.path / fragment.name;
+ 
+-    auto file = MappedMemory::Open(path, MappedMemory::Mode::kRead);
++    // Xbox360PS5: opened for reading; not mapped on the console.
++    auto file = MappedMemory::OpenForReading(path);
+ 
+     if (!file) {
+       XELOGI("Failed to map SVOD file {}.", path);
+@@ -97,8 +98,12 @@ XContentContainerDevice::Result SvodContainerDevice::Read() {
+   };
+   static_assert_size(root_data, 0x10);
+ 
+-  const auto root_d =
+-      reinterpret_cast<root_data*>(svod_header->data() + magic_offset + 0x14);
++  root_data root_copy = {};
++  if (!svod_header->ReadAt(magic_offset + 0x14, &root_copy,
++                           sizeof(root_copy))) {
++    return Result::kReadError;
++  }
++  const auto root_d = &root_copy;
+   // Parse the root directory
+ 
+   const uint64_t root_creation_timestamp =
+@@ -151,12 +156,15 @@ SvodContainerDevice::Result SvodContainerDevice::ReadEntry(
+     return Result::kReadError;
+   }
+ 
+-  std::memcpy(&dir_entry, file->data() + entry_address, sizeof(dir_entry));
++  if (!file->ReadAt(entry_address, &dir_entry, sizeof(dir_entry))) {
++    return Result::kReadError;
++  }
+ 
+   auto name_buffer = std::make_unique<char[]>(dir_entry.name_length);
+-  std::memcpy(name_buffer.get(),
+-              file->data() + entry_address + sizeof(dir_entry),
+-              dir_entry.name_length);
++  if (!file->ReadAt(entry_address + sizeof(dir_entry), name_buffer.get(),
++                    dir_entry.name_length)) {
++    return Result::kReadError;
++  }
+ 
+   // Filename is stored as Windows-1252, convert it to UTF-8.
+   auto ansi_name = std::string(name_buffer.get(), dir_entry.name_length);
+@@ -272,7 +280,8 @@ XContentContainerDevice::Result SvodContainerDevice::SetLayout(
+ XContentContainerDevice::Result SvodContainerDevice::SetEDGFLayout(
+     size_t& magic_offset) {
+   uint8_t magic_buf[20];
+-  std::memcpy(&magic_buf, files_.at(0)->data() + 0x2000, countof(magic_buf));
++  std::memset(magic_buf, 0, sizeof(magic_buf));
++  files_.at(0)->ReadAt(0x2000, magic_buf, countof(magic_buf));
+ 
+   if (std::memcmp(magic_buf, MEDIA_MAGIC.data(), countof(magic_buf)) != 0) {
+     XELOGE("SVOD uses an EGDF layout, but the magic block was not found.");
+@@ -288,7 +297,8 @@ XContentContainerDevice::Result SvodContainerDevice::SetEDGFLayout(
+ 
+ bool SvodContainerDevice::IsXSFLayout() const {
+   uint8_t magic_buf[20];
+-  std::memcpy(&magic_buf, files_.at(0)->data() + 0x12000, countof(magic_buf));
++  std::memset(magic_buf, 0, sizeof(magic_buf));
++  files_.at(0)->ReadAt(0x12000, magic_buf, countof(magic_buf));
+   return std::memcmp(magic_buf, MEDIA_MAGIC.data(), countof(magic_buf)) == 0;
+ }
+ 
+@@ -297,7 +307,8 @@ XContentContainerDevice::Result SvodContainerDevice::SetXSFLayout(
+   uint8_t magic_buf[20];
+   const char* XSF_MAGIC = "XSF";
+ 
+-  std::memcpy(&magic_buf, files_.at(0)->data() + 0x2000, countof(magic_buf));
++  std::memset(magic_buf, 0, sizeof(magic_buf));
++  files_.at(0)->ReadAt(0x2000, magic_buf, countof(magic_buf));
+ 
+   svod_base_offset_ = 0x10000;
+   magic_offset = 0x12000;
+@@ -320,7 +331,8 @@ XContentContainerDevice::Result SvodContainerDevice::SetNormalLayout(
+   uint8_t magic_buf[20];
+ 
+   const uint32_t magic_pos = data_file_count_ == 1 ? 0xD000 : 0x2000;
+-  std::memcpy(&magic_buf, files_.at(0)->data() + magic_pos, countof(magic_buf));
++  std::memset(magic_buf, 0, sizeof(magic_buf));
++  files_.at(0)->ReadAt(magic_pos, magic_buf, countof(magic_buf));
+ 
+   if (std::memcmp(magic_buf, MEDIA_MAGIC.data(), MEDIA_MAGIC.size()) != 0) {
+     XELOGE("Could not locate SVOD magic block.");
+diff --git a/src/xenia/vfs/devices/xcontent_devices/svod_container_file.cc b/src/xenia/vfs/devices/xcontent_devices/svod_container_file.cc
+index 33f45f15c..ada150276 100644
+--- a/src/xenia/vfs/devices/xcontent_devices/svod_container_file.cc
++++ b/src/xenia/vfs/devices/xcontent_devices/svod_container_file.cc
+@@ -30,8 +30,8 @@ size_t SvodContainerFile::Read(std::span<uint8_t> buffer, size_t offset,
+   }
+ 
+   const size_t bytes_to_read = std::min(buffer.size(), file->size() - offset);
+-  std::memcpy(buffer.data(), file->data() + offset, bytes_to_read);
+-  return bytes_to_read;
++  // Xbox360PS5: through ReadAt, which reads the file itself on the console.
++  return file->ReadAt(offset, buffer.data(), bytes_to_read) ? bytes_to_read : 0;
+ }
+ 
+ }  // namespace vfs
 diff --git a/third_party/ffmpeg-xenia/config.h b/third_party/ffmpeg-xenia/config.h
 index 3df8db9e5..8a23c840a 100644
 --- a/third_party/ffmpeg-xenia/config.h

@@ -11,6 +11,7 @@
 #include <signal.h>
 #include <ucontext.h>
 #include <unistd.h>
+namespace xbox360ps5 { extern std::atomic<unsigned long long> fault_count; }
 namespace xe {
 namespace {
 struct Entry {
@@ -38,6 +39,7 @@ void forward(int number, siginfo_t* info, void* context) {
   else old.sa_handler(number);
 }
 void callback(int number, siginfo_t* info, void* raw_context) {
+  ++xbox360ps5::fault_count;
 #if XE_PLATFORM_PS5
   // The console's ucontext has 48 bytes between uc_sigmask and uc_mcontext that
   // the upstream payload SDK header omits; the SDK fork's header has them.

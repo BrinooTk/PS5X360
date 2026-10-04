@@ -109,11 +109,25 @@ desligados. Para ligar: Triângulo no jogo → escolha o patch → X.
 - **Registros detalhados**: grava cada chamada do jogo ao sistema. Deixa o jogo
   mais lento; use só para investigar um problema.
 - **Mostrar FPS no jogo**: contador de quadros por segundo no canto da tela.
+- **VSync**: ligado/desligado, salvo nas preferências. Ao fechar as configurações,
+  reinicia para aplicar a mudança antes de inicializar o vídeo. Controla o VSync
+  emulado; não desliga a sincronização da tela do PS5. Padrão ligado.
+- **Pastas de jogos**: adicione vários locais, inclusive dispositivos externos.
+  Quadrado abre o seletor; X entra na pasta; Círculo sobe um nível; Triângulo
+  adiciona a pasta atual. Na lista de locais, Triângulo remove o local sem apagar
+  jogos. Pastas desconectadas ficam salvas e só locais acessíveis são lidos.
 
 ## Quando algo dá errado
 
-- O registro do emulador fica em `/download0/xbox360ps5/engine.log`, dentro da
-  área de dados do título.
+- Cada execução cria um arquivo com o nome do jogo e a data em
+  `/download0/xbox360ps5/LOGS`. Execuções antigas ficam preservadas. Sessões
+  grandes usam também três arquivos `.partN.log`; envie o conjunto da sessão.
+- Com o aplicativo aberto, o FTP acessa normalmente
+  `/mnt/sandbox/PPSA50011_000/download0/xbox360ps5/LOGS`. O sufixo pode variar.
+- `python tools/console.py game-logs --host IP_DO_PS5` baixa os registros e monta
+  um ZIP em `build`, pronto para compartilhar.
+- No Windows com Python instalado, também pode abrir
+  `tools/Download PS5 logs.bat` no source e informar o IP do PS5.
 - A cada 30 segundos de jogo o registro anota a média de quadros por segundo.
 - Ao relatar um problema, diga o jogo, a versão (região), o que aparece na tela e
   se algum patch estava ligado.

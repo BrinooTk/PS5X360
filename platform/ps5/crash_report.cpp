@@ -70,9 +70,11 @@ void Address(uint64_t address) {
 }
 void Flush() {
   Put('\n'); line[used] = 0;
-  sceKernelDebugOutText(0, line);
-  NetLog(line, used);
+  // Signal handlers cannot take NetLog's mutex or allocate its std::string.
+  // An interrupted logger may already hold that mutex. Persist first; leave
+  // network buffering to normal execution rather than risking a second hang.
   if (report_file >= 0) (void)!write(report_file, line, used);
+  sceKernelDebugOutText(0, line);
   used = 0;
 }
 // The kernel answers an unreadable address with an error instead of a fault.
@@ -124,13 +126,32 @@ void Handle(int number, siginfo_t* info, void* context) {
     Put(' '); Address(value); ++found;
   }
   Flush();
-  DrainNetLog();
+  // No network-drain wait from a fatal signal handler.
 }
 // Where a thread is: asked of it with a signal, answered from its own context.
 std::atomic<bool> probe_done{true};
 const char* probe_name = "";
+// For a performance sample only the instruction is taken and, when it is
+// outside the title's code and the generated code (a system library), the
+// nearest return address into the title: what called it.
+std::atomic<ThreadSample*> sample_out{nullptr};
 void Probe(int, siginfo_t*, void* context) {
   const uint64_t* m = static_cast<const uint64_t*>(context) + 8;
+  if (ThreadSample* out = sample_out.load()) {
+    out->rip = m[20];
+    out->caller = 0;
+    out->in_title = InCode(m[20]);
+    if (!out->in_title && !(m[20] >= 0x40000000 && m[20] < 0x50000000)) {
+      for (uint64_t at = m[23] & ~uint64_t(7), end = at + 0x300; at < end; at += 8) {
+        uint64_t value;
+        if (!Copy(at, &value, sizeof(value))) break;
+        if (InCode(value)) { out->caller = value - CodeStart(); break; }
+      }
+    }
+    if (out->in_title) out->rip -= CodeStart();
+    probe_done = true;
+    return;
+  }
   used = 0;
   Put("[X360] WHERE "); Put(probe_name); Put(" rip="); Address(m[20]); Put(" rsp="); Hex(m[23]);
   int found = 0;
@@ -144,16 +165,35 @@ void Probe(int, siginfo_t*, void* context) {
   probe_done = true;
 }
 }
-void ProbeThread(void* thread, const char* name) {
+namespace {
+void InstallProbe() {
   static bool installed = false;
-  if (!installed) {
-    struct sigaction action{};
-    action.sa_sigaction = Probe;
-    action.sa_flags = SA_SIGINFO | SA_RESTART;
-    sigemptyset(&action.sa_mask);
-    sigaction(SIGUSR2, &action, nullptr);
-    installed = true;
+  if (installed) return;
+  struct sigaction action{};
+  action.sa_sigaction = Probe;
+  action.sa_flags = SA_SIGINFO | SA_RESTART;
+  sigemptyset(&action.sa_mask);
+  sigaction(SIGUSR2, &action, nullptr);
+  installed = true;
+}
+}
+bool SampleThread(void* thread, ThreadSample* out) {
+  InstallProbe();
+  if (!thread || !out) return false;
+  sample_out = out;
+  probe_done = false;
+  bool taken = false;
+  if (!pthread_kill(reinterpret_cast<pthread_t>(thread), SIGUSR2)) {
+    for (int wait = 0; wait < 400 && !probe_done; ++wait) usleep(50);
+    taken = probe_done;
+    // A late answer must not write into a sample that is gone.
+    if (!taken) for (int wait = 0; wait < 100 && !probe_done; ++wait) usleep(1000);
   }
+  sample_out = nullptr;
+  return taken;
+}
+void ProbeThread(void* thread, const char* name) {
+  InstallProbe();
   if (!thread) return;
   probe_name = name;
   probe_done = false;
@@ -162,12 +202,21 @@ void ProbeThread(void* thread, const char* name) {
 }
 void InstallCrashReport(const char* path) {
   report_file = open(path, O_WRONLY | O_CREAT | O_APPEND, 0644);
+  if (report_file < 0) report_file = open("/download0/xbox360ps5/boot.log", O_WRONLY | O_CREAT | O_APPEND, 0644);
   (void)!pipe(probe_pipe);
   struct sigaction action{};
   action.sa_sigaction = Handle;
   action.sa_flags = SA_SIGINFO;
   sigemptyset(&action.sa_mask);
   for (int signal : kSignals) sigaction(signal, &action, nullptr);
+}
+bool SetCrashReportFile(const char* path) {
+  const int next = open(path, O_WRONLY | O_CREAT | O_APPEND, 0644);
+  if (next < 0) return false;
+  // Keep the descriptor number stable for concurrent Stage/signal writes.
+  const bool changed = report_file >= 0 && dup2(next, report_file) >= 0;
+  close(next);
+  return changed;
 }
 void Stage(const char* text) {
   char buffer[200];

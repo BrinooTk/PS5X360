@@ -5,6 +5,7 @@
 #pragma once
 #include "third_party/imgui/imgui.h"
 #include "xbox360ps5/covers.hpp"
+#include "xbox360ps5/game_paths.hpp"
 #include "xbox360ps5/game_patches.hpp"
 #include "xenia/ui/imgui_dialog.h"
 #include "xenia/ui/immediate_drawer.h"
@@ -27,6 +28,7 @@ struct GameEntry {
 };
 // Options kept in /download0/xbox360ps5/settings.txt.
 struct Settings {
+  std::vector<std::string> game_paths = DefaultGamePaths();
   int language = 0;     // Game language: 0 follows the console, 1 = English.
   int interface_language = 0; // 0 follows PS5; separate from legacy game preference.
   int console_language = 1;   // Resolved Xbox language ID, refreshed at startup.
@@ -34,6 +36,7 @@ struct Settings {
   bool mute = false;
   bool detailed_logs = false;
   bool show_fps = false;  // A frame counter over the game.
+  bool vsync = true;     // Applied before graphics setup; changes restart the title.
   int resolution_scale = 1;   // Games render at 1, 2 or 3 times their resolution. Read when the title starts.
   int image_filter = 0;       // How a game's picture is stretched to the screen: 0 plain, 1 CAS, 2 FSR.
   bool touchpad_menu = true;  // The touchpad click opens the emulator's guide (else it is the Back button).
@@ -83,7 +86,7 @@ class Launcher {
   void RecordLaunch(const GameEntry& game, uint32_t title_id, const std::string& title_name,
                     const std::vector<uint8_t>& icon, uint64_t hash);
  private:
-  enum class Mode { shelf, game, settings, profiles, name };
+  enum class Mode { shelf, game, settings, profiles, name, paths, folders };
   struct PatchRow { size_t file, patch; };
   void SelectionChanged();
   void ApplyFilter();
@@ -96,6 +99,9 @@ class Launcher {
   void DrawProfilesSheet(Canvas& c);
   void DrawNameSheet(Canvas& c);
   void RefreshProfiles();
+  void DrawPaths(Canvas& c);
+  void DrawFolders(Canvas& c);
+  void RefreshFolders();
   int LoadCover(const std::vector<uint8_t>& bytes);
   Fonts fonts_;
   Settings& settings_;
@@ -123,6 +129,10 @@ class Launcher {
   std::vector<ProfileEntry> profiles_;
   int profile_row_ = 0, key_row_ = 0, key_column_ = 0;
   std::string new_name_, name_error_;
+  int path_row_ = 0, folder_row_ = 0;
+  std::filesystem::path browser_path_ = "/mnt";
+  std::vector<std::filesystem::path> browser_folders_;
+  std::string path_error_;
 };
 class LauncherDialog final : public xe::ui::ImGuiDialog {
  public:
