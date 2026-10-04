@@ -2,6 +2,11 @@
 
 ## 0.5.3-preview
 
+- Refined the game-library UI, cover-flow presentation, navigation and settings.
+- Improved support for Xbox 360 ISO disc images, alongside extracted XEX games
+  and GOD/STFS packages, with safer file reading and executable loading.
+- Added compatibility fixes across multiple games, including loading, memory
+  handling and version-matched patch selection. Compatibility still varies by title.
 - Keep automatic guest video pacing at 60 Hz when emulated VSync is disabled,
   including the per-title patch override, to prevent accidental acceleration.
 - Update VSync help in English, Portuguese and Spanish.
