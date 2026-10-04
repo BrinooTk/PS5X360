@@ -2,6 +2,7 @@
 // Directory fallback through the console owner's already enabled FTP service.
 // Loopback only; reads only the two fixed AutoLog directories. No privileges changed.
 typedef struct {char name[256];long long size;char signature[512];} LocalFile;
+static char local_files_status[192];
 static int ftp_reply(int fd,char* out,size_t capacity) {
   size_t pos=0;int code=0,multi=0;
   while(pos+1<capacity){char c;if(recv(fd,&c,1,0)!=1)return -1;out[pos++]=c;out[pos]=0;
@@ -27,23 +28,31 @@ static int loopback(int port) {
   addr.sin_addr.s_addr=htonl(0x7f000001);
   if(connect(fd,(struct sockaddr*)&addr,sizeof(addr))){close(fd);return -1;}return fd;
 }
-static int local_ftp_list(const char* folder,LocalFile* files,int maximum) {
+static int local_ftp_list_port(const char* folder,LocalFile* files,int maximum,int port) {
   if(strcmp(folder,LOGS)&&strcmp(folder,QUEUE))return -1;
-  int control=loopback(2121);if(control<0)control=loopback(1337);if(control<0)return -1;
-  char reply[2048],command[1024];int count=-1,data=-1;
-  if(ftp_reply(control,reply,sizeof(reply))!=220)goto done;
-  int code=ftp_command(control,"USER anonymous\r\n",reply,sizeof(reply));
+  errno=0;
+  int control=loopback(port);
+  if(control<0){snprintf(local_files_status,sizeof(local_files_status),"FTP %d connect errno %d",port,errno);return -1;}
+  char reply[2048],command[1024];int count=-1,data=-1,code=0;
+  const char* stage="greeting";
+  code=ftp_reply(control,reply,sizeof(reply));if(code!=220)goto done;
+  stage="login";
+  code=ftp_command(control,"USER anonymous\r\n",reply,sizeof(reply));
   if(code==331)code=ftp_command(control,"PASS ps5x360@localhost\r\n",reply,sizeof(reply));
-  if(code!=230||ftp_command(control,"TYPE I\r\n",reply,sizeof(reply))!=200)goto done;
-  if(ftp_command(control,"PASV\r\n",reply,sizeof(reply))!=227)goto done;
+  if(code!=230)goto done;
+  stage="TYPE";code=ftp_command(control,"TYPE I\r\n",reply,sizeof(reply));if(code!=200)goto done;
+  stage="CWD";snprintf(command,sizeof(command),"CWD %s\r\n",folder);
+  code=ftp_command(control,command,reply,sizeof(reply));if(code<200||code>=300)goto done;
+  stage="PASV";
+  code=ftp_command(control,"PASV\r\n",reply,sizeof(reply));if(code!=227)goto done;
   unsigned a,b,c,d,p,q;char* paren=strchr(reply,'(');
   if(!paren||sscanf(paren+1,"%u,%u,%u,%u,%u,%u",&a,&b,&c,&d,&p,&q)!=6||p>255||q>255||p*256+q==0)goto done;
-  data=loopback((int)(p*256+q));if(data<0)goto done;
-  snprintf(command,sizeof(command),"LIST %s\r\n",folder);
+  stage="data connect";data=loopback((int)(p*256+q));if(data<0)goto done;
+  stage="LIST";snprintf(command,sizeof(command),"LIST\r\n");
   code=ftp_command(control,command,reply,sizeof(reply));if(code!=150&&code!=125)goto done;
   char* listing=calloc(1,128*1024);if(!listing)goto done;size_t used=0;
   while(used<128*1024-1){ssize_t n=recv(data,listing+used,128*1024-1-used,0);if(n<0){free(listing);goto done;}if(!n)break;used+=(size_t)n;}
-  close(data);data=-1;if(ftp_reply(control,reply,sizeof(reply))!=226){free(listing);goto done;}
+  close(data);data=-1;stage="LIST finish";code=ftp_reply(control,reply,sizeof(reply));if(code!=226){free(listing);goto done;}
   count=0;char* line=listing;
   while(*line&&count<maximum){char* end=strchr(line,'\n');if(end)*end=0;
     if(*line=='-'){
@@ -59,11 +68,27 @@ static int local_ftp_list(const char* folder,LocalFile* files,int maximum) {
     if(!end)break;line=end+1;
   }free(listing);
 done:
+  if(count<0)snprintf(local_files_status,sizeof(local_files_status),"FTP %d %s code %d errno %d",port,stage,code,errno);
   if(data>=0)close(data);close(control);return count;
+}
+static int local_ftp_list(const char* folder,LocalFile* files,int maximum) {
+  int count=local_ftp_list_port(folder,files,maximum,2121);
+  if(count>=0)return count;
+  char first[96];snprintf(first,sizeof(first),"%.95s",local_files_status);
+  count=local_ftp_list_port(folder,files,maximum,1337);
+  if(count<0){char second[96];snprintf(second,sizeof(second),"%.95s",local_files_status);
+    snprintf(local_files_status,sizeof(local_files_status),"%.90s; %.90s",first,second);}
+  return count;
 }
 static int local_list(const char* folder,LocalFile* files,int maximum) {
   DIR* dir=opendir(folder);
-  if(!dir)return local_ftp_list(folder,files,maximum);
+  if(!dir){int direct_errno=errno;int count=local_ftp_list(folder,files,maximum);
+    if(count<0){char ftp_status[192];snprintf(ftp_status,sizeof(ftp_status),"%s",local_files_status);
+      snprintf(local_files_status,sizeof(local_files_status),"direct errno %d; %.165s",direct_errno,ftp_status);}
+    else snprintf(local_files_status,sizeof(local_files_status),"loopback FTP directory access");
+    return count;
+  }
+  snprintf(local_files_status,sizeof(local_files_status),"direct directory access");
   int count=0;struct dirent* e;
   while((e=readdir(dir))&&count<maximum){char path[1024];struct stat st;
     snprintf(path,sizeof(path),"%s/%s",folder,e->d_name);

@@ -120,7 +120,7 @@ disabled with the automatic frame limit. Guest video pacing stays at 60 Hz;
 this does not guarantee 60 FPS. See [release notes](docs/releases/v0.5.3-preview.md).
 
 The [release download](https://github.com/BrinooTk/PS5X360/releases/tag/v0.5.3-preview)
-offers just **PPSA50011.zip** and the optional **AutoLog 1.0.5-preview ELF**.
+offers just **PPSA50011.zip** and the optional **AutoLog 1.0.6-preview ELF**.
 Extract the ZIP and copy `PPSA50011` to `/data/homebrew/`. AutoLog is loaded separately
 once per console boot; it sends diagnostic excerpts to the developer. Read its
 [reporting notice and instructions](native/autolog/README.md) before enabling it.

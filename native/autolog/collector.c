@@ -262,7 +262,7 @@ static const char* session_event(const char* path) {
   free(text);return reason;
 }
 static void collect(void) {
-  DIR* d=opendir(LOGS);if(!d){snprintf(scan_status,sizeof(scan_status),"scan: opendir error %d",errno);return;}
+  DIR* d=opendir(LOGS);if(!d){snprintf(scan_status,sizeof(scan_status),"scan: opendir error %d; %.145s",errno,local_files_status);return;}
   char (*names)[256]=calloc(512,256);if(!names){closedir(d);return;}
   size_t count=0;struct dirent* e;unsigned total=0,matched=0,stat_failed=0,mode_skip=0,time_skip=0;
   unsigned first_mode=0;long long first_time=0;int stat_errno=0;
@@ -314,7 +314,7 @@ static void collect(void) {
     if(now-observed[o].stable<30)continue;
     char* report=calloc(1,CAP);if(!report)break;size_t used=0;
     char prefix[320];
-    int prefix_len=snprintf(prefix,sizeof(prefix),"PS5X360 diagnostic report v1\nCollector: PS5 AutoLog ELF 1.0\nCapture: session event\nReason: %s\n",reason);
+    int prefix_len=snprintf(prefix,sizeof(prefix),"PS5X360 diagnostic report v1\nCollector: PS5 AutoLog ELF 1.0.6-preview\nCapture: session event\nReason: %s\n",reason);
     append(report,&used,prefix,(size_t)prefix_len);
     int valid=1;
     for(int p=0;p<4;p++)if(paths[p][0]) {
@@ -362,7 +362,7 @@ int main(void) {
     "To disable: create /data/homebrew/PPSA50011/no-log-upload and reload or wait 30 seconds.\n"
     "Load this ELF once after each console boot. It does not install a boot service.\n";
   atomic_file(STATE "/NOTICE.txt",notice,strlen(notice));puts(notice);
-  char status[768];int status_len=snprintf(status,sizeof(status),"PS5 AutoLog 1.0 running; pid %d; started %lld UTC\n",(int)getpid(),(long long)time(NULL));
+  char status[768];int status_len=snprintf(status,sizeof(status),"PS5 AutoLog 1.0.6-preview running; pid %d; started %lld UTC\n",(int)getpid(),(long long)time(NULL));
   atomic_file(STATE "/status.txt",status,(size_t)status_len);
 #ifdef PS5
   // Notification ABI exposed by the SDK's ordinary userland notify sample.
@@ -385,7 +385,7 @@ int main(void) {
   while(!stopping&&!disabled()) {
     collect();
     if(elapsed>=delay){int result=send_one();delay=result<0?(delay<900?delay*2:1800):30;elapsed=0;
-      status_len=snprintf(status,sizeof(status),"PS5 AutoLog 1.0; pid %d; %s; queued %d; checked %lld UTC\n%s\n%s\n",(int)getpid(),
+      status_len=snprintf(status,sizeof(status),"PS5 AutoLog 1.0.6-preview; pid %d; %s; queued %d; checked %lld UTC\n%s\n%s\n",(int)getpid(),
         result>0?"Discord acknowledged":result<0?"delivery pending":"waiting for game logs",queue_count(),(long long)time(NULL),scan_status,transport_status);
       atomic_file(STATE "/status.txt",status,(size_t)status_len);
     }

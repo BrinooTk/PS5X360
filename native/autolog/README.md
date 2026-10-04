@@ -1,6 +1,12 @@
-# PS5X360 AutoLog ELF 1.0.5-preview
+# PS5X360 AutoLog ELF 1.0.6-preview
 
-This revision fixes startup for both SDK loader argument forms, clears BSS and
+This revision retries both supported local FTP ports even if the first server
+accepts a connection but refuses a command. It uses CWD + LIST for servers
+that do not support absolute LIST paths. Directory failure status now includes
+the direct errno and the FTP stage/reply for both ports. The FTP service still
+must be enabled by the console owner; this collector does not enable it.
+
+Earlier revisions fixed startup for both SDK loader argument forms, clear BSS and
 keeps the ELF entry point nonzero. It also adds a loopback directory fallback,
 initializes the DNS memory pool, and avoids the socket `fcntl` call denied in
 the tested payload environment. The kernel/privilege CRT is excluded.
@@ -94,6 +100,8 @@ there is no unencrypted fallback. Blocked Internet DNS or HTTPS prevents deliver
 
 ## Current verification
 
+- FTP regression: a server on port 2121 that refuses login falls back to 1337;
+  CWD + LIST works when absolute LIST is unsupported. Names with spaces are retained.
 - Cross-compiled x86-64 PS5 ELF with 16 KiB segment alignment.
 - Separate minimal userland startup; no SDK kernel patch/privilege CRT linked.
 - Native code tested on a host with AddressSanitizer/UndefinedBehaviorSanitizer:
