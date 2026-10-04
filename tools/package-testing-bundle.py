@@ -7,7 +7,7 @@ import zipfile
 
 root = Path(__file__).resolve().parents[1]
 version = (root / 'VERSION').read_text(encoding='utf-8').strip()
-autolog_version = '1.0.6-preview'
+autolog_version = '1.0.7-preview'
 name = f'PS5X360-v{version}-AutoLog-v{autolog_version}'
 destination = Path.home() / 'Desktop' / name
 if destination.exists():

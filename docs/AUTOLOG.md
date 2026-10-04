@@ -12,6 +12,12 @@ Other firmware remains unverified. The PC method below remains an optional
 development fallback and must not run concurrently when validating console-only
 delivery.
 
+AutoLog 1.0.7 sends one activation check through the same console HTTPS upload
+path and retries failed attempts. The developer receives the version and
+initial directory status even if game log listing fails. This verifies delivery
+only, not game capture. Game reports still wait for session events. See the
+collector README for updating an already running process and opting out.
+
 ## Server
 
 PS5SX2's separate installer/logger monitors its app and uploads reports to a

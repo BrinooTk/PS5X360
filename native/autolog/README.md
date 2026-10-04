@@ -1,4 +1,4 @@
-# PS5X360 AutoLog ELF 1.0.6-preview
+# PS5X360 AutoLog ELF 1.0.7-preview
 
 This revision retries both supported local FTP ports even if the first server
 accepts a connection but refuses a command. It uses CWD + LIST for servers
@@ -28,6 +28,21 @@ report endpoint and a limited submission credential built in. This credential is
 recoverable from the distributed client and grants report submission only.
 The Discord webhook and the owner's upload credential remain server-side.
 
+## Automatic activation confirmation
+
+When loaded, this version sends a small **AutoLog activation check** report
+through the same verified HTTPS endpoint and public console credential used for
+game reports. It includes the collector version and directory scan status, not
+game logs, games or saves. It is sent once per collector process; failed attempts
+retry with backoff. Successful game reports still require a session event.
+
+The activation check does not require FTP directory listing to succeed. This
+lets the developer see that upload works even when a tester cannot access logs.
+It confirms transport only: the directory status must also succeed for game
+capture. If no activation arrives, runtime startup or network delivery remains
+unconfirmed on that console. The last accepted report ID and acknowledgement
+are retained in `autolog/last-delivery.txt`.
+
 ## Tester instructions
 
 1. Install the PS5X360 emulator normally. Use a build that writes per-game logs
@@ -48,10 +63,19 @@ The emulator itself still needs to be installed: this ELF is a logger, not an
 emulator installer. Follow your loader's ordinary loading procedure; do not use
 private runtime-loader ports or repeatedly inject into an occupied loader.
 
+### Updating an already running collector
+
+Replacing the ELF file does not replace a process already running. Create
+`/data/homebrew/PPSA50011/no-log-upload`, wait until `autolog/status.txt` says
+stopped, then remove the marker and load the new ELF. Normally this takes about
+30 seconds; an in-flight network operation may take longer. Do not reboot the
+console solely to update the collector.
+
 ### Reporting notice and opt-out
 
 Loading this diagnostic ELF enables automatic sharing of game diagnostic logs
-with the project's developer. A console notification announces reporting.
+with the project's developer, including an activation connectivity check and
+directory access diagnostics. A console notification announces reporting.
 Reports contain the game name, emulator build and diagnostic log excerpts.
 Games, saves, profiles, the complete library and unrelated application logs are
 not read or uploaded. Lines containing credentials, addresses, URLs or private
@@ -72,6 +96,7 @@ across boots; remove it and load the ELF again only when you want to resume.
 - Original game logs remain in `PPSA50011/logs`.
 - `PPSA50011/autolog/NOTICE.txt`: reporting notice.
 - `PPSA50011/autolog/status.txt`: latest collector status, PID and check time.
+- `PPSA50011/autolog/last-delivery.txt`: last exact Discord receipt and report ID.
 - `PPSA50011/autolog/outbox`: at most 20 bounded reports, up to 20 MiB total.
 - `*.seen`: session snapshot fingerprints to suppress repeats.
 
@@ -100,6 +125,10 @@ there is no unencrypted fallback. Blocked Internet DNS or HTTPS prevents deliver
 
 ## Current verification
 
+- On the owner's PS5 (firmware 13.60), version 1.0.7 sent its activation check
+  without a manual queue insertion. Discord returned HTTP 200 and the exact
+  receipt `6cb52f5f3bc1e09027c459e3885905a359f01ebb9518224571791802bd660389`.
+  The PC uploader remained off. This does not validate external consoles.
 - FTP regression: a server on port 2121 that refuses login falls back to 1337;
   CWD + LIST works when absolute LIST is unsupported. Names with spaces are retained.
 - Cross-compiled x86-64 PS5 ELF with 16 KiB segment alignment.

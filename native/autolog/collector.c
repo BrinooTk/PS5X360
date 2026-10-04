@@ -314,7 +314,7 @@ static void collect(void) {
     if(now-observed[o].stable<30)continue;
     char* report=calloc(1,CAP);if(!report)break;size_t used=0;
     char prefix[320];
-    int prefix_len=snprintf(prefix,sizeof(prefix),"PS5X360 diagnostic report v1\nCollector: PS5 AutoLog ELF 1.0.6-preview\nCapture: session event\nReason: %s\n",reason);
+    int prefix_len=snprintf(prefix,sizeof(prefix),"PS5X360 diagnostic report v1\nCollector: PS5 AutoLog ELF 1.0.7-preview\nCapture: session event\nReason: %s\n",reason);
     append(report,&used,prefix,(size_t)prefix_len);
     int valid=1;
     for(int p=0;p<4;p++)if(paths[p][0]) {
@@ -337,6 +337,21 @@ static void collect(void) {
     }free(report);
   }free(names);
 }
+static void record_receipt(const char* id,const char* kind) {
+  char receipt[256];int size=snprintf(receipt,sizeof(receipt),
+    "Discord acknowledged\nKind: %s\nReport: %s\nUTC epoch: %lld\n",kind,id,(long long)time(NULL));
+  atomic_file(STATE "/last-delivery.txt",receipt,(size_t)size);
+}
+static size_t connection_report(char* report,size_t capacity) {
+  int size=snprintf(report,capacity,
+    "PS5X360 diagnostic report v1\nGame: AutoLog activation check\n"
+    "Collector: PS5 AutoLog ELF 1.0.7-preview\n"
+    "Capture: activation connectivity check; not a gameplay log\n"
+    "No game files or saves included.\n"
+    "UTC epoch: %lld\nProcess: %d\nCollection cutoff: %lld\nDirectory status: %.191s\n",
+    (long long)time(NULL),(int)getpid(),(long long)collect_after,scan_status);
+  return size>0&&(size_t)size<capacity?(size_t)size:0;
+}
 static int send_one(void) {
   DIR* d=opendir(QUEUE);if(!d)return 0;struct dirent* e;char name[80]={0};
   while((e=readdir(d)))if(strlen(e->d_name)==68&&!strcmp(e->d_name+64,".txt")){strcpy(name,e->d_name);break;}
@@ -348,7 +363,7 @@ static int send_one(void) {
   char* data=malloc((size_t)st.st_size);if(!data){close(fd);return -1;}
   ssize_t n=read(fd,data,(size_t)st.st_size);close(fd);char id[65];sha(data,n>0?(size_t)n:0,id);
   int accepted=n==st.st_size&&!strncmp(id,name,64)&&!disabled()&&deliver(data,(size_t)n,id);
-  free(data);if(accepted){unlink(path);printf("AutoLog: delivered %.16s\n",id);return 1;}return -1;
+  free(data);if(accepted){record_receipt(id,"game session");unlink(path);printf("AutoLog: delivered %.16s\n",id);return 1;}return -1;
 }
 #ifndef AUTOLOG_TEST
 int main(void) {
@@ -358,11 +373,12 @@ int main(void) {
   int lock=open(STATE "/collector.lock",O_CREAT|O_RDWR,0600);
   if(lock<0||flock(lock,LOCK_EX|LOCK_NB))return 1;
   const char* notice="PS5X360 AutoLog sends game diagnostics directly to the developer's private Discord via HTTPS.\n"
+    "An activation connectivity check and directory diagnostics are also sent.\n"
     "No games or saves are sent. Redaction is best effort.\n"
     "To disable: create /data/homebrew/PPSA50011/no-log-upload and reload or wait 30 seconds.\n"
     "Load this ELF once after each console boot. It does not install a boot service.\n";
   atomic_file(STATE "/NOTICE.txt",notice,strlen(notice));puts(notice);
-  char status[768];int status_len=snprintf(status,sizeof(status),"PS5 AutoLog 1.0.6-preview running; pid %d; started %lld UTC\n",(int)getpid(),(long long)time(NULL));
+  char status[768];int status_len=snprintf(status,sizeof(status),"PS5 AutoLog 1.0.7-preview running; pid %d; started %lld UTC\n",(int)getpid(),(long long)time(NULL));
   atomic_file(STATE "/status.txt",status,(size_t)status_len);
 #ifdef PS5
   // Notification ABI exposed by the SDK's ordinary userland notify sample.
@@ -381,12 +397,20 @@ int main(void) {
   }
   collect_after=(time_t)cutoff_value;
   if(redact_init())return 2;
-  unsigned delay=30,elapsed=0;
+  unsigned delay=30,elapsed=30;
+  int connection_pending=1;char probe[768],probe_id[65];size_t probe_size=0;
   while(!stopping&&!disabled()) {
     collect();
-    if(elapsed>=delay){int result=send_one();delay=result<0?(delay<900?delay*2:1800):30;elapsed=0;
-      status_len=snprintf(status,sizeof(status),"PS5 AutoLog 1.0.6-preview; pid %d; %s; queued %d; checked %lld UTC\n%s\n%s\n",(int)getpid(),
-        result>0?"Discord acknowledged":result<0?"delivery pending":"waiting for game logs",queue_count(),(long long)time(NULL),scan_status,transport_status);
+    if(elapsed>=delay){int result,was_probe=connection_pending;
+      if(connection_pending){
+        if(!probe_size){probe_size=connection_report(probe,sizeof(probe));sha(probe,probe_size,probe_id);}
+        if(probe_size&&deliver(probe,probe_size,probe_id)){
+          connection_pending=0;record_receipt(probe_id,"activation check");result=1;
+        }else result=-1;
+      }else result=send_one();
+      delay=result<0?(delay<900?delay*2:1800):30;elapsed=0;
+      status_len=snprintf(status,sizeof(status),"PS5 AutoLog 1.0.7-preview; pid %d; %s; queued %d; checked %lld UTC\n%s\n%s\n",(int)getpid(),
+        result>0?(was_probe?"activation confirmed by Discord":"Discord acknowledged"):result<0?"delivery pending":"waiting for game logs",queue_count(),(long long)time(NULL),scan_status,transport_status);
       atomic_file(STATE "/status.txt",status,(size_t)status_len);
     }
     for(int i=0;i<30&&!stopping&&!disabled();i++)sleep(1);

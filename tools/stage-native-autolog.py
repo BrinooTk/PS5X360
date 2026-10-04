@@ -5,7 +5,7 @@ root=Path(__file__).resolve().parents[1]
 source=root/'build/autolog-native/PS5X360-AutoLog.elf'
 data=source.read_bytes()
 assert data.startswith(b'\x7fELF')
-target='/data/etaHEN/payloads/PS5X360-AutoLog-v1.0.6-preview.elf'
+target='/data/etaHEN/payloads/PS5X360-AutoLog-v1.0.7-preview.elf'
 ftp=ftplib.FTP();ftp.connect('192.168.0.19',2121,timeout=15);ftp.login()
 try:
     current=bytearray()

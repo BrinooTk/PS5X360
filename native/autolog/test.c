@@ -5,6 +5,10 @@
 #include <assert.h>
 int main(int argc,char** argv) {
   assert(!redact_init());
+  char probe[768];strcpy(scan_status,"scan: opendir error 5; FTP 1337 connect errno 61");
+  size_t probe_size=connection_report(probe,sizeof(probe));
+  assert(probe_size>0&&strstr(probe,"activation connectivity check")&&strstr(probe,"FTP 1337"));
+  assert(!strncmp(probe,"PS5X360 diagnostic report v1\n",28));
   char report[4096]={0};size_t used=0;
   char input[]="Game: Sonic\nFPS: 60\nSource: /games/private\nAuthorization: xyz\nIP: 192.168.0.19\nIPv6: 2001:db8::1\nMAC: aa:bb:cc:dd:ee:ff\nhttps://private.example\n";
   redacted_append(report,&used,input);
