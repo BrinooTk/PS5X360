@@ -27,6 +27,7 @@ DECLARE_bool(log_to_stdout);
 DECLARE_int32(draw_resolution_scale_x);
 DECLARE_int32(draw_resolution_scale_y);
 DECLARE_bool(gpu_allow_invalid_fetch_constants);
+DECLARE_int32(license_mask);
 #if XE_PLATFORM_PS5
 extern "C" int sceSystemServiceParamGetInt(int parameter_id, int* value);
 #endif
@@ -154,6 +155,7 @@ void Settings::Load() {
     // from the game's threads (every game crashed at its first frame).
     else if (key == "image_filter") image_filter = std::clamp(value, 0, 2);
     else if (key == "touchpad_menu") touchpad_menu = value != 0;
+    else if (key == "xbla_full_license") xbla_full_license = value != 0;
   }
   if (language < 0 || language > 17) language = 0;
   if (interface_language < 0 || interface_language > 17) interface_language = 0;
@@ -167,13 +169,15 @@ void Settings::Save() const {
   output << "language=" << language << "\ninterface_language=" << interface_language
          << "\nmute=" << int(mute) << "\nlogging_policy=1\ndetailed_logs=" << int(detailed_logs)
          << "\nshow_fps=" << int(show_fps) << "\nresolution_scale=" << resolution_scale << "\nimage_filter="
-         << image_filter << "\ntouchpad_menu=" << int(touchpad_menu) << "\nvsync=" << int(vsync) << "\n";
+         << image_filter << "\ntouchpad_menu=" << int(touchpad_menu) << "\nvsync=" << int(vsync)
+         << "\nxbla_full_license=" << int(xbla_full_license) << "\n";
 }
 void Settings::Apply() const {
   cvars::gpu_allow_invalid_fetch_constants = true;
   ui_language.store(SupportedUiLanguage(interface_language ? interface_language : console_language));
   cvars::user_language = GameLanguage();
   cvars::mute = mute;
+  cvars::license_mask = xbla_full_license ? 1 : 0;
   cvars::draw_resolution_scale_x = cvars::draw_resolution_scale_y = resolution_scale;
   // Normal gameplay records warnings/errors plus explicit session metadata.
   // Do not duplicate every line into the platform stdout transport, and do
@@ -507,7 +511,7 @@ void Launcher::Press(Key key) {
       break;
     }
     case Mode::settings: {
-      const int rows = 12;
+      const int rows = 13;
       if (key == Key::up) settings_row_ = (settings_row_ + rows - 1) % rows;
       if (key == Key::down) settings_row_ = (settings_row_ + 1) % rows;
       if (key == Key::left || key == Key::right || key == Key::cross) {
@@ -527,11 +531,12 @@ void Launcher::Press(Key key) {
         else if (settings_row_ == 5) settings_.detailed_logs = !settings_.detailed_logs;
         else if (settings_row_ == 6) settings_.show_fps = !settings_.show_fps;
         else if (settings_row_ == 7) { settings_.vsync = !settings_.vsync; restart_needed_ = settings_.vsync != cvars::vsync; }
-        else if (settings_row_ == 8 && key == Key::cross) StartCoverDownload();
-        else if (settings_row_ == 9 && key == Key::cross) { mode_ = Mode::paths; path_row_ = 0; path_error_.clear(); }
-        else if (settings_row_ == 10 && key == Key::cross) Scan();
-        else if (settings_row_ == 11 && key == Key::cross) { settings_.Save(); restart_ = true; }
-        if (settings_row_ >= 1 && settings_row_ < 8) settings_changed_ = true;
+        else if (settings_row_ == 8) settings_.xbla_full_license = !settings_.xbla_full_license;
+        else if (settings_row_ == 9 && key == Key::cross) StartCoverDownload();
+        else if (settings_row_ == 10 && key == Key::cross) { mode_ = Mode::paths; path_row_ = 0; path_error_.clear(); }
+        else if (settings_row_ == 11 && key == Key::cross) Scan();
+        else if (settings_row_ == 12 && key == Key::cross) { settings_.Save(); restart_ = true; }
+        if (settings_row_ >= 1 && settings_row_ < 9) settings_changed_ = true;
       }
       if (key == Key::circle || key == Key::square) {
         if (settings_changed_) { settings_.Save(); settings_.Apply(); settings_changed_ = false; }
@@ -1127,21 +1132,23 @@ void Launcher::DrawSettingsSheet(Canvas& c) {
       {Tr("Registros detalhados"), settings_.detailed_logs ? Tr("Ligados") : Tr("Desligados"), Tr("Grava cada chamada do jogo ao sistema no log. Deixa os jogos mais lentos; use só para investigar um problema.")},
       {Tr("Mostrar FPS no jogo"), settings_.show_fps ? Tr("Ligado") : Tr("Desligado"), Tr("Mostra no canto da tela quantos quadros por segundo o jogo entrega.")},
       {Tr("VSync"), settings_.vsync ? Tr("Ligado") : Tr("Desligado"), Tr("Controla a sincronização vertical emulada. O ritmo automático permanece em 60 Hz mesmo quando desligado, para evitar acelerar o jogo. Ao fechar este painel, o emulador reinicia para aplicar a mudança.")},
+      {Tr("Licença completa XBLA"), settings_.xbla_full_license ? Tr("Ligado") : Tr("Desligado"), Tr("Inicia jogos do Xbox Live Arcade no modo jogo completo (license_mask = 1) em vez do modo de demonstração/trial.")},
       {Tr("Baixar capas"), covers_.Busy() ? Tr("Baixando...") : "", Tr("Baixa do XboxUnity (o mesmo serviço do Aurora) as capas dos jogos que ainda não têm uma. Precisa de internet no PS5. Uma imagem cover.jpg na pasta do jogo sempre tem prioridade.")},
       {Tr("Pastas de jogos"), std::to_string(settings_.game_paths.size()), Tr("Adicione várias pastas, inclusive em dispositivos externos. Pastas desconectadas continuam salvas. Apenas locais acessíveis ao aplicativo podem ser lidos.")},
       {Tr("Atualizar lista de jogos"), "", Tr("Procura de novo os jogos, as capas e os patches nas pastas.")},
       {Tr("Reiniciar o emulador"), "", Tr("Fecha e abre o emulador de novo.")}};
-  for (int n = 0; n < 12; ++n) {
-    const float y = 122 + n * 45.0f;
+  const int total_rows = int(std::size(rows));
+  for (int n = 0; n < total_rows; ++n) {
+    const float y = 114 + n * 42.0f;
     const bool focused = n == settings_row_;
-    c.Fill(x + 40, y, 780, 40, focused ? kSurfaceHigh : kSurface, focused ? 1.0f : 0.6f, 10);
-    if (focused) c.Edge(x + 40, y, 780, 40, kAccent, 0.9f, 10, 2.0f);
-    c.Text(rows[n].label, x + 64, y + 8, 24, focused ? kText : kBody);
-    c.Text(rows[n].value, x + 796, y + 8, 24, focused ? kAccent : kMuted, 1.0f, 2, 420);
+    c.Fill(x + 40, y, 780, 38, focused ? kSurfaceHigh : kSurface, focused ? 1.0f : 0.6f, 10);
+    if (focused) c.Edge(x + 40, y, 780, 38, kAccent, 0.9f, 10, 2.0f);
+    c.Text(rows[n].label, x + 64, y + 7, 23, focused ? kText : kBody);
+    c.Text(rows[n].value, x + 796, y + 7, 23, focused ? kAccent : kMuted, 1.0f, 2, 420);
   }
-  c.Wrapped(rows[settings_row_].about, x + 56, 684, 20, kBody, 750);
+  c.Wrapped(rows[settings_row_].about, x + 56, 668, 20, kBody, 750);
   const std::string covers = covers_.Status();
-  if (settings_row_ == 8 && !covers.empty()) c.Text(covers, x + 56, 770, 20, kAccent, 1.0f, 0, 750);
+  if (settings_row_ == 9 && !covers.empty()) c.Text(covers, x + 56, 770, 20, kAccent, 1.0f, 0, 750);
   c.Fill(x + 40, 808, 780, 1, kWhite, 0.10f);
   c.Text(Tr("Sobre"), x + 56, 820, 28, kText);
   c.Wrapped(std::string(Tr("PS5X360: emulador experimental de Xbox 360 para PlayStation 5.")) +

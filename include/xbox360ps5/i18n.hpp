@@ -166,6 +166,8 @@ inline const char* Tr(const char* key) {
     {" sem capa no XboxUnity", " without a cover on XboxUnity", " sin carátula en XboxUnity"},
     {" com erro (", " failed (", " con error ("},
     {"Todos os jogos identificados já têm capa", "All identified games already have covers", "Todos los juegos identificados ya tienen carátula"},
+    {"Licença completa XBLA", "XBLA Full License", "Licencia completa XBLA"},
+    {"Inicia jogos do Xbox Live Arcade no modo jogo completo (license_mask = 1) em vez do modo de demonstração/trial.", "Start Xbox Live Arcade games in full mode (license_mask = 1) instead of trial mode.", "Inicia juegos de Xbox Live Arcade en modo completo (license_mask = 1) en vez de modo prueba."},
   };
   const int language = ui_language.load(std::memory_order_relaxed);
   if (language == 9) return key;
