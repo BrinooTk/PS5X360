@@ -35,17 +35,40 @@ def remote_exists(ftp, path):
         return False
 
 
-def update(host, canary=False):
+def update(host, canary=False, experimental=False, experimental_version=None):
     # --canary: the executable built on the Xenia Canary core
     # (tools/build-canary-game.sh). The first time, the executable it replaces
     # (the original core's) is kept as eboot.bin.original for `restore`.
-    source = ROOT / ("build/canary-game/eboot.bin" if canary else "dist/PPSA50011/eboot.bin")
+    if experimental:
+        canary = True
+    build = "build/canary-game-experimental" if experimental else "build/canary-game"
+    expected_version = "0.5.6-experimental.12"
+    if experimental_version:
+        if not experimental or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+-experimental\.[0-9]+", experimental_version):
+            raise ValueError("A preserved experimental version is required")
+        expected_version = experimental_version
+        build = "build/symbols/" + experimental_version
+    if experimental and expected_version == "0.5.6-experimental.3":
+        raise RuntimeError("Experimental.3 is rejected; select a preserved earlier version")
+    source = ROOT / (build + "/eboot.bin" if canary else "dist/PPSA50011/eboot.bin")
     fself = source.read_bytes()
-    elf = (ROOT / ("build/canary-game/eboot.elf" if canary else "build/native-game/eboot.elf")).read_bytes()
+    elf = (ROOT / (build + "/eboot.elf" if canary else "build/native-game/eboot.elf")).read_bytes()
+    if experimental and ("PS5X360 v" + expected_version).encode() not in fself:
+        raise RuntimeError("The selected executable is not the experimental candidate")
     ftp = ftplib.FTP()
     ftp.connect(host, 2121, timeout=25)
     ftp.login()
     try:
+        if experimental:
+            from datetime import datetime, timezone
+            import hashlib
+            previous = bytearray()
+            ftp.retrbinary(f"RETR {FOLDER}/eboot.bin", previous.extend, blocksize=1024 * 1024)
+            backup = ROOT / "build/console-backups"
+            backup.mkdir(parents=True, exist_ok=True)
+            name = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-before-experimental.bin"
+            (backup / name).write_bytes(previous)
+            print(f"Installed executable backed up to {backup / name}; SHA-256 {hashlib.sha256(previous).hexdigest()}")
         with source.open("rb") as stream:
             ftp.storbinary(f"STOR {FOLDER}/eboot.bin.new", stream, blocksize=1024 * 1024)
         actual = bytearray()
@@ -62,6 +85,10 @@ def update(host, canary=False):
             ftp.rename(f"{FOLDER}/eboot.bin", f"{FOLDER}/eboot.bin.previous")
         ftp.rename(f"{FOLDER}/eboot.bin.new", f"{FOLDER}/eboot.bin")
         print("Installed executable replaced; previous kept as eboot.bin.previous")
+        if experimental:
+            installed = bytearray()
+            ftp.retrbinary(f"RETR {FOLDER}/eboot.bin", installed.extend, blocksize=1024 * 1024)
+            print("Final installed executable: " + deploy_module().verify_eboot(bytes(installed), fself, elf))
         # Small support files of the title (fonts); never the games under assets/roms.
         assets = ROOT / "dist/PPSA50011/assets"
         uploaded = 0
@@ -471,10 +498,12 @@ def main():
     parser.add_argument("--host", required=True)
     parser.add_argument("--all", action="store_true")
     parser.add_argument("--canary", action="store_true", help="update: the Xenia Canary core build")
+    parser.add_argument("--experimental", action="store_true", help="update: the separate experimental Canary build, with local backup")
+    parser.add_argument("--experimental-version", help="update: install a preserved experimental version from build/symbols")
     parser.add_argument("--follow", action="store_true", help="netlog: keep reconnecting until --seconds pass")
     args = parser.parse_args()
     if args.command == "update":
-        update(args.host, args.canary)
+        update(args.host, args.canary, args.experimental, args.experimental_version)
     elif args.command == "restore":
         restore(args.host)
     elif args.command == "watch":

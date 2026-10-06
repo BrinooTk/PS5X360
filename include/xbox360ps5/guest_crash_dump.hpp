@@ -3,6 +3,7 @@
 // return address, the stack frame and what the pointer registers refer to.
 #pragma once
 #include <cstdio>
+#include <algorithm>
 #include "xenia/base/byte_order.h"
 #include "xenia/base/logging.h"
 #include "xenia/base/memory.h"
@@ -10,8 +11,10 @@
 #include "xenia/memory.h"
 namespace xbox360ps5 {
 inline void DumpGuestWords(xe::Memory* memory, const char* name, uint32_t address, uint32_t bytes) {
-  for (uint32_t at = address & ~15u; at < address + bytes; at += 16) {
-    auto* host = memory->TranslateVirtual(at);
+  // A corrupt pointer near 4 GiB must not wrap the diagnostic address range.
+  const uint64_t end = std::min(uint64_t(0x100000000), uint64_t(address) + bytes);
+  for (uint64_t at = address & ~15u; at < end; at += 16) {
+    auto* host = memory->TranslateVirtual(uint32_t(at));
     size_t length = 16;
     xe::memory::PageAccess access;
     if (!xe::memory::QueryProtect(host, length, access) || access == xe::memory::PageAccess::kNoAccess) {

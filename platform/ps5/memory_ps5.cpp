@@ -6,6 +6,7 @@
 // pages are 16 KiB while guest heaps use 4 KiB pages, so each host page gets
 // the union of the access of its four guest pages.
 #include "xenia/base/memory.h"
+#include "xbox360ps5/gpu_diagnostics.hpp"
 #include <cstdio>
 #include <atomic>
 #include <cstring>
@@ -151,7 +152,15 @@ bool Apply(uintptr_t base, View& view, size_t first_guest, size_t guest_count) {
     const uint8_t bits = wanted(page);
     if (view.host[page] == bits) { ++page; continue; }
     size_t end = page + 1;
-    while (end <= last && view.host[end] != bits && wanted(end) == bits) ++end;
+    if (xbox360ps5::gpu_diag::enabled.load(std::memory_order_relaxed)) {
+      // Already-correct pages do not split an otherwise identical target
+      // protection. Include them only when bridging to another changed page;
+      // do not expand beyond the requested range or include an unchanged tail.
+      for (size_t scan = end; scan <= last && wanted(scan) == bits; ++scan)
+        if (view.host[scan] != bits) end = scan + 1;
+    } else {
+      while (end <= last && view.host[end] != bits && wanted(end) == bits) ++end;
+    }
     timespec before{}, after{};
     clock_gettime(CLOCK_MONOTONIC, &before);
     const int32_t result = sceKernelMprotect(reinterpret_cast<void*>(base + page * kPage),

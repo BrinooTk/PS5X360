@@ -20,6 +20,14 @@ inline int SupportedUiLanguage(int id) { return id == 9 || id == 5 ? id : 1; }
 inline const char* Tr(const char* key) {
   struct Entry { const char* pt; const char* en; const char* es; };
   static constexpr Entry entries[] = {
+    {"Atualização de memória", "Memory update window", "Ventana de actualización de memoria"},
+    {"Otimizar buffers dinâmicos", "Optimize dynamic buffers", "Optimizar buffers dinámicos"},
+    {"Saves", "Saved data", "Partidas guardadas"},
+    {"Veja os dados por jogo e o local de armazenamento. Perfis e conquistas são preservados junto com os saves.", "View data by game and its storage location. Profiles and achievements are kept with saved games.", "Consulta los datos por juego y su ubicación. Los perfiles y logros se conservan con las partidas."},
+    {"Cada perfil tem seus próprios dados. Para fazer um backup, copie toda a pasta saves com o emulador fechado, incluindo os perfis e conquistas.", "Each profile has its own data. To back it up, copy the entire saves folder with the emulator closed, including profiles and achievements.", "Cada perfil tiene sus propios datos. Para hacer una copia, copia toda la carpeta saves con el emulador cerrado, incluidos perfiles y logros."},
+    {"Nenhum dado de jogo encontrado.", "No game data found.", "No se encontraron datos de juegos."},
+    {"Não foi possível ler os saves.", "Could not read saved data.", "No se pudieron leer las partidas."},
+    {"Atualizar lista", "Refresh list", "Actualizar lista"},
     {"VSync", "VSync", "VSync"},
     {"Controla a sincronização vertical emulada. O ritmo automático permanece em 60 Hz mesmo quando desligado, para evitar acelerar o jogo. Ao fechar este painel, o emulador reinicia para aplicar a mudança.", "Controls emulated vertical synchronization. Automatic pacing stays at 60 Hz when disabled to prevent game acceleration. Closing this panel restarts the emulator to apply changes.", "Controla la sincronización vertical emulada. El ritmo automático permanece en 60 Hz al desactivarla para evitar acelerar el juego. Al cerrar este panel se reinicia el emulador para aplicar el cambio."},
     {"Pastas de jogos", "Game folders", "Carpetas de juegos"},
@@ -71,6 +79,10 @@ inline const char* Tr(const char* key) {
     {"Filtro de imagem", "Image filter", "Filtro de imagen"},
     {"Clique do touchpad", "Touchpad click", "Clic del touchpad"},
     {"Medir desempenho (5 s)", "Measure performance (5 s)", "Medir rendimiento (5 s)"},
+    {"Janela de invalidação (teste)", "Invalidation window (test)", "Ventana de invalidación (prueba)"},
+    {"Consulta sem trava (teste)", "Lock-free lookup (test)", "Consulta sin bloqueo (prueba)"},
+    {"Núcleo só para o vídeo (teste)", "Core for video only (test)", "Núcleo solo para vídeo (prueba)"},
+    {"Páginas sem vigia (teste)", "Unwatched pages (test)", "Páginas sin vigilancia (prueba)"},
     {"Abre o guia", "Open guide", "Abrir guía"},
     {"Botão Back", "Back button", "Botón Back"},
     {"Touchpad: guia do emulador", "Touchpad: emulator guide", "Touchpad: guía del emulador"},

@@ -1,4 +1,4 @@
-# Compatibility — preview 2026-10-03
+# Compatibility — v0.5.6 (2026-10-06)
 
 PS5X360 is functional on the development console, but **game compatibility is still being refined**. A boot screen or menu is not evidence of complete gameplay compatibility.
 
@@ -9,7 +9,7 @@ PS5X360 is functional on the development console, but **game compatibility is st
 | Native PS5 application | Games have run on the development PS5, firmware 13.60 | Broader console and firmware coverage |
 | PS5 firmware 10.20 / 11.60 | Community reports of whole-console freezes when loading GTA IV | Affected-console logs and reproduction; compatibility unverified |
 | Halo 3 | Community reports an application crash | Release, firmware, exact stage and execution log not supplied |
-| GTA IV | Development PS5 log confirms missing `cache:` and `cache1:` devices; v0.4.3 restores utility-cache mounts globally | Gameplay/loading validation after correction; no 60 FPS guarantee |
+| GTA IV | Recent development-console sessions show improved gameplay performance after shared-memory and mutex changes; one revision recorded 26–40 FPS | Different scenes were used; v0.5.6 is not a locked 30/60 FPS guarantee. Broader regression testing remains needed |
 | Left 4 Dead 2 | Screenshot shows guest KeBugCheck, STOP 0, after rendering its title screen | Guest call site and preceding failure need execution logs |
 | Sonic the Hedgehog (2006) | Black screen at the transition into gameplay was reported. New GPU-upload and stack-recommit changes reached Soleanna in a host reproduction | Full gameplay confirmation with the new build on PS5 |
 | Dragon Ball Z Budokai HD Collection | Sub-title launch handling was improved; new GPU uploads removed green/cyan corruption in a host reproduction | Budokai 1 and 3 gameplay and title switching on PS5 |
@@ -20,9 +20,7 @@ PS5X360 is functional on the development console, but **game compatibility is st
 
 These are regression notes, **not a complete supported-games list**. Host tests and hardware results are kept distinct. Other games may boot, fail or have audio/graphics issues.
 
-Native module-load errors and guest kernel crashes are tracked separately in
-[the firmware/crash investigation](FIRMWARE-CRASH-REPORTS.md). A screenshot does
-not establish a shared firmware cause or a fix. No Xbox 360 BIOS is required.
+Native module-load errors, guest kernel crashes and whole-console freezes need separate diagnoses. A screenshot does not establish a shared firmware cause or a fix. No Xbox 360 BIOS is required.
 
 ## Performance
 

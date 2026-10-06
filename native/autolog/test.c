@@ -35,6 +35,12 @@ int main(int argc,char** argv) {
   collect();assert(queue_count()==1); // unchanged files aren't queued twice
   assert(!atomic_file(ROOT "/crash-test","[X360] CRASH signal=b\n",strlen("[X360] CRASH signal=b\n")));
   assert(!strcmp(session_event(ROOT "/crash-test"),"native crash"));
+  const char* guide="Guide: back to the launcher\n";
+  assert(!atomic_file(ROOT "/guide-test",guide,strlen(guide)));
+  assert(!strcmp(session_event(ROOT "/guide-test"),"return to launcher"));
+  const char* bugcheck="KeBugCheck: *** STOP: 0x00000000\nGuest thread 123 LR 82001000 CTR 00000000\n";
+  assert(!atomic_file(ROOT "/bugcheck-test",bugcheck,strlen(bugcheck)));
+  assert(!strcmp(session_event(ROOT "/bugcheck-test"),"guest kernel crash"));
   const char* extra="i> ENGINE EXIT 0\nadditional final diagnostics\n";
   assert(!atomic_file(LOGS "/Game-Test-12345678-20261004-010101-UTC-0.log",extra,strlen(extra)));
   collect();assert(queue_count()==1); // each ended session is sent once

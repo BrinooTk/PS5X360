@@ -20,8 +20,8 @@ Early startup logs are collected separately as sandbox-prefixed boot files.
 
 ## Install the release
 
-1. Download the latest **PS5X360-v<VERSION>.zip** from the [GitHub Releases page](https://github.com/BrinooTk/PS5X360/releases). GitHub's automatic “Source code” archives are not the installable build.
-2. Extract the ZIP. You should see `PPSA50011`, `INSTALLATION.md`, `RELEASE_NOTES.md`, `MANIFEST.json` and license notices.
+1. Download the latest **PPSA50011.zip** from the [GitHub Releases page](https://github.com/BrinooTk/PS5X360/releases). GitHub's automatic “Source code” archives are not the installable build.
+2. Extract the ZIP. You should see `PPSA50011`, containing the executable, assets, installation guide, release notes and license notices.
 3. Connect your FTP client to your PS5's IP address and configured FTP port.
 4. Copy the **entire** `PPSA50011` folder to `/data/homebrew/`. The final executable path must be `/data/homebrew/PPSA50011/eboot.bin`.
 5. Allow ShadowMountPlus to register the title. Open **PS5X360** from the PS5 home screen.
@@ -172,9 +172,26 @@ After updating, reopen the title so it loads the new executable. Existing settin
 | Black screen, crash or graphical corruption | Disable patches; note the exact scene; check [compatibility notes](COMPATIBILITY.md) |
 | Cover download fails | Internet/DNS access; use local artwork as an alternative |
 
-### Separate game logs (development v0.3.0-preview)
+### Saved data (v0.5.4-preview)
 
-Logs are created automatically in `/download0/xbox360ps5/LOGS/`.
+Open **Settings > Saved data** to see the active directory and data grouped by
+game and profile. The preferred location is `/data/homebrew/PPSA50011/saves`.
+If direct `/data` access is blocked, `/app0/saves` is tried through the title's
+installation mount. The UI may display that equivalent mount path.
+The folder also contains profiles and achievements; back it up as a complete
+tree with the emulator closed. Do not replace it when updating application files.
+
+On first use, the emulator copies existing `/download0/xbox360ps5/content`
+into the new location and retains the original. Subsequent starts use the new
+data without copying older progress over it. If the new directory cannot be
+written or the initial copy fails, the original location remains active and
+the log records the fallback. The UI displays the actual location in use.
+Do not delete the old content until your saves and profiles have been checked.
+
+### Separate game logs
+
+Logs prefer `/data/homebrew/PPSA50011/logs/`. If that location is inaccessible,
+the title uses `/app0/logs/`, then `/download0/xbox360ps5/LOGS/` as a fallback.
 Each launch creates a new file containing the selected game's name, a source
 identifier, UTC date/time and a collision counter. Its header includes the
 release version, title ID and executable path. Launch failures are recorded too.
@@ -207,3 +224,7 @@ and enter the PS5 IP address; the same ZIP is generated. Keep these tools on
 your computer; they are not application files to copy to the console.
 
 When opening an issue, include release version, firmware, game name and title ID, region/executable version, enabled patches, reproduction steps and a screenshot/video or log excerpt. Do not upload game files.
+
+## Performance options (v0.5.6)
+
+The in-game Guide includes **Memory update window** (16, 64 or 256 KiB) and **Optimize dynamic buffers**. Compare in the same scene; turn dynamic-buffer optimization off if it causes a regression or graphical issue. These choices reset when the emulator restarts. The public build does not automatically interrupt presentation for CPU sampling; manual measurement may pause the image for five seconds.

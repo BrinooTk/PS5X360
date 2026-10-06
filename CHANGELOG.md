@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.5.6
+
+- Improve shared memory lookups, invalidation granularity and CPU/GPU synchronization.
+- Add adaptive dynamic vertex-buffer uploads with a Guide toggle.
+- Improve game compatibility through shared memory, thread-lifetime and storage fixes.
+- Add the Saved data panel, homebrew save storage and visible compiled build version.
+- Include optional AutoLog 1.0.9 with better guest-crash classification and delivery diagnostics.
+- Disable automatic intrusive CPU sampling in public builds; preserve manual measurement.
+- See `docs/releases/v0.5.6.md` for installation and testing limits.
+
+## 0.5.5-preview (local test build)
+
+- Display the compiled version throughout the launcher and in the in-game Guide.
+- Add explicit guest-kernel crash markers and guest context to per-game logs.
+- Bound diagnostic address arithmetic at the guest's 4 GiB address limit.
+- AutoLog 1.0.9-preview preserves the guest-kernel classification when register
+  dumps are also present. These are diagnostics, not a universal crash fix.
+
+## 0.5.4-preview (local test build)
+
+- Fix final-owner thread-exit ordering on POSIX to prevent use-after-free of
+  native thread mutexes after a guest closes its thread handle.
+- Store saved content, profiles and achievements in the homebrew installation's
+  `saves` folder, with an initial preserving copy and legacy fallback.
+- Add Settings > Saved data in English, Portuguese and Spanish.
+- AutoLog 1.0.8-preview classifies Guide returns as normal session completion.
+- Host memory and migration regressions pass; console gameplay remains unverified.
+
 ## 0.5.3-preview
 
 - Refined the game-library UI, cover-flow presentation, navigation and settings.

@@ -19,12 +19,14 @@ def main():
     notes = ROOT / "docs/releases" / ("v" + version + ".md")
     if not notes.is_file():
         raise SystemExit(f"Missing release notes: {notes}")
-    output = ROOT / "dist" / ("PS5X360-v" + version + ".zip")
+    output = ROOT / "dist/PPSA50011.zip"
     # Package the current Canary build, rather than a stale executable staged by
     # the original-core build script.
     current = ROOT / "build/canary-game/eboot.bin"
     if not current.is_file():
         raise SystemExit("Build the current title with tools/build-canary-game.sh first")
+    if ("PS5X360 v" + version).encode() not in current.read_bytes():
+        raise SystemExit("Compiled executable version does not match VERSION")
     (APP / "eboot.bin").write_bytes(current.read_bytes())
     required = ["eboot.bin", "sce_module/libc.prx", "sce_sys/param.json", "sce_sys/icon0.png",
                 "sce_sys/pic0.png", "sce_sys/pic1.png",
@@ -51,26 +53,37 @@ def main():
         for name, path in files.items():
             archive.write(path, "PPSA50011/" + name)
         archive.writestr("PPSA50011/assets/patches/ORIGEM.txt", patch_notice)
-        archive.write(ROOT / "docs/INSTALLATION.md", "INSTALLATION.md")
-        archive.write(ROOT / "docs/CREDITS.md", "CREDITS.md")
-        archive.write(ROOT / "LICENSE", "LICENSE")
-        archive.write(notes, "RELEASE_NOTES.md")
-        for name in ("console.py", "download-logs.py", "Download PS5 logs.bat"):
-            archive.write(ROOT / "tools" / name, "tools/" + name)
-        archive.writestr("VERSION", version + "\n")
-        archive.writestr("RELEASE.json", json.dumps({"version": version, "tag": "v" + version,
+        archive.write(ROOT / "docs/INSTALLATION.md", "PPSA50011/INSTALLATION.md")
+        archive.write(ROOT / "docs/CREDITS.md", "PPSA50011/CREDITS.md")
+        archive.write(ROOT / "LICENSE", "PPSA50011/LICENSE")
+        archive.write(notes, "PPSA50011/RELEASE_NOTES.md")
+        archive.write(ROOT / "native/autolog/README.md", "PPSA50011/AUTOLOG.md")
+        archive.writestr("PPSA50011/VERSION", version + "\n")
+        archive.writestr("PPSA50011/RELEASE.json", json.dumps({"version": version, "tag": "v" + version,
                             "executable_sha256": hashlib.sha256(current.read_bytes()).hexdigest()}, indent=2) + "\n")
         manifest = {name: {"bytes": path.stat().st_size,
                           "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
                     for name, path in files.items()}
-        archive.writestr("MANIFEST.json", json.dumps(manifest, indent=2) + "\n")
+        archive.writestr("PPSA50011/MANIFEST.json", json.dumps(manifest, indent=2) + "\n")
         for path in sorted((ROOT / "licenses").rglob("*")):
             if path.is_file():
-                archive.write(path, path.relative_to(ROOT).as_posix())
+                archive.write(path, "PPSA50011/" + path.relative_to(ROOT).as_posix())
+        # Keep complete corresponding collector source and licenses available
+        # without adding a third release download. AutoLog itself stays optional.
+        collector_source = ROOT / "dist/PS5X360-AutoLog-ELF-v1.0.9-preview.zip"
+        if not collector_source.is_file():
+            raise SystemExit("Missing corresponding AutoLog source archive")
+        archive.write(collector_source, "PPSA50011/licenses/AutoLog-source-v1.0.9.zip")
     with zipfile.ZipFile(output) as archive:
         if archive.testzip():
             raise SystemExit("ZIP CRC validation failed")
         names = archive.namelist()
+        if any(not name.startswith("PPSA50011/") for name in names):
+            raise SystemExit("Release must contain only the PPSA50011 folder")
+        for name, record in manifest.items():
+            data = archive.read("PPSA50011/" + name)
+            if len(data) != record["bytes"] or hashlib.sha256(data).hexdigest() != record["sha256"]:
+                raise SystemExit(f"Manifest verification failed: {name}")
     if any("/roms/" in name and not name.endswith("README.txt") for name in names):
         raise SystemExit("Game data found in the release zip")
     digest = hashlib.sha256(output.read_bytes()).hexdigest()

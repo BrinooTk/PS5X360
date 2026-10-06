@@ -82,11 +82,12 @@ class Launcher {
   void SetLoading(const std::string& name) { loading_ = name; }
   void SetMessage(const std::string& text) { message_ = text; }
   void SetProfiles(ProfileHooks hooks) { profile_hooks_ = std::move(hooks); RefreshProfiles(); }
+  void SetSaveRoot(std::filesystem::path root) { save_root_ = std::move(root); }
   // After a game started: remember it and keep its real name, icon and hash.
   void RecordLaunch(const GameEntry& game, uint32_t title_id, const std::string& title_name,
                     const std::vector<uint8_t>& icon, uint64_t hash);
  private:
-  enum class Mode { shelf, game, settings, profiles, name, paths, folders };
+  enum class Mode { shelf, game, settings, profiles, name, paths, folders, saves };
   struct PatchRow { size_t file, patch; };
   void SelectionChanged();
   void ApplyFilter();
@@ -96,6 +97,11 @@ class Launcher {
   void DrawShelf(Canvas& c);
   void DrawGameSheet(Canvas& c);
   void DrawSettingsSheet(Canvas& c);
+  void DrawSavesSheet(Canvas& c);
+  void RefreshSaves();
+  int save_row_ = 0;
+  std::filesystem::path save_root_ = "/download0/xbox360ps5/content";
+  std::vector<std::string> save_titles_;
   void DrawProfilesSheet(Canvas& c);
   void DrawNameSheet(Canvas& c);
   void RefreshProfiles();

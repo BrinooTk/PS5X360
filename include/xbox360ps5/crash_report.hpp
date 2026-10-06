@@ -19,7 +19,11 @@ void ProbeThread(void* thread, const char* name);
 // title when in_title, else an address: 0x40000000-0x4FFFFFFF is generated
 // guest code); caller: for an instruction in a system library, the offset of
 // the nearest return address into the title, or 0.
-struct ThreadSample { unsigned long long rip = 0, caller = 0; bool in_title = false; };
+// caller2: the next return address into the title above `caller`, or 0.
+// slot: when the caller's call was through an import slot (`call *slot(%rip)`), that slot's offset
+// in the title, which names the imported function through the ELF's relocations; else 0.
+// cpu: the CPU the thread was on when sampled.
+struct ThreadSample { unsigned long long rip = 0, caller = 0, caller2 = 0, slot = 0; int cpu = -1; bool in_title = false; };
 bool SampleThread(void* thread, ThreadSample* out);
 // One synchronous line in the kernel log and in the report file.
 void Stage(const char* text);

@@ -11,9 +11,13 @@
 
 # PS5X360
 
-An experimental **Xbox 360 emulator for PlayStation 5**, built on Xenia Canary with native DualSense input, audio output and RADV Vulkan graphics.
+An **Xbox 360 emulator for PlayStation 5**, built on Xenia Canary with native DualSense input, audio output and RADV Vulkan graphics.
 
-**Games already run on the development PS5. Compatibility varies, and this is an early preview.** Expect crashes, visual errors and uneven performance in some titles. There is no promise of full-library compatibility or 60 FPS.
+**Games already run on the development PS5. Compatibility varies, and development is ongoing.** Expect crashes, visual errors and uneven performance in some titles. There is no promise of full-library compatibility or 60 FPS.
+
+## Latest release: v0.5.6
+
+Further game compatibility improvements, optimized memory and CPU/GPU synchronization, a Saved data panel, visible build version, and optional AutoLog 1.0.9. [Read the release notes](docs/releases/v0.5.6.md). Performance and compatibility vary by game.
 
 ## What is included
 
@@ -24,14 +28,14 @@ An experimental **Xbox 360 emulator for PlayStation 5**, built on Xenia Canary w
 - Automatic PS5 language detection, with **English as the interface fallback**.
 - Community Xenia Canary patches, matched to the game's executable version and disabled by default.
 - Optional FPS display, CAS sharpening and FSR image upscaling.
-- Development v0.3.0-preview: per-game log files and configurable game folders,
+- Per-game log files and configurable game folders,
   including external locations visible to the application.
 
 ## Quick installation
 
 <img src="docs/images/installation.png" alt="Download the ZIP, copy PPSA50011 via FTP, add one folder per game, and launch PS5X360" width="100%">
 
-1. Download `PS5X360-v0.1.0-preview.zip` from [Releases](https://github.com/BrinooTk/PS5X360/releases).
+1. Download `PPSA50011.zip` from [Releases](https://github.com/BrinooTk/PS5X360/releases).
 2. Extract it on your computer.
 3. Using FTP, copy the complete `PPSA50011` folder to **`/data/homebrew/PPSA50011`** on your PS5.
 4. Let ShadowMountPlus register the title, then open **PS5X360** from the PS5 home screen.
@@ -60,9 +64,9 @@ PPSA50011/
             └── ...matching .data folder, if required...
 ```
 
-Keep all extracted game data together. In development v0.3.0-preview, use
+Keep all extracted game data together. Use
 **Settings → Game folders** to add multiple locations, including accessible
-external mounts. Earlier public builds only scan the title's `assets/roms` folder.
+external mounts.
 See the [folder configuration guide](docs/INSTALLATION.md#multiple-locations-and-external-devices-development-v030-preview).
 
 **No games, console BIOS or keys are included.**
@@ -93,7 +97,7 @@ The active core is Xenia Canary at `b083312b8b18e07e6e410b82104191f126722794`. T
 
 [Build notes and source dependencies](docs/BUILD.md) · [Third-party credits](docs/CREDITS.md)
 
-The current release is **v0.1.0-preview**. See the [changelog](CHANGELOG.md) and
+The current release is **v0.5.6**. See the [changelog](CHANGELOG.md) and
 [release versioning guide](docs/RELEASING.md) for future updates.
 
 ## Support the projects
@@ -113,17 +117,16 @@ Original project code is licensed under MIT. Bundled third-party components keep
 
 PS5X360 is an independent community project and is not affiliated with Sony or Microsoft. README artwork is illustrative branding, not an emulator screenshot.
 
-## Latest release
+## Downloads
 
-**0.5.3-preview** fixes accidental game acceleration when emulated VSync is
-disabled with the automatic frame limit. Guest video pacing stays at 60 Hz;
-this does not guarantee 60 FPS. See [release notes](docs/releases/v0.5.3-preview.md).
-
-The [release download](https://github.com/BrinooTk/PS5X360/releases/tag/v0.5.3-preview)
-offers just **PPSA50011.zip** and the optional **AutoLog 1.0.7-preview ELF**.
-Extract the ZIP and copy `PPSA50011` to `/data/homebrew/`. AutoLog is loaded separately
-once per console boot; it sends diagnostic excerpts to the developer. Read its
+The [v0.5.6 release](https://github.com/BrinooTk/PS5X360/releases/tag/v0.5.6)
+offers **PPSA50011.zip** and the optional **AutoLog 1.0.9-preview ELF**.
+Extract the ZIP and copy `PPSA50011` to `/data/homebrew/`. Preserve existing games,
+saves and logs when updating. AutoLog is loaded separately once per console boot;
+it sends diagnostic excerpts to the developer. Read its
 [reporting notice and instructions](native/autolog/README.md) before enabling it.
+The collector's corresponding source and license archive is included under
+`PPSA50011/licenses/`.
 
 ## Automatic diagnostic reports
 

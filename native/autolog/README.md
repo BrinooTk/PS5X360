@@ -1,4 +1,4 @@
-# PS5X360 AutoLog ELF 1.0.7-preview
+# PS5X360 AutoLog ELF 1.0.9-preview
 
 This revision retries both supported local FTP ports even if the first server
 accepts a connection but refuses a command. It uses CWD + LIST for servers
@@ -124,6 +124,14 @@ TLS requires a trusted certificate, correct hostname and valid console clock;
 there is no unencrypted fallback. Blocked Internet DNS or HTTPS prevents delivery.
 
 ## Current verification
+
+- Version 1.0.9 preserves `guest kernel crash` classification when a
+  `KeBugCheck` marker is followed by a guest register dump. This is a diagnostic
+  improvement; it does not resume or repair a failed guest kernel.
+
+- Version 1.0.8 recognizes `Guide: back to the launcher` as normal session
+  completion. Host regression tests also cover live-session exclusion, opt-out,
+  privacy redaction and queue deduplication. This version requires a console test.
 
 - On the owner's PS5 (firmware 13.60), version 1.0.7 sent its activation check
   without a manual queue insertion. Discord returned HTTP 200 and the exact

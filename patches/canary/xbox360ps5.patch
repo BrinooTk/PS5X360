@@ -450,7 +450,7 @@ index 073de13fd..5cef724c3 100644
  uint32_t ToPosixProtectFlags(PageAccess access) {
    switch (access) {
 diff --git a/src/xenia/base/mutex.cc b/src/xenia/base/mutex.cc
-index 09b671a41..210025fd8 100644
+index 09b671a41..766475d93 100644
 --- a/src/xenia/base/mutex.cc
 +++ b/src/xenia/base/mutex.cc
 @@ -10,7 +10,7 @@
@@ -471,8 +471,142 @@ index 09b671a41..210025fd8 100644
  
  namespace {
  
+@@ -251,6 +251,133 @@ bool xe_fast_mutex::try_lock() {
+                                         std::memory_order_relaxed);
+ }
+ 
++#elif XE_PLATFORM_PS5
++// Xbox360PS5: see mutex.h.
++}  // namespace xe
++#include <immintrin.h>
++#include <pthread.h>
++#include <sched.h>
++#include <time.h>
++namespace xe {
++std::atomic<bool> ps5_spin_mutexes{false};
++
++namespace {
++// About 75 microseconds of pauses on this CPU: longer than a write fault's
++// handler holds the global critical region while it changes a protection.
++constexpr uint32_t kPs5MutexSpins = 4096;
++constexpr uint32_t kPs5MutexYields = 64;
++inline uint64_t ps5_thread_id() {
++  return reinterpret_cast<uint64_t>(pthread_self());
++}
++// Waits for a lock word to become 0 and takes it: pauses, then yields, then
++// short sleeps (the holder was put aside; a CPU is not worth burning on it).
++inline void ps5_take(std::atomic<uint32_t>& state) {
++  for (uint32_t waited = 0;; ++waited) {
++    uint32_t expected = 0;
++    if (state.load(std::memory_order_relaxed) == 0 &&
++        state.compare_exchange_weak(expected, 1, std::memory_order_acquire,
++                                    std::memory_order_relaxed)) {
++      return;
++    }
++    if (waited < kPs5MutexSpins) {
++      _mm_pause();
++    } else if (waited < kPs5MutexSpins + kPs5MutexYields) {
++      sched_yield();
++    } else {
++      const timespec nap = {0, 50000};
++      nanosleep(&nap, nullptr);
++    }
++  }
++}
++}  // namespace
++
++void xe_global_mutex::lock() {
++  if (!ps5_spin_mutexes.load(std::memory_order_relaxed)) {
++    blocking_.lock();
++    return;
++  }
++  const uint64_t self = ps5_thread_id();
++  if (owner_.load(std::memory_order_relaxed) == self) {
++    ++recursion_count_;
++    return;
++  }
++  uint32_t expected = 0;
++  if (XE_LIKELY(state_.compare_exchange_strong(
++          expected, 1, std::memory_order_acquire, std::memory_order_relaxed))) {
++    owner_.store(self, std::memory_order_relaxed);
++    recursion_count_ = 1;
++    return;
++  }
++  lock_slow();
++}
++
++void xe_global_mutex::lock_slow() {
++  ps5_take(state_);
++  owner_.store(ps5_thread_id(), std::memory_order_relaxed);
++  recursion_count_ = 1;
++}
++
++void xe_global_mutex::unlock() {
++  if (!ps5_spin_mutexes.load(std::memory_order_relaxed)) {
++    blocking_.unlock();
++    return;
++  }
++  if (--recursion_count_ == 0) {
++    owner_.store(0, std::memory_order_relaxed);
++    state_.store(0, std::memory_order_release);
++  }
++}
++
++bool xe_global_mutex::try_lock() {
++  if (!ps5_spin_mutexes.load(std::memory_order_relaxed)) {
++    return blocking_.try_lock();
++  }
++  const uint64_t self = ps5_thread_id();
++  if (owner_.load(std::memory_order_relaxed) == self) {
++    ++recursion_count_;
++    return true;
++  }
++  uint32_t expected = 0;
++  if (state_.compare_exchange_strong(expected, 1, std::memory_order_acquire,
++                                     std::memory_order_relaxed)) {
++    owner_.store(self, std::memory_order_relaxed);
++    recursion_count_ = 1;
++    return true;
++  }
++  return false;
++}
++
++void xe_fast_mutex::lock() {
++  if (!ps5_spin_mutexes.load(std::memory_order_relaxed)) {
++    blocking_.lock();
++    return;
++  }
++  uint32_t expected = 0;
++  if (XE_LIKELY(state_.compare_exchange_strong(
++          expected, 1, std::memory_order_acquire, std::memory_order_relaxed))) {
++    return;
++  }
++  lock_slow();
++}
++
++void xe_fast_mutex::lock_slow() { ps5_take(state_); }
++
++void xe_fast_mutex::unlock() {
++  if (!ps5_spin_mutexes.load(std::memory_order_relaxed)) {
++    blocking_.unlock();
++    return;
++  }
++  state_.store(0, std::memory_order_release);
++}
++
++bool xe_fast_mutex::try_lock() {
++  if (!ps5_spin_mutexes.load(std::memory_order_relaxed)) {
++    return blocking_.try_lock();
++  }
++  uint32_t expected = 0;
++  return state_.compare_exchange_strong(
++      expected, 1, std::memory_order_acquire, std::memory_order_relaxed);
++}
+ #endif
+ global_mutex_type& global_critical_region::mutex() {
+   static global_mutex_type global_mutex;
 diff --git a/src/xenia/base/mutex.h b/src/xenia/base/mutex.h
-index aa15e34e0..39892ee40 100644
+index aa15e34e0..5cab42831 100644
 --- a/src/xenia/base/mutex.h
 +++ b/src/xenia/base/mutex.h
 @@ -83,7 +83,7 @@ class xe_unlikely_mutex {
@@ -484,6 +618,61 @@ index aa15e34e0..39892ee40 100644
  
  #define XE_LINUX_MUTEX_SPINCOUNT 128
  
+@@ -156,6 +156,54 @@ class xe_unlikely_mutex {
+   bool try_lock() { return _tryget(); }
+ };
+ 
++using xe_mutex = xe_fast_mutex;
++#elif XE_PLATFORM_PS5
++// Xbox360PS5: the console has no futex, so the Linux mutexes above are not
++// built for it, and the title used std::recursive_mutex and std::mutex, which
++// put a thread to sleep in the kernel as soon as the lock is taken. The global
++// critical region is held often and briefly (guest threads' system calls and
++// write faults), so the GPU command thread kept going to sleep for it: about
++// 30% of its samples in Grand Theft Auto IV were in this lock. These spin first
++// with the same shape as the Linux and Windows versions, then give the CPU
++// away, and only then sleep.
++//
++// ps5_spin_mutexes chooses between them and the plain mutexes. It is set once,
++// at the start of the title, while it has one thread and holds no lock.
++extern std::atomic<bool> ps5_spin_mutexes;
++
++class alignas(64) xe_global_mutex {
++  std::recursive_mutex blocking_;
++  std::atomic<uint32_t> state_{0};  // 0 = unlocked, 1 = locked
++  std::atomic<uint64_t> owner_{0};  // pthread_self() of the owner, 0 = free
++  uint32_t recursion_count_{0};
++
++  void lock_slow();
++
++ public:
++  xe_global_mutex() = default;
++  ~xe_global_mutex() = default;
++
++  void lock();
++  void unlock();
++  bool try_lock();
++};
++using global_mutex_type = xe_global_mutex;
++
++class alignas(64) xe_fast_mutex {
++  std::mutex blocking_;
++  std::atomic<uint32_t> state_{0};  // 0 = unlocked, 1 = locked
++
++  void lock_slow();
++
++ public:
++  xe_fast_mutex() = default;
++  ~xe_fast_mutex() = default;
++
++  void lock();
++  void unlock();
++  bool try_lock();
++};
++using xe_unlikely_mutex = xe_fast_mutex;
+ using xe_mutex = xe_fast_mutex;
+ #else
+ using global_mutex_type = std::recursive_mutex;
 diff --git a/src/xenia/base/platform.h b/src/xenia/base/platform.h
 index 3aea30fb3..c22f752d3 100644
 --- a/src/xenia/base/platform.h
@@ -520,8 +709,23 @@ index d97ba81cc..cd1b4c11e 100644
  
  #include "xenia/base/assert.h"
  #include "xenia/base/cvar.h"
+diff --git a/src/xenia/base/threading.h b/src/xenia/base/threading.h
+index a0cae20e2..8bf4ebbf6 100644
+--- a/src/xenia/base/threading.h
++++ b/src/xenia/base/threading.h
+@@ -445,6 +445,10 @@ class Thread : public WaitHandle {
+   // The state of the thread object becomes signaled, releasing any other
+   // threads that had been waiting for the thread to terminate.
+   static void Exit(int exit_code);
++#if !XE_PLATFORM_WIN32
++  // Xbox360PS5: release a guest's last owner only after native exit bookkeeping.
++  static void ExitWithCleanup(int exit_code, std::function<void()> cleanup);
++#endif
+ 
+   // Returns the ID of the thread.
+   virtual uint32_t system_id() const = 0;
 diff --git a/src/xenia/base/threading_posix.cc b/src/xenia/base/threading_posix.cc
-index 9982f67cf..108db98e4 100644
+index 9982f67cf..dc36d9241 100644
 --- a/src/xenia/base/threading_posix.cc
 +++ b/src/xenia/base/threading_posix.cc
 @@ -34,14 +34,33 @@
@@ -839,15 +1043,70 @@ index 9982f67cf..108db98e4 100644
  #else
      pthread_sigqueue(thread_, GetSystemSignal(SignalType::kThreadUserCallback),
                       value);
-@@ -954,6 +1089,7 @@ class PosixCondition<Thread> final : public PosixConditionBase {
+@@ -929,7 +1064,7 @@ class PosixCondition<Thread> final : public PosixConditionBase {
+     return result == 0;
+   }
+ 
+-  void Terminate(int exit_code) {
++  void Terminate(int exit_code, std::function<void()> cleanup = {}) {
+     bool is_current_thread = pthread_self() == thread_;
+     {
+       std::unique_lock lock(state_mutex_);
+@@ -941,6 +1076,7 @@ class PosixCondition<Thread> final : public PosixConditionBase {
+           // power instead.
+           XELOGW("PosixThread::Terminate: thread was already finished");
+           lock.unlock();
++          if (cleanup) cleanup();
+           pthread_exit(reinterpret_cast<void*>(exit_code));
+         }
+         return;
+@@ -954,8 +1090,11 @@ class PosixCondition<Thread> final : public PosixConditionBase {
        exit_code_ = exit_code;
        signaled_ = true;
        cond_.notify_all();
 +      PosixConditionBase::NotifyAny();  // Xbox360PS5: wake waits on several objects.
      }
      if (is_current_thread) {
++      // Xbox360PS5: cleanup may destroy this object. No member access after it.
++      if (cleanup) cleanup();
        pthread_exit(reinterpret_cast<void*>(exit_code));
-@@ -1346,7 +1482,7 @@ void* PosixCondition<Thread>::ThreadStartRoutine(void* parameter) {
+     }
+ #ifdef XE_PLATFORM_ANDROID
+@@ -1322,13 +1461,33 @@ class PosixThread final : public PosixConditionHandle<Thread> {
+   }
+ 
+   void Terminate(int exit_code) override { handle_.Terminate(exit_code); }
++  void ExitWithCleanup(int exit_code, std::function<void()> cleanup) {
++    handle_.Terminate(exit_code, std::move(cleanup));
++  }
+ 
+   void WaitSuspended() { handle_.WaitSuspended(); }
+ };
+ 
+ thread_local PosixThread* current_thread_ = nullptr;
+ 
++#if XE_PLATFORM_PS5
++}  // namespace threading
++}  // namespace xe
++// Xbox360PS5: platform/ps5/thread_place.cpp.
++namespace xbox360ps5 {
++void PlaceCallingThread(bool gpu);
++}
++namespace xe {
++namespace threading {
++#endif
++
+ void* PosixCondition<Thread>::ThreadStartRoutine(void* parameter) {
++#if XE_PLATFORM_PS5
++  // Xbox360PS5: a thread starts with the CPUs of the thread that made it. Each
++  // one takes its place in the title's arrangement (off the GPU command
++  // thread's core, when that thread has one to itself).
++  xbox360ps5::PlaceCallingThread(false);
++#endif
+ #if !XE_PLATFORM_ANDROID
+   if (pthread_setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS, nullptr) != 0) {
+     assert_always();
+@@ -1346,7 +1505,7 @@ void* PosixCondition<Thread>::ThreadStartRoutine(void* parameter) {
    delete start_data;
  
    current_thread_ = thread;
@@ -856,7 +1115,7 @@ index 9982f67cf..108db98e4 100644
    {
      std::unique_lock lock(thread->handle_.state_mutex_);
      thread->handle_.state_ =
-@@ -1373,6 +1509,7 @@ void* PosixCondition<Thread>::ThreadStartRoutine(void* parameter) {
+@@ -1373,6 +1532,7 @@ void* PosixCondition<Thread>::ThreadStartRoutine(void* parameter) {
      thread->handle_.exit_code_ = 0;
      thread->handle_.signaled_ = true;
      thread->handle_.cond_.notify_all();
@@ -864,7 +1123,27 @@ index 9982f67cf..108db98e4 100644
    }
  
    current_thread_ = nullptr;
-@@ -1443,9 +1580,16 @@ static void signal_handler(int signal, siginfo_t* info, void* context) {
+@@ -1423,6 +1583,19 @@ void Thread::Exit(int exit_code) {
+   assert_always();
+ }
+ 
++// Xbox360PS5: XThread owns its native Thread. Releasing the guest self-reference
++// before Terminate locks the native mutexes can free those mutexes underneath it.
++void Thread::ExitWithCleanup(int exit_code, std::function<void()> cleanup) {
++  auto* thread = current_thread_;
++  current_thread_ = nullptr;
++  if (thread) thread->ExitWithCleanup(exit_code, std::move(cleanup));
++  else {
++    if (cleanup) cleanup();
++    pthread_exit(reinterpret_cast<void*>(exit_code));
++  }
++  assert_always();
++}
++
+ void set_name(const std::string_view name) {
+   pthread_setname_np(pthread_self(), std::string(name).c_str());
+ #if XE_PLATFORM_ANDROID
+@@ -1443,9 +1616,16 @@ static void signal_handler(int signal, siginfo_t* info, void* context) {
        current_thread_->WaitSuspended();
      } break;
      case SignalType::kThreadUserCallback: {
@@ -1279,6 +1558,35 @@ index eadd15ccf..770578fab 100644
  
        auto icon_block = game_info_database_->GetIcon();
        if (!icon_block.empty()) {
+diff --git a/src/xenia/gpu/command_processor.cc b/src/xenia/gpu/command_processor.cc
+index eadd8f5d1..e01c2d159 100644
+--- a/src/xenia/gpu/command_processor.cc
++++ b/src/xenia/gpu/command_processor.cc
+@@ -122,6 +122,12 @@ DEFINE_bool(
+     "mid-frame synchronization, so it has a huge performance impact.",
+     "GPU");
+ 
++#if XE_PLATFORM_PS5
++namespace xbox360ps5 {
++void PlaceCallingThread(bool gpu);
++}
++#endif
++
+ namespace xe {
+ namespace gpu {
+ 
+@@ -350,6 +356,11 @@ void CommandProcessor::SetDesiredSwapPostEffect(
+ }
+ 
+ void CommandProcessor::WorkerThreadMain() {
++#if XE_PLATFORM_PS5
++  // Xbox360PS5: the guest waits for this thread; it takes the core the title
++  // keeps free for it (platform/ps5/thread_place.cpp).
++  xbox360ps5::PlaceCallingThread(true);
++#endif
+   if (!SetupContext()) {
+     xe::FatalError("Unable to setup command processor internal state");
+     return;
 diff --git a/src/xenia/gpu/command_processor.h b/src/xenia/gpu/command_processor.h
 index dfe42737f..8e349e5be 100644
 --- a/src/xenia/gpu/command_processor.h
@@ -1406,19 +1714,28 @@ index bd3b995dd..f01cf15b8 100644
                                 frontbuffer_height);
  
 diff --git a/src/xenia/gpu/shared_memory.cc b/src/xenia/gpu/shared_memory.cc
-index 3afb39120..13bd7373a 100644
+index 3afb39120..57e021674 100644
 --- a/src/xenia/gpu/shared_memory.cc
 +++ b/src/xenia/gpu/shared_memory.cc
-@@ -9,6 +9,8 @@
+@@ -8,17 +8,43 @@
+  */
  
  #include "xenia/gpu/shared_memory.h"
- 
-+#include <cstdlib>
++#if XE_PLATFORM_PS5
++#include "xbox360ps5/gpu_diagnostics.hpp"
++#endif
 +
++#include <cstdlib>
++#include <cstring>
++#include <algorithm>
+ 
  #include "xenia/base/assert.h"
  #include "xenia/base/bit_range.h"
  #include "xenia/base/logging.h"
-@@ -18,7 +20,25 @@ namespace xe {
+ #include "xenia/base/profiling.h"
++#include "xenia/base/xxhash.h"
+ 
+ namespace xe {
  namespace gpu {
  
  SharedMemory::SharedMemory(Memory& memory) : memory_(memory) {
@@ -1445,11 +1762,636 @@ index 3afb39120..13bd7373a 100644
  }
  
  SharedMemory::~SharedMemory() { ShutdownCommon(); }
+@@ -41,18 +67,195 @@ bool SharedMemory::InitializeCommon() {
+     return false;
+   }
+ 
++#if XE_PLATFORM_PS5
++  request_cache_.Invalidate();
++#endif
+   system_page_flags_valid_ = system_page_flags_base;
+   system_page_flags_valid_and_gpu_written_ =
+       system_page_flags_base + num_system_page_flags_;
+   memset(system_page_flags_valid_, 0, 8 * num_system_page_flags_entries);
+   memset(system_page_flags_valid_and_gpu_written_, 0,
+          8 * num_system_page_flags_entries);
++#if XE_PLATFORM_PS5
++  unit_heat_.assign(kBufferSize >> page_size_log2_, 0);
++  unit_hash_.assign(kBufferSize >> page_size_log2_, 0);
++  unwatched_bits_.assign(num_system_page_flags_, 0);
++  unwatched_seen_bits_.assign(num_system_page_flags_, 0);
++  pinned_bits_.assign(num_system_page_flags_, 0);
++#endif
+   memory_invalidation_callback_handle_ =
+       memory_.RegisterPhysicalMemoryInvalidationCallback(
+           MemoryInvalidationCallbackThunk, this);
+   return true;
+ }
+ 
++#if XE_PLATFORM_PS5
++// Xbox360PS5 experimental: unwatched pages.
++//
++// A page the GPU copy holds is write-protected so that a guest write is
++// noticed; the write faults, the page is invalidated and unprotected, and the
++// next draw that needs it uploads it and protects it again. A game that
++// rewrites the same pages every frame (dynamic vertex data, or its own data
++// sharing a page with GPU data) pays a fault and two protection changes per
++// page per frame, each about 40 microseconds on the console, the fault under
++// the global critical region.
++//
++// A unit that keeps faulting is therefore left unwatched: never marked valid,
++// never protected. A draw that asks for it (RequestRange with allow_unwatched)
++// compares a hash of the guest's bytes with the hash taken at the last upload
++// and uploads only when they differ, so the GPU copy still equals the guest's
++// memory at the moment of the request. Anything that keeps state depending on
++// a later invalidation (textures, converted index buffers, resolves, GPU-written
++// data) asks without allow_unwatched or registers a watch, and its units are
++// pinned: watched as before, and never left unwatched again.
++namespace {
++constexpr uint8_t kHeatToUnwatch = 3;
++constexpr uint8_t kHeatWhenUnwatched = 32;
++inline bool UnitBit(const std::vector<uint64_t>& bits, uint32_t unit) {
++  return (__atomic_load_n(&bits[unit >> 6], __ATOMIC_RELAXED) >> (unit & 63)) &
++         1;
++}
++inline void SetUnitBit(std::vector<uint64_t>& bits, uint32_t unit) {
++  __atomic_fetch_or(&bits[unit >> 6], uint64_t(1) << (unit & 63),
++                    __ATOMIC_RELAXED);
++}
++inline void ClearUnitBit(std::vector<uint64_t>& bits, uint32_t unit) {
++  __atomic_fetch_and(&bits[unit >> 6], ~(uint64_t(1) << (unit & 63)),
++                     __ATOMIC_RELAXED);
++}
++}  // namespace
++
++bool SharedMemory::UnwatchedPagesEnabled() const {
++  return xbox360ps5::gpu_diag::enabled.load(std::memory_order_relaxed) &&
++         xbox360ps5::gpu_diag::unwatched_pages.load(std::memory_order_relaxed);
++}
++
++// A write fault on these units (global lock held).
++void SharedMemory::NoteCpuWrite(uint32_t page_first, uint32_t page_last) {
++  for (uint32_t unit = page_first; unit <= page_last; ++unit) {
++    if (UnitBit(pinned_bits_, unit)) {
++      continue;
++    }
++    uint8_t& heat = unit_heat_[unit];
++    if (heat < UINT8_MAX) {
++      ++heat;
++    }
++    if (heat >= kHeatToUnwatch && !UnitBit(unwatched_bits_, unit)) {
++      ClearUnitBit(unwatched_seen_bits_, unit);
++      SetUnitBit(unwatched_bits_, unit);
++      heat = kHeatWhenUnwatched;
++      unwatched_heated_.fetch_add(1, std::memory_order_relaxed);
++    }
++  }
++}
++
++// The guest released or reprotected these units (global lock held).
++void SharedMemory::ForgetUnwatched(uint32_t page_first, uint32_t page_last) {
++  for (uint32_t unit = page_first; unit <= page_last; ++unit) {
++    unit_heat_[unit] = 0;
++    ClearUnitBit(unwatched_bits_, unit);
++    ClearUnitBit(unwatched_seen_bits_, unit);
++  }
++}
++
++// Something will depend on these units' watch (global lock held). A pinned
++// unit is never left unwatched again, so one already pinned has nothing to
++// clear.
++void SharedMemory::PinWatched(uint32_t page_first, uint32_t page_last) {
++  for (uint32_t unit = page_first; unit <= page_last; ++unit) {
++    if (UnitBit(pinned_bits_, unit)) {
++      continue;
++    }
++    SetUnitBit(pinned_bits_, unit);
++    ClearUnitBit(unwatched_bits_, unit);
++    ClearUnitBit(unwatched_seen_bits_, unit);
++    unit_heat_[unit] = 0;
++  }
++}
++
++// Of the units a request found invalid, drops the unwatched ones whose bytes
++// are what the GPU copy already holds. GPU thread, no lock: a unit that is
++// being left unwatched right now is treated as watched and uploaded.
++unsigned int SharedMemory::FilterUnwatched(
++    std::pair<uint32_t, uint32_t>*& uploads, unsigned int count) {
++  bool any = false;
++  for (unsigned int i = 0; i < count && !any; ++i) {
++    for (uint32_t unit = uploads[i].first;
++         unit < uploads[i].first + uploads[i].second; ++unit) {
++      if (UnitBit(unwatched_bits_, unit)) {
++        any = true;
++        break;
++      }
++    }
++  }
++  if (!any) {
++    return count;
++  }
++  unwatched_filtered_.clear();
++  const size_t unit_bytes = size_t(1) << page_size_log2_;
++  for (unsigned int i = 0; i < count; ++i) {
++    uint32_t run_start = UINT32_MAX;
++    const uint32_t end = uploads[i].first + uploads[i].second;
++    for (uint32_t unit = uploads[i].first; unit < end; ++unit) {
++      bool upload = true;
++      if (UnitBit(unwatched_bits_, unit)) {
++        const uint64_t hash = XXH3_64bits(
++            memory().TranslatePhysical(unit << page_size_log2_), unit_bytes);
++        if (UnitBit(unwatched_seen_bits_, unit) && unit_hash_[unit] == hash) {
++          upload = false;
++          ++unwatched_skips_;
++        } else {
++          // Taken before the copy: a write in between leaves the guest's
++          // bytes different from this hash, and the next request uploads.
++          unit_hash_[unit] = hash;
++          SetUnitBit(unwatched_seen_bits_, unit);
++          ++unwatched_uploads_;
++        }
++      }
++      if (upload) {
++        if (run_start == UINT32_MAX) {
++          run_start = unit;
++        }
++      } else if (run_start != UINT32_MAX) {
++        unwatched_filtered_.emplace_back(run_start, unit - run_start);
++        run_start = UINT32_MAX;
++      }
++    }
++    if (run_start != UINT32_MAX) {
++      unwatched_filtered_.emplace_back(run_start, end - run_start);
++    }
++  }
++  uploads = unwatched_filtered_.data();
++  return static_cast<unsigned int>(unwatched_filtered_.size());
++}
++
++// Every 120 guest frames: heat halves, and an unwatched unit whose heat has
++// run out goes back to being watched at its next upload.
++void SharedMemory::AgeUnwatchedPages() {
++  auto global_lock = global_critical_region_.Acquire();
++  const size_t units = unit_heat_.size();
++  for (size_t base = 0; base < units; base += 8) {
++    uint64_t eight;
++    std::memcpy(&eight, &unit_heat_[base], sizeof(eight));
++    if (!eight) {
++      continue;
++    }
++    for (size_t unit = base; unit < base + 8; ++unit) {
++      uint8_t& heat = unit_heat_[unit];
++      if (!heat) {
++        continue;
++      }
++      heat >>= 1;
++      if (heat < 2 && UnitBit(unwatched_bits_, uint32_t(unit))) {
++        ClearUnitBit(unwatched_bits_, uint32_t(unit));
++        ClearUnitBit(unwatched_seen_bits_, uint32_t(unit));
++        unwatched_cooled_.fetch_add(1, std::memory_order_relaxed);
++      }
++    }
++  }
++}
++#endif  // XE_PLATFORM_PS5
++
+ void SharedMemory::InitializeSparseHostGpuMemory(uint32_t granularity_log2) {
+   assert_true(granularity_log2 <= kBufferSizeLog2);
+   assert_true(host_gpu_memory_sparse_granularity_log2_ == UINT32_MAX);
+@@ -63,6 +266,9 @@ void SharedMemory::InitializeSparseHostGpuMemory(uint32_t granularity_log2) {
+ }
+ 
+ void SharedMemory::ShutdownCommon() {
++#if XE_PLATFORM_PS5
++  request_cache_.Invalidate();
++#endif
+   ReleaseTraceDownloadRanges();
+ 
+   FireWatches(0, (kBufferSize - 1) >> page_size_log2_, false);
+@@ -108,6 +314,16 @@ void SharedMemory::ShutdownCommon() {
+ }
+ 
+ void SharedMemory::ClearCache() {
++#if XE_PLATFORM_PS5
++  {
++    auto global_lock = global_critical_region_.Acquire();
++    std::fill(unit_heat_.begin(), unit_heat_.end(), uint8_t(0));
++    std::fill(unwatched_bits_.begin(), unwatched_bits_.end(), uint64_t(0));
++    std::fill(unwatched_seen_bits_.begin(), unwatched_seen_bits_.end(),
++              uint64_t(0));
++    std::fill(pinned_bits_.begin(), pinned_bits_.end(), uint64_t(0));
++  }
++#endif
+   // Keeping GPU-written data, so "invalidated by GPU".
+   FireWatches(0, (kBufferSize - 1) >> page_size_log2_, true);
+   // No watches now, so no references to the pools accessible by guest threads -
+@@ -129,9 +345,16 @@ void SharedMemory::ClearCache() {
+ 
+ void SharedMemory::SetSystemPageBlocksValidWithGpuDataWritten() {
+   auto global_lock = global_critical_region_.Acquire();
++#if XE_PLATFORM_PS5
++  request_cache_.Invalidate();
++#endif
+ 
+   for (unsigned i = 0; i < num_system_page_flags_; ++i) {
++#if XE_PLATFORM_PS5
++    __atomic_store_n(&system_page_flags_valid_[i], system_page_flags_valid_and_gpu_written_[i], __ATOMIC_RELEASE);
++#else
+     system_page_flags_valid_[i] = system_page_flags_valid_and_gpu_written_[i];
++#endif
+   }
+ }
+ 
+@@ -177,6 +400,13 @@ SharedMemory::WatchHandle SharedMemory::WatchMemoryRange(
+       watch_page_last << page_size_log2_ >> kWatchBucketSizeLog2;
+   // chrispy: Not required the global lock is always held by the caller
+   // auto global_lock = global_critical_region_.Acquire();
++#if XE_PLATFORM_PS5
++  // Xbox360PS5: what registers a watch relies on these units' invalidation.
++  // Recorded whenever the experiment exists, also while it is switched off.
++  if (xbox360ps5::gpu_diag::enabled.load(std::memory_order_relaxed)) {
++    PinWatched(watch_page_first, watch_page_last);
++  }
++#endif
+ 
+   // Allocate the range.
+   WatchRange* range = watch_range_first_free_;
+@@ -319,9 +549,22 @@ void SharedMemory::MakeRangeValid(uint32_t start, uint32_t length,
+   uint32_t valid_block_first = valid_page_first >> 6;
+   uint32_t valid_block_last = valid_page_last >> 6;
+ 
++#if XE_PLATFORM_PS5
++  bool skipped_unwatched = false;
++  const bool leave_unwatched = UnwatchedPagesEnabled();
++#endif
+   {
+     auto global_lock = global_critical_region_.Acquire();
+ 
++#if XE_PLATFORM_PS5
++    // Xbox360PS5: GPU-written data and requests that do not allow unwatched
++    // units pin theirs (watched, as before). Recorded whenever the experiment
++    // exists, also while it is switched off.
++    if (xbox360ps5::gpu_diag::enabled.load(std::memory_order_relaxed) &&
++        (written_by_gpu || !request_allows_unwatched_)) {
++      PinWatched(valid_page_first, valid_page_last);
++    }
++#endif
+     for (uint32_t i = valid_block_first; i <= valid_block_last; ++i) {
+       uint64_t valid_bits = UINT64_MAX;
+       if (i == valid_block_first) {
+@@ -330,8 +573,29 @@ void SharedMemory::MakeRangeValid(uint32_t start, uint32_t length,
+       if (i == valid_block_last && (valid_page_last & 63) != 63) {
+         valid_bits &= (uint64_t(1) << ((valid_page_last & 63) + 1)) - 1;
+       }
++#if XE_PLATFORM_PS5
++      if (const uint64_t unwatched =
++              __atomic_load_n(&unwatched_bits_[i], __ATOMIC_RELAXED) &
++              valid_bits) {
++        if (leave_unwatched) {
++          valid_bits &= ~unwatched;
++          skipped_unwatched = true;
++        } else {
++          // Switched off: these units were just uploaded whole and become
++          // valid and watched like any other, so they stop being unwatched.
++          __atomic_fetch_and(&unwatched_bits_[i], ~unwatched,
++                             __ATOMIC_RELAXED);
++          __atomic_fetch_and(&unwatched_seen_bits_[i], ~unwatched,
++                             __ATOMIC_RELAXED);
++        }
++      }
++#endif
+       // SystemPageFlagsBlock& block = system_page_flags_[i];
++#if XE_PLATFORM_PS5
++      __atomic_fetch_or(&system_page_flags_valid_[i], valid_bits, __ATOMIC_RELEASE);
++#else
+       system_page_flags_valid_[i] |= valid_bits;
++#endif
+       if (written_by_gpu) {
+         system_page_flags_valid_and_gpu_written_[i] |= valid_bits;
+       } else {
+@@ -340,6 +604,30 @@ void SharedMemory::MakeRangeValid(uint32_t start, uint32_t length,
+     }
+   }
+ 
++#if XE_PLATFORM_PS5
++  if (skipped_unwatched) {
++    // Watch only the runs of units that are not left unwatched.
++    if (memory_invalidation_callback_handle_) {
++      uint32_t run_start = UINT32_MAX;
++      for (uint32_t unit = valid_page_first; unit <= valid_page_last + 1;
++           ++unit) {
++        const bool watch =
++            unit <= valid_page_last && !UnitBit(unwatched_bits_, unit);
++        if (watch) {
++          if (run_start == UINT32_MAX) {
++            run_start = unit;
++          }
++        } else if (run_start != UINT32_MAX) {
++          memory().EnablePhysicalMemoryAccessCallbacks(
++              run_start << page_size_log2_,
++              (unit - run_start) << page_size_log2_, true, false);
++          run_start = UINT32_MAX;
++        }
++      }
++    }
++    return;
++  }
++#endif
+   if (memory_invalidation_callback_handle_) {
+     // A page that isn't writable here gets no watch. A later guest
+     // protect-to-writable invalidates it so its writes are still caught.
+@@ -373,7 +661,35 @@ void SharedMemory::UnlinkWatchRange(WatchRange* range) {
+   watch_range_first_free_ = range;
+ }
+ // todo: optimize, an enormous amount of cpu time (1.34%) is spent here.
+-bool SharedMemory::RequestRange(uint32_t start, uint32_t length) {
++#if XE_PLATFORM_PS5
++void SharedMemory::ReportRequestCacheStats() {
++  const auto stats = request_cache_.TakeStats();
++  XELOGW("Performance range-cache: {} requests, {} reused validations; CPU/GPU invalidations preserved", stats.requests, stats.hits);
++  XELOGW("Performance uploads: {} bytes, {} chunks since last report; invalidation window {} bytes", upload_bytes_, upload_chunks_,
++         xbox360ps5::gpu_diag::invalidation_window.load(std::memory_order_relaxed));
++  XELOGW("Performance lock-free: {} requests answered without the global lock ({})",
++         lock_free_hits_,
++         xbox360ps5::gpu_diag::lock_free_valid.load(std::memory_order_relaxed) ? "on" : "off");
++  uint64_t unwatched_units = 0;
++  for (const uint64_t word : unwatched_bits_) {
++    unwatched_units += xe::bit_count(word);
++  }
++  XELOGW("Performance unwatched: {} units left unwatched ({}); {} unchanged at a request, {} uploaded; {} units heated, {} cooled",
++         unwatched_units, UnwatchedPagesEnabled() ? "on" : "off",
++         unwatched_skips_, unwatched_uploads_,
++         unwatched_heated_.exchange(0, std::memory_order_relaxed),
++         unwatched_cooled_.exchange(0, std::memory_order_relaxed));
++  upload_bytes_ = upload_chunks_ = lock_free_hits_ = 0;
++  unwatched_skips_ = unwatched_uploads_ = 0;
++  AgeUnwatchedPages();
++}
++#endif
++
++bool SharedMemory::RequestRange(uint32_t start, uint32_t length,
++                                bool allow_unwatched) {
++#if XE_PLATFORM_PS5
++  xbox360ps5::gpu_diag::Scope ps5_stage(xbox360ps5::gpu_diag::Kind::cpu_upload);
++#endif
+   if (!length) {
+     // Some texture or buffer is empty, for example - safe to draw in this case.
+     return true;
+@@ -382,6 +698,25 @@ bool SharedMemory::RequestRange(uint32_t start, uint32_t length) {
+     return false;
+   }
+ 
++#if XE_PLATFORM_PS5
++  const bool use_request_cache = xbox360ps5::gpu_diag::enabled.load(std::memory_order_relaxed);
++  if (use_request_cache && request_cache_.Hit(start, length, request_cache_.Epoch())) return true;
++  // Xbox360PS5 experimental: most requests of a frame (over ten thousand in
++  // Grand Theft Auto IV) are for memory that is already valid, and each took
++  // the global critical region, which the guest threads' write faults hold
++  // while they change page protections. When every page of the range is valid
++  // the answer needs no lock: validity was set, under the lock, only after the
++  // GPU copy had been allocated and its watch armed.
++  if (use_request_cache &&
++      xbox360ps5::gpu_diag::lock_free_valid.load(std::memory_order_relaxed) &&
++      xbox360ps5::gpu_diag::RangeBitsAllSet(
++          system_page_flags_valid_, start >> page_size_log2_,
++          (start + length - 1) >> page_size_log2_)) {
++    ++lock_free_hits_;
++    return true;
++  }
++#endif
++  uint64_t validated_epoch = 0;
+   SCOPE_profile_cpu_f("gpu");
+ 
+   if (!EnsureHostGpuMemoryAllocated(start, length)) {
+@@ -404,6 +739,9 @@ bool SharedMemory::RequestRange(uint32_t start, uint32_t length) {
+ 
+   {
+     auto global_lock = global_critical_region_.Acquire();
++#if XE_PLATFORM_PS5
++    if (use_request_cache) validated_epoch = request_cache_.Epoch();
++#endif
+     TryFindUploadRange(block_first, block_last, page_first, page_last,
+                        range_start, current_upload_range, uploads);
+   }
+@@ -411,11 +749,35 @@ bool SharedMemory::RequestRange(uint32_t start, uint32_t length) {
+     uploads[current_upload_range++] =
+         (std::make_pair(range_start, page_last + 1 - range_start));
+   }
+-  if (!current_upload_range) {
+-    return true;
++#if XE_PLATFORM_PS5
++  // Unwatched units among those found invalid: only the changed ones go up,
++  // and they stay invalid and unprotected (MakeRangeValid).
++  bool has_unwatched = false;
++  if (current_upload_range && use_request_cache) {
++    // Also while switched off, so that vertex data is not pinned by it.
++    request_allows_unwatched_ = allow_unwatched;
++    if (allow_unwatched && UnwatchedPagesEnabled()) {
++      const unsigned int found = current_upload_range;
++      current_upload_range = FilterUnwatched(uploads, current_upload_range);
++      has_unwatched = uploads == unwatched_filtered_.data() ||
++                      found != current_upload_range;
++    }
+   }
+-
+-  return UploadRanges(uploads, current_upload_range);
++#endif
++  bool usable = !current_upload_range || UploadRanges(uploads, current_upload_range);
++#if XE_PLATFORM_PS5
++  request_allows_unwatched_ = false;
++  if (!usable && has_unwatched) {
++    // Nothing is known about what reached the GPU copy.
++    auto global_lock = global_critical_region_.Acquire();
++    for (uint32_t unit = page_first; unit <= page_last; ++unit) {
++      ClearUnitBit(unwatched_seen_bits_, unit);
++    }
++  }
++  // A range with unwatched units is checked again at every request.
++  if (usable && use_request_cache && !has_unwatched) request_cache_.Remember(start, length, validated_epoch);
++#endif
++  return usable;
+ }
+ 
+ bool SharedMemory::IsRangeValid(uint32_t start, uint32_t length) const {
+@@ -555,8 +917,22 @@ std::pair<uint32_t, uint32_t> SharedMemory::MemoryInvalidationCallback(
+   uint32_t block_last = page_last >> 6;
+ 
+   auto global_lock = global_critical_region_.Acquire();
++#if XE_PLATFORM_PS5
++  request_cache_.Invalidate();
++  if (UnwatchedPagesEnabled()) {
++    if (exact_range) {
++      ForgetUnwatched(page_first, page_last);
++    } else {
++      NoteCpuWrite(page_first, page_last);
++    }
++  }
++#endif
+ 
+   if (!exact_range) {
++#if XE_PLATFORM_PS5
++    const uint32_t requested_page_first = page_first;
++    const uint32_t requested_page_last = page_last;
++#endif
+     // Check if a somewhat wider range (up to 256 KB with 4 KB pages) can be
+     // invalidated - if no GPU-written data nearby that was not intended to be
+     // invalidated since it's not in sync with CPU memory and can't be
+@@ -579,6 +955,26 @@ std::pair<uint32_t, uint32_t> SharedMemory::MemoryInvalidationCallback(
+       page_last = (page_last & ~uint32_t(63)) +
+                   (std::max(xe::tzcnt(gpu_written_end), uint8_t(1)) - 1);
+     }
++#if XE_PLATFORM_PS5
++    if (xbox360ps5::gpu_diag::enabled.load(std::memory_order_relaxed)) {
++      // Limit speculative invalidation to a window around the actual write
++      // (64 KiB unless another size was chosen for a comparison; 0 keeps the
++      // whole 256 KiB block). Keep the GPU-written boundaries computed above,
++      // and always include every requested page, including writes spanning
++      // multiple windows.
++      const uint32_t window_bytes =
++          xbox360ps5::gpu_diag::invalidation_window.load(
++              std::memory_order_relaxed);
++      if (window_bytes) {
++        const uint32_t kWindowPages =
++            std::max(1u, window_bytes >> page_size_log2_);
++        page_first =
++            std::max(page_first, requested_page_first & ~(kWindowPages - 1));
++        page_last =
++            std::min(page_last, requested_page_last | (kWindowPages - 1));
++      }
++    }
++#endif
+   }
+ 
+   for (uint32_t i = block_first; i <= block_last; ++i) {
+@@ -589,7 +985,11 @@ std::pair<uint32_t, uint32_t> SharedMemory::MemoryInvalidationCallback(
+     if (i == block_last && (page_last & 63) != 63) {
+       invalidate_bits &= (uint64_t(1) << ((page_last & 63) + 1)) - 1;
+     }
++#if XE_PLATFORM_PS5
++    __atomic_fetch_and(&system_page_flags_valid_[i], ~invalidate_bits, __ATOMIC_RELEASE);
++#else
+     system_page_flags_valid_[i] &= ~invalidate_bits;
++#endif
+     system_page_flags_valid_and_gpu_written_[i] &= ~invalidate_bits;
+   }
+ 
+@@ -611,11 +1011,18 @@ void SharedMemory::PrepareForTraceDownload() {
+   uint32_t fire_watches_range_start = UINT32_MAX;
+   uint32_t gpu_written_range_start = UINT32_MAX;
+   auto global_lock = global_critical_region_.Acquire();
++#if XE_PLATFORM_PS5
++  request_cache_.Invalidate();
++#endif
+   for (uint32_t i = 0; i < num_system_page_flags_; ++i) {
+     // SystemPageFlagsBlock& page_flags_block = system_page_flags_[i];
+     uint64_t previously_valid_block = system_page_flags_valid_[i];
+     uint64_t gpu_written_block = system_page_flags_valid_and_gpu_written_[i];
++#if XE_PLATFORM_PS5
++    __atomic_store_n(&system_page_flags_valid_[i], gpu_written_block, __ATOMIC_RELEASE);
++#else
+     system_page_flags_valid_[i] = gpu_written_block;
++#endif
+ 
+     // Fire watches on the invalidated pages.
+     uint64_t fire_watches_block = previously_valid_block & ~gpu_written_block;
+diff --git a/src/xenia/gpu/shared_memory.h b/src/xenia/gpu/shared_memory.h
+index 2b5675789..ed18d1778 100644
+--- a/src/xenia/gpu/shared_memory.h
++++ b/src/xenia/gpu/shared_memory.h
+@@ -10,7 +10,13 @@
+ #ifndef XENIA_GPU_SHARED_MEMORY_H_
+ #define XENIA_GPU_SHARED_MEMORY_H_
+ 
++#include <atomic>
++#include <utility>
++#include <vector>
+ #include "xenia/memory.h"
++#if XE_PLATFORM_PS5
++#include "xbox360ps5/validated_range_cache.hpp"
++#endif
+ 
+ namespace xe {
+ namespace gpu {
+@@ -71,7 +77,19 @@ class SharedMemory {
+   // Checks if the range has been updated, uploads new data if needed and
+   // ensures the host GPU memory backing the range are resident. Returns true if
+   // the range has been fully updated and is usable.
+-  bool RequestRange(uint32_t start, uint32_t length);
++  // Xbox360PS5: allow_unwatched says that the caller uses the data for this
++  // draw only and keeps nothing that depends on a later invalidation (vertex
++  // data). Only such requests may be answered from pages left unwatched.
++  bool RequestRange(uint32_t start, uint32_t length,
++                    bool allow_unwatched = false);
++#if XE_PLATFORM_PS5
++  void ReportRequestCacheStats();
++  // GPU-thread counters only; no clocks, atomics or log writes per upload.
++  void RecordUploadBytes(uint64_t bytes) {
++    upload_bytes_ += bytes;
++    ++upload_chunks_;
++  }
++#endif
+   // Returns whether every page in the range is currently valid in the host GPU
+   // memory copy. Hold the global critical region if relying on this for state
+   // transitions such as watch installation.
+@@ -213,6 +231,32 @@ class SharedMemory {
+   //  used to quickly extract ranges.
+   // std::vector<SystemPageFlagsBlock> system_page_flags_;
+ 
++#if XE_PLATFORM_PS5
++  xbox360ps5::ValidatedRangeCache request_cache_;
++  uint64_t upload_bytes_ = 0, upload_chunks_ = 0;
++  // Requests answered without the global critical region since the last report.
++  uint64_t lock_free_hits_ = 0;
++
++  // Xbox360PS5 experimental, "unwatched pages": see shared_memory.cc. Bitmaps
++  // have a bit per upload unit, like the validity ones; they are written with
++  // atomic operations (fault handlers under the global lock, the GPU thread).
++  bool UnwatchedPagesEnabled() const;
++  void NoteCpuWrite(uint32_t page_first, uint32_t page_last);
++  void ForgetUnwatched(uint32_t page_first, uint32_t page_last);
++  void PinWatched(uint32_t page_first, uint32_t page_last);
++  unsigned int FilterUnwatched(std::pair<uint32_t, uint32_t>*& uploads,
++                               unsigned int count);
++  void AgeUnwatchedPages();
++  std::vector<uint8_t> unit_heat_;       // Recent write faults per unit.
++  std::vector<uint64_t> unwatched_bits_;  // Left unwatched, compared by content.
++  std::vector<uint64_t> unwatched_seen_bits_;  // unit_hash_ is of the GPU copy.
++  std::vector<uint64_t> pinned_bits_;    // Something depends on its watch.
++  std::vector<uint64_t> unit_hash_;
++  std::vector<std::pair<uint32_t, uint32_t>> unwatched_filtered_;
++  bool request_allows_unwatched_ = false;  // GPU thread: the request served.
++  uint64_t unwatched_skips_ = 0, unwatched_uploads_ = 0;
++  std::atomic<uint64_t> unwatched_heated_{0}, unwatched_cooled_{0};
++#endif
+   uint64_t *system_page_flags_valid_ = nullptr,
+            *system_page_flags_valid_and_gpu_written_ = nullptr;
+   unsigned num_system_page_flags_ = 0;
 diff --git a/src/xenia/gpu/vulkan/vulkan_command_processor.cc b/src/xenia/gpu/vulkan/vulkan_command_processor.cc
-index 71fb8a828..ed2c8df1c 100644
+index 71fb8a828..f2578f0dd 100644
 --- a/src/xenia/gpu/vulkan/vulkan_command_processor.cc
 +++ b/src/xenia/gpu/vulkan/vulkan_command_processor.cc
-@@ -1488,7 +1488,7 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
+@@ -8,6 +8,9 @@
+  */
+ 
+ #include "xenia/gpu/vulkan/vulkan_command_processor.h"
++#if XE_PLATFORM_PS5
++#include "xbox360ps5/gpu_diagnostics.hpp"
++#endif
+ 
+ #include <cstdint>
+ #include <cstring>
+@@ -1472,6 +1475,10 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
+   }
+ 
+   // In case the swap command is the only one in the frame.
++#if XE_PLATFORM_PS5
++  if (xbox360ps5::gpu_diag::enabled.load(std::memory_order_relaxed) &&
++      frame_current_ && (frame_current_ % 120) == 0) shared_memory_->ReportRequestCacheStats();
++#endif
+   if (!BeginSubmission(true)) {
+     return;
+   }
+@@ -1488,7 +1495,7 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
  
    auto aspect = graphics_system_->GetScaledAspectRatio();
  
@@ -1458,7 +2400,7 @@ index 71fb8a828..ed2c8df1c 100644
        frontbuffer_width_scaled, frontbuffer_height_scaled, aspect.first,
        aspect.second,
        [this, frontbuffer_width_scaled, frontbuffer_height_scaled,
-@@ -1803,6 +1803,9 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
+@@ -1803,6 +1810,9 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
  
    // End the frame even if did not present for any reason (the image refresher
    // was not called), to prevent leaking per-frame resources.
@@ -1468,6 +2410,161 @@ index 71fb8a828..ed2c8df1c 100644
    EndSubmission(true);
  }
  
+@@ -2393,6 +2403,9 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
+                                        uint32_t index_count,
+                                        IndexBufferInfo* index_buffer_info,
+                                        bool major_mode_explicit) {
++#if XE_PLATFORM_PS5
++  xbox360ps5::gpu_diag::Scope ps5_stage(xbox360ps5::gpu_diag::Kind::cpu_draw);
++#endif
+ #if XE_GPU_FINE_GRAINED_DRAW_SCOPES
+   SCOPE_profile_cpu_f("gpu");
+ #endif  // XE_GPU_FINE_GRAINED_DRAW_SCOPES
+@@ -2925,12 +2938,26 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
+       // it in RequestRange - SharedMemory tracks dirty pages and only uploads
+       // what actually changed, making redundant calls cheap under a hoisted
+       // lock.
++#if XE_PLATFORM_PS5
++      // Xbox360PS5 experimental: with valid ranges answered without the lock
++      // (SharedMemory::RequestRange), taking the global critical region for
++      // every draw is the cost the hoisting meant to save; a request that
++      // does need it takes it itself.
++      auto shared_memory_request_range_hoisted =
++          xbox360ps5::gpu_diag::enabled.load(std::memory_order_relaxed) &&
++                  xbox360ps5::gpu_diag::lock_free_valid.load(
++                      std::memory_order_relaxed)
++              ? global_critical_region::AcquireDeferred()
++              : global_critical_region::Acquire();
++#else
+       auto shared_memory_request_range_hoisted =
+           global_critical_region::Acquire();
++#endif
+ 
+       for (uint32_t i = 0; i < vfetch_current_queued; ++i) {
++        // Xbox360PS5: vertex data is used for this draw only.
+         if (!shared_memory_->RequestRange(vfetch_addresses[i] << 2,
+-                                          vfetch_sizes[i] << 2)) {
++                                          vfetch_sizes[i] << 2, true)) {
+           XELOGE(
+               "Failed to request vertex buffer at 0x{:08X} (size {}) in the "
+               "shared memory",
+@@ -3132,6 +3159,9 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
+ }
+ 
+ bool VulkanCommandProcessor::IssueCopy() {
++#if XE_PLATFORM_PS5
++  xbox360ps5::gpu_diag::Scope ps5_stage(xbox360ps5::gpu_diag::Kind::cpu_copy);
++#endif
+ #if XE_GPU_FINE_GRAINED_DRAW_SCOPES
+   SCOPE_profile_cpu_f("gpu");
+ #endif  // XE_GPU_FINE_GRAINED_DRAW_SCOPES
+@@ -4201,6 +4231,9 @@ void VulkanCommandProcessor::PollCompletedSubmission() {
+ 
+ void VulkanCommandProcessor::CheckSubmissionCompletionAndDeviceLoss(
+     uint64_t await_submission) {
++#if XE_PLATFORM_PS5
++  xbox360ps5::gpu_diag::Scope ps5_stage(xbox360ps5::gpu_diag::Kind::cpu_completion);
++#endif
+   // Only report once, no need to retry a wait that won't succeed anyway.
+   if (device_lost_) {
+     return;
+diff --git a/src/xenia/gpu/vulkan/vulkan_pipeline_cache.cc b/src/xenia/gpu/vulkan/vulkan_pipeline_cache.cc
+index 0f038e4b0..4ee828d64 100644
+--- a/src/xenia/gpu/vulkan/vulkan_pipeline_cache.cc
++++ b/src/xenia/gpu/vulkan/vulkan_pipeline_cache.cc
+@@ -8,6 +8,9 @@
+  */
+ 
+ #include "xenia/gpu/vulkan/vulkan_pipeline_cache.h"
++#if XE_PLATFORM_PS5
++#include "xbox360ps5/cache_io.hpp"
++#endif
+ 
+ #include <cstdint>
+ #include <cstring>
+@@ -3219,7 +3222,7 @@ bool VulkanPipelineCache::EnsurePipelineCreated(
+   const ui::vulkan::VulkanDevice::Functions& dfn = vulkan_device->functions();
+   const VkDevice device = vulkan_device->device();
+   VkPipeline pipeline;
+-  VkResult result = dfn.vkCreateGraphicsPipelines(
++  VkResult result = PS5X360_VK_CALL(pipeline, dfn.vkCreateGraphicsPipelines, 
+       device, vk_pipeline_cache_, 1, &pipeline_create_info, nullptr, &pipeline);
+   if (result != VK_SUCCESS) {
+     if (creation_arguments.pixel_shader) {
+@@ -3401,17 +3404,34 @@ void VulkanPipelineCache::InitializeShaderStorage(
+           xe::filesystem::OpenFile(vk_pipeline_cache_path_, "rb")) {
+     xe::filesystem::Seek(cache_file, 0, SEEK_END);
+     int64_t cache_size = xe::filesystem::Tell(cache_file);
++#if XE_PLATFORM_PS5
++    if (xbox360ps5::gpu_diag::enabled && !xbox360ps5::ValidPipelineCacheSize(cache_size)) {
++      XELOGW("EXPERIMENT cache: rejected invalid/oversized pipeline cache {} bytes at {}", cache_size, vk_pipeline_cache_path_.string());
++      cache_size = 0;
++    }
++#endif
+     if (cache_size > 0) {
+       pipeline_cache_data.resize(size_t(cache_size));
+       xe::filesystem::Seek(cache_file, 0, SEEK_SET);
+       pipeline_cache_data.resize(fread(pipeline_cache_data.data(), 1,
+                                        pipeline_cache_data.size(), cache_file));
+     }
++    const bool cache_read_failed = ferror(cache_file) != 0 || (cache_size > 0 && pipeline_cache_data.size() != size_t(cache_size));
+     fclose(cache_file);
++#if XE_PLATFORM_PS5
++    if (xbox360ps5::gpu_diag::enabled) {
++      XELOGW("EXPERIMENT cache: title {:08X} loaded {} bytes at {}; read {}", shader_storage_title_id_, pipeline_cache_data.size(), vk_pipeline_cache_path_.string(), cache_read_failed ? "failed" : "complete");
++      if (cache_read_failed) pipeline_cache_data.clear();
++    }
++#endif
+     XELOGI("Loaded {} bytes of VkPipelineCache data",
+            pipeline_cache_data.size());
+   }
+ 
++#if XE_PLATFORM_PS5
++  if (xbox360ps5::gpu_diag::enabled && pipeline_cache_data.empty())
++    XELOGW("EXPERIMENT cache: no reusable pipeline data for title {:08X} at {}", shader_storage_title_id_, vk_pipeline_cache_path_.string());
++#endif
+   // Recreate the VkPipelineCache with the loaded data.
+   if (vk_pipeline_cache_ != VK_NULL_HANDLE) {
+     dfn.vkDestroyPipelineCache(device, vk_pipeline_cache_, nullptr);
+@@ -3699,6 +3719,12 @@ void VulkanPipelineCache::ShutdownShaderStorage() {
+       std::vector<uint8_t> cache_data(cache_size);
+       if (dfn.vkGetPipelineCacheData(device, vk_pipeline_cache_, &cache_size,
+                                      cache_data.data()) == VK_SUCCESS) {
++#if XE_PLATFORM_PS5
++        if (xbox360ps5::gpu_diag::enabled) {
++          const bool written = xbox360ps5::WriteCacheAtomically(vk_pipeline_cache_path_, cache_data.data(), cache_size);
++          XELOGW("EXPERIMENT cache: title {:08X} save {} bytes at {} {}; failed writes keep the previous cache", shader_storage_title_id_, cache_size, vk_pipeline_cache_path_.string(), written ? "complete" : "failed");
++        } else
++#endif
+         if (FILE* cache_file =
+                 xe::filesystem::OpenFile(vk_pipeline_cache_path_, "wb")) {
+           fwrite(cache_data.data(), 1, cache_size, cache_file);
+diff --git a/src/xenia/gpu/vulkan/vulkan_shared_memory.cc b/src/xenia/gpu/vulkan/vulkan_shared_memory.cc
+index fe8dc6487..a1f243464 100644
+--- a/src/xenia/gpu/vulkan/vulkan_shared_memory.cc
++++ b/src/xenia/gpu/vulkan/vulkan_shared_memory.cc
+@@ -18,6 +18,9 @@
+ #include "xenia/gpu/vulkan/deferred_command_buffer.h"
+ #include "xenia/gpu/vulkan/vulkan_command_processor.h"
+ #include "xenia/ui/vulkan/vulkan_util.h"
++#if XE_PLATFORM_PS5
++#include "xbox360ps5/gpu_diagnostics.hpp"
++#endif
+ 
+ DECLARE_bool(gpu_allow_invalid_upload_range);
+ 
+@@ -473,6 +476,11 @@ bool VulkanSharedMemory::UploadRanges(
+       upload_region.dstOffset =
+           VkDeviceSize(upload_range_start << page_size_log2());
+       upload_region.size = upload_buffer_size;
++#if XE_PLATFORM_PS5
++      if (xbox360ps5::gpu_diag::enabled.load(std::memory_order_relaxed)) {
++        RecordUploadBytes(upload_buffer_size);
++      }
++#endif
+       uint32_t upload_buffer_pages =
+           uint32_t(upload_buffer_size >> page_size_log2());
+       upload_range_start += upload_buffer_pages;
 diff --git a/src/xenia/kernel/kernel_state.cc b/src/xenia/kernel/kernel_state.cc
 index e50200848..76a3e7d13 100644
 --- a/src/xenia/kernel/kernel_state.cc
@@ -1862,6 +2959,44 @@ index 1ffa131e0..238abab4d 100644
    if (!package_header->content_header.is_magic_valid()) {
      package_->Close();
      return false;
+diff --git a/src/xenia/kernel/xboxkrnl/xboxkrnl_debug.cc b/src/xenia/kernel/xboxkrnl/xboxkrnl_debug.cc
+index e4ddfca3b..05026e639 100644
+--- a/src/xenia/kernel/xboxkrnl/xboxkrnl_debug.cc
++++ b/src/xenia/kernel/xboxkrnl/xboxkrnl_debug.cc
+@@ -14,6 +14,9 @@
+ #include "xenia/kernel/util/shim_utils.h"
+ #include "xenia/kernel/xboxkrnl/xboxkrnl_private.h"
+ #include "xenia/kernel/xthread.h"
++#if XE_PLATFORM_PS5
++#include "xbox360ps5/guest_crash_dump.hpp"
++#endif
+ #include "xenia/ui/imgui_dialog.h"
+ #include "xenia/ui/imgui_drawer.h"
+ #include "xenia/ui/window.h"
+@@ -156,7 +159,7 @@ void KeBugCheckEx_entry(dword_t code, dword_t param1, dword_t param2,
+                   static_cast<uint32_t>(code), static_cast<uint32_t>(param1),
+                   static_cast<uint32_t>(param2), static_cast<uint32_t>(param3),
+                   static_cast<uint32_t>(param4));
+-  XELOGE("{}", msg);
++  XELOGE("KeBugCheck: {}", msg);
+   fflush(stdout);
+ 
+   if (xe::debugging::IsDebuggerAttached()) {
+@@ -166,6 +169,14 @@ void KeBugCheckEx_entry(dword_t code, dword_t param1, dword_t param2,
+   // Show crash dialog and suspend the guest thread instead of killing the
+   // host process.
+   auto current_thread = kernel::XThread::GetCurrentThread();
++#if XE_PLATFORM_PS5
++  // Xbox360PS5: STOP 0 alone cannot identify a guest failure. Capture the caller
++  // before suspending it, in the per-game log consumed by AutoLog.
++  if (current_thread && current_thread->thread_state()) {
++    xbox360ps5::DumpGuestCrash(kernel_state()->memory(),
++        current_thread->thread_state()->context(), current_thread->thread_id());
++  }
++#endif
+   const auto* emulator = kernel_state()->emulator();
+   auto* display_window = emulator->display_window();
+   auto* imgui_drawer = emulator->imgui_drawer();
 diff --git a/src/xenia/kernel/xconfig.cc b/src/xenia/kernel/xconfig.cc
 index 57cc50f95..9a2540d19 100644
 --- a/src/xenia/kernel/xconfig.cc
@@ -1946,11 +3081,69 @@ index 82b35e070..cf5956673 100644
      return {width_.get() / divisor, height_.get() / divisor};
    }
  
+diff --git a/src/xenia/kernel/xthread.cc b/src/xenia/kernel/xthread.cc
+index 71643901d..30477f281 100644
+--- a/src/xenia/kernel/xthread.cc
++++ b/src/xenia/kernel/xthread.cc
+@@ -439,7 +439,12 @@ X_STATUS XThread::Create() {
+     xe::Profiler::ThreadExit();
+ 
+     // Release the self-reference to the thread.
++#if !XE_PLATFORM_WIN32
++    // Xbox360PS5: never return to ThreadStartRoutine after freeing its Thread.
++    xe::threading::Thread::ExitWithCleanup(0, [this] { ReleaseHandle(); });
++#else
+     ReleaseHandle();
++#endif
+   });
+ 
+   if (!thread_) {
+@@ -511,10 +516,15 @@ X_STATUS XThread::Exit(int exit_code) {
+   xe::Profiler::ThreadExit();
+ 
+   running_ = false;
++#if !XE_PLATFORM_WIN32
++  // Xbox360PS5: native completion must precede dropping the last guest owner.
++  xe::threading::Thread::ExitWithCleanup(exit_code, [this] { ReleaseHandle(); });
++#else
+   ReleaseHandle();
+ 
+   // NOTE: this does not return!
+   xe::threading::Thread::Exit(exit_code);
++#endif
+   return X_STATUS_SUCCESS;
+ }
+ 
+@@ -531,8 +541,14 @@ X_STATUS XThread::Terminate(int exit_code) {
+ 
+   running_ = false;
+   if (XThread::IsInThread(this)) {
++#if !XE_PLATFORM_WIN32
++    current_xthread_tls_ = nullptr;
++    current_thread_ = nullptr;
++    xe::threading::Thread::ExitWithCleanup(exit_code, [this] { ReleaseHandle(); });
++#else
+     ReleaseHandle();
+     xe::threading::Thread::Exit(exit_code);
++#endif
+   } else {
+     thread_->Terminate(exit_code);
+     ReleaseHandle();
 diff --git a/src/xenia/memory.cc b/src/xenia/memory.cc
-index 706bd4809..0e1358561 100644
+index 706bd4809..3a576c1d9 100644
 --- a/src/xenia/memory.cc
 +++ b/src/xenia/memory.cc
-@@ -103,16 +103,46 @@ void CrashDump() {
+@@ -22,6 +22,9 @@
+ #include "xenia/base/threading.h"
+ 
+ #include "xenia/cpu/mmio_handler.h"
++#if XE_PLATFORM_PS5
++#include "xbox360ps5/gpu_diagnostics.hpp"
++#endif
+ 
+ // TODO(benvanik): move xbox.h out
+ #include "xenia/xbox.h"
+@@ -103,16 +106,46 @@ void CrashDump() {
    --in_crash_dump;
  }
  
@@ -2006,7 +3199,7 @@ index 706bd4809..0e1358561 100644
  }
  
  void RandomizeMemory(void* range_start, uint32_t size) {
-@@ -1129,13 +1159,12 @@ bool BaseHeap::AllocFixed(uint32_t base_address, uint32_t size,
+@@ -1129,13 +1162,12 @@ bool BaseHeap::AllocFixed(uint32_t base_address, uint32_t size,
    if (allocation_type == kMemoryAllocationReserve) {
      // Reserve is not needed, as we are mapped already.
    } else {
@@ -2023,7 +3216,7 @@ index 706bd4809..0e1358561 100644
        if (!result) {
          XELOGE("BaseHeap::AllocFixed failed to alloc range from host");
          return false;
-@@ -1144,9 +1173,6 @@ bool BaseHeap::AllocFixed(uint32_t base_address, uint32_t size,
+@@ -1144,9 +1176,6 @@ bool BaseHeap::AllocFixed(uint32_t base_address, uint32_t size,
        if (cvars::scribble_heap && protect & kMemoryProtectWrite) {
          RandomizeMemory(result, page_count * page_size_);
        }
@@ -2033,7 +3226,7 @@ index 706bd4809..0e1358561 100644
      }
    }
  
-@@ -1323,13 +1349,12 @@ bool BaseHeap::AllocRange(uint32_t low_address, uint32_t high_address,
+@@ -1323,13 +1352,12 @@ bool BaseHeap::AllocRange(uint32_t low_address, uint32_t high_address,
    if (allocation_type == kMemoryAllocationReserve) {
      // Reserve is not needed, as we are mapped already.
    } else {
@@ -2050,7 +3243,7 @@ index 706bd4809..0e1358561 100644
        if (!result) {
          XELOGE("BaseHeap::Alloc failed to alloc range from host");
          // Restore the free block since we failed.
-@@ -1340,9 +1365,6 @@ bool BaseHeap::AllocRange(uint32_t low_address, uint32_t high_address,
+@@ -1340,9 +1368,6 @@ bool BaseHeap::AllocRange(uint32_t low_address, uint32_t high_address,
        if (cvars::scribble_heap && (protect & kMemoryProtectWrite)) {
          RandomizeMemory(result, page_count << page_size_shift_);
        }
@@ -2060,6 +3253,52 @@ index 706bd4809..0e1358561 100644
      }
    }
  
+@@ -2086,6 +2111,7 @@ XE_NOINLINE void PhysicalHeap::EnableAccessCallbacksInner(
+     xe::memory::PageAccess protect_access) XE_RESTRICT {
+   uint8_t* protect_base = membase_ + heap_base_;
+   uint32_t protect_system_page_first = UINT32_MAX;
++  uint32_t protect_system_page_last = 0;
+ 
+   SystemPageFlagsBlock* XE_RESTRICT sys_page_flags = system_page_flags_.data();
+ 
+@@ -2155,11 +2181,27 @@ XE_NOINLINE void PhysicalHeap::EnableAccessCallbacksInner(
+       if (protect_system_page_first == UINT32_MAX) {
+         protect_system_page_first = i;
+       }
++      protect_system_page_last = i;
+     } else {
++#if XE_PLATFORM_PS5
++      // Bridge only pages already watched with the exact target protection.
++      // Keep genuinely inaccessible pages and stricter read watches as barriers.
++      const bool already_at_target =
++          current_page_access != xe::memory::PageAccess::kNoAccess &&
++          (protect_access == xe::memory::PageAccess::kNoAccess
++               ? (page_flags_block.notify_on_read & page_flags_bit) != 0
++               : (page_flags_block.notify_on_invalidation & page_flags_bit) != 0 &&
++                     (page_flags_block.notify_on_read & page_flags_bit) == 0);
++      if (protect_system_page_first != UINT32_MAX && already_at_target &&
++          xbox360ps5::gpu_diag::enabled.load(std::memory_order_relaxed)) {
++        continue;
++      }
++#endif
+       if (protect_system_page_first != UINT32_MAX) {
+         xe::memory::Protect(
+             protect_base + (protect_system_page_first << system_page_shift_),
+-            (i - protect_system_page_first) << system_page_shift_,
++            (protect_system_page_last + 1 - protect_system_page_first)
++                << system_page_shift_,
+             protect_access);
+         protect_system_page_first = UINT32_MAX;
+       }
+@@ -2169,7 +2211,7 @@ XE_NOINLINE void PhysicalHeap::EnableAccessCallbacksInner(
+   if (protect_system_page_first != UINT32_MAX) {
+     xe::memory::Protect(
+         protect_base + (protect_system_page_first << system_page_shift_),
+-        (system_page_last + 1 - protect_system_page_first)
++        (protect_system_page_last + 1 - protect_system_page_first)
+             << system_page_shift_,
+         protect_access);
+   }
 diff --git a/src/xenia/ui/imgui_drawer.cc b/src/xenia/ui/imgui_drawer.cc
 index d803160c7..9ff053484 100644
 --- a/src/xenia/ui/imgui_drawer.cc
@@ -2125,6 +3364,54 @@ index a37bcd8a3..9208f456f 100644
    };
  
    Surface(const Surface& surface) = delete;
+diff --git a/src/xenia/ui/vulkan/vulkan_device.h b/src/xenia/ui/vulkan/vulkan_device.h
+index 3d933b176..4cc0993d2 100644
+--- a/src/xenia/ui/vulkan/vulkan_device.h
++++ b/src/xenia/ui/vulkan/vulkan_device.h
+@@ -16,6 +16,12 @@
+ #include <vector>
+ 
+ #include "xenia/ui/vulkan/vulkan_instance.h"
++#if XE_PLATFORM_PS5
++#include "xbox360ps5/gpu_diagnostics.hpp"
++#define PS5X360_VK_CALL(kind, fn, ...) xbox360ps5::gpu_diag::Call(xbox360ps5::gpu_diag::Kind::kind, fn, __VA_ARGS__)
++#else
++#define PS5X360_VK_CALL(kind, fn, ...) fn(__VA_ARGS__)
++#endif
+ 
+ namespace xe {
+ namespace ui {
+@@ -313,7 +319,7 @@ class VulkanDevice {
+                                const VkSubmitInfo* const submits,
+                                const VkFence fence) {
+     const VkResult submit_result =
+-        functions().vkQueueSubmit(queue, submit_count, submits, fence);
++        PS5X360_VK_CALL(submit, functions().vkQueueSubmit, queue, submit_count, submits, fence);
+     if (submit_result == VK_ERROR_DEVICE_LOST) {
+       SetLost();
+     }
+diff --git a/src/xenia/ui/vulkan/vulkan_gpu_completion_timeline.cc b/src/xenia/ui/vulkan/vulkan_gpu_completion_timeline.cc
+index a7d11c333..820a75f55 100644
+--- a/src/xenia/ui/vulkan/vulkan_gpu_completion_timeline.cc
++++ b/src/xenia/ui/vulkan/vulkan_gpu_completion_timeline.cc
+@@ -25,7 +25,7 @@ VulkanGPUCompletionTimeline::~VulkanGPUCompletionTimeline() {
+ #endif
+ 
+   if (!pending_submission_fences_.empty()) {
+-    if (vulkan_device_->functions().vkWaitForFences(
++    if (PS5X360_VK_CALL(fence, vulkan_device_->functions().vkWaitForFences, 
+             vulkan_device_->device(), 1,
+             &pending_submission_fences_.back().second, VK_TRUE,
+             UINT64_MAX) == VK_ERROR_DEVICE_LOST) {
+@@ -153,7 +153,7 @@ void VulkanGPUCompletionTimeline::AwaitSubmissionImpl(
+   }
+   if (submission_end_iterator != pending_submission_fences_.cbegin()) {
+     const VkResult fence_wait_result =
+-        vulkan_device_->functions().vkWaitForFences(
++        PS5X360_VK_CALL(fence, vulkan_device_->functions().vkWaitForFences, 
+             vulkan_device_->device(), 1,
+             &std::prev(submission_end_iterator)->second, VK_TRUE, UINT64_MAX);
+     if (fence_wait_result != VK_SUCCESS) {
 diff --git a/src/xenia/ui/vulkan/vulkan_instance.cc b/src/xenia/ui/vulkan/vulkan_instance.cc
 index 7584e1e1f..90dd3571b 100644
 --- a/src/xenia/ui/vulkan/vulkan_instance.cc
@@ -2190,7 +3477,7 @@ index 1468495f5..5b7618e7e 100644
      bool ext_KHR_xcb_surface = false;  // #6
  #endif
 diff --git a/src/xenia/ui/vulkan/vulkan_presenter.cc b/src/xenia/ui/vulkan/vulkan_presenter.cc
-index 68b97e788..cfdfab0aa 100644
+index 68b97e788..24a3697b9 100644
 --- a/src/xenia/ui/vulkan/vulkan_presenter.cc
 +++ b/src/xenia/ui/vulkan/vulkan_presenter.cc
 @@ -17,6 +17,10 @@
@@ -2243,6 +3530,33 @@ index 68b97e788..cfdfab0aa 100644
  #if XE_PLATFORM_ANDROID
        case Surface::kTypeIndex_AndroidNativeWindow: {
          auto& android_native_window_surface =
+@@ -1283,7 +1312,7 @@ VkSwapchainKHR VulkanPresenter::PaintContext::PrepareForSwapchainRetirement() {
+     if (present_queue_family != UINT32_MAX) {
+       const VulkanDevice::Queue::Acquisition queue_acquisition =
+           vulkan_device->AcquireQueue(present_queue_family, 0);
+-      vulkan_device->functions().vkQueueWaitIdle(queue_acquisition.queue());
++      PS5X360_VK_CALL(idle, vulkan_device->functions().vkQueueWaitIdle, queue_acquisition.queue());
+     }
+   }
+   const VulkanDevice::Functions& dfn = vulkan_device->functions();
+@@ -1444,7 +1473,7 @@ Presenter::PaintResult VulkanPresenter::PaintAndPresentImpl(
+   if (cvars::vulkan_semaphore_reuse_workaround) {
+     const VulkanDevice::Queue::Acquisition queue_acquisition =
+         vulkan_device_->AcquireQueue(paint_context_.present_queue_family, 0);
+-    dfn.vkQueueWaitIdle(queue_acquisition.queue());
++    PS5X360_VK_CALL(idle, dfn.vkQueueWaitIdle, queue_acquisition.queue());
+   }
+ 
+   uint32_t swapchain_image_index;
+@@ -2116,7 +2145,7 @@ Presenter::PaintResult VulkanPresenter::PaintAndPresentImpl(
+     const VulkanDevice::Queue::Acquisition queue_acquisition =
+         vulkan_device_->AcquireQueue(paint_context_.present_queue_family, 0);
+     present_result =
+-        dfn.vkQueuePresentKHR(queue_acquisition.queue(), &present_info);
++        PS5X360_VK_CALL(present, dfn.vkQueuePresentKHR, queue_acquisition.queue(), &present_info);
+   }
+   switch (present_result) {
+     case VK_SUCCESS:
 diff --git a/src/xenia/vfs/devices/disc_image_device.cc b/src/xenia/vfs/devices/disc_image_device.cc
 index 123d5a262..f0b9bce4c 100644
 --- a/src/xenia/vfs/devices/disc_image_device.cc

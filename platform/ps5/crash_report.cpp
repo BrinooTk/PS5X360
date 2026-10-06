@@ -3,6 +3,7 @@
 // uses only system calls and static buffers. Code addresses are printed as
 // eboot+offset, which is the address in the build's llvm-pie.elf.
 #include "xbox360ps5/crash_report.hpp"
+#include <cstring>
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
@@ -15,6 +16,7 @@
 #include <sys/mman.h>
 #include <unistd.h>
 extern "C" {
+int sceKernelGetCurrentCpu(void);
 int sceKernelDebugOutText(int, const char*);
 int sceKernelVirtualQuery(const void*, int, void*, size_t);
 int64_t sceKernelGetDirectMemorySize();
@@ -139,13 +141,25 @@ void Probe(int, siginfo_t*, void* context) {
   const uint64_t* m = static_cast<const uint64_t*>(context) + 8;
   if (ThreadSample* out = sample_out.load()) {
     out->rip = m[20];
-    out->caller = 0;
+    out->caller = out->caller2 = out->slot = 0;
+    out->cpu = sceKernelGetCurrentCpu();
     out->in_title = InCode(m[20]);
     if (!out->in_title && !(m[20] >= 0x40000000 && m[20] < 0x50000000)) {
       for (uint64_t at = m[23] & ~uint64_t(7), end = at + 0x300; at < end; at += 8) {
         uint64_t value;
         if (!Copy(at, &value, sizeof(value))) break;
-        if (InCode(value)) { out->caller = value - CodeStart(); break; }
+        if (!InCode(value)) continue;
+        if (!out->caller) {
+          out->caller = value - CodeStart();
+          // The call that returns here, when it is `call *disp32(%rip)`.
+          uint8_t code[6];
+          if (value - CodeStart() >= 6 && Copy(value - 6, code, sizeof(code)) && code[0] == 0xFF && code[1] == 0x15) {
+            int32_t displacement;
+            std::memcpy(&displacement, code + 2, sizeof(displacement));
+            out->slot = value + int64_t(displacement) - CodeStart();
+          }
+        }
+        else if (value - CodeStart() != out->caller) { out->caller2 = value - CodeStart(); break; }
       }
     }
     if (out->in_title) out->rip -= CodeStart();

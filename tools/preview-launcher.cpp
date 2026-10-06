@@ -137,6 +137,12 @@ int main(int argc,char** argv) {
       puts("PASS: VSync off persists, restart requested, live flag unchanged, reverting cancels restart");
       launcher.Press(xbox360ps5::Key::square);
       for (int i=0;i<7;++i) launcher.Press(xbox360ps5::Key::down);
+    } else if (argc == 3 && std::string(argv[2]) == "saves") {
+      fs::create_directories("/data/homebrew/PPSA50011/saves/0009000000000001/454108CF");
+      launcher.SetSaveRoot("/data/homebrew/PPSA50011/saves");
+      launcher.Press(xbox360ps5::Key::square);
+      for (int i=0;i<11;++i) launcher.Press(xbox360ps5::Key::down);
+      launcher.Press(xbox360ps5::Key::cross);
     } else if (argc == 3) {
       launcher.Press(xbox360ps5::Key::square);
       if (std::string(argv[2]) != "settings") {

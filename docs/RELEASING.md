@@ -1,31 +1,26 @@
 # Release versioning
 
-The current version lives in the root `VERSION` file. Release tags are `v<version>`
-and installable archives are named `PS5X360-v<version>.zip`.
+The current version lives in `VERSION`; tags use `v<version>`. v0.5.6 is a regular
+GitHub release without an experimental suffix. Version numbers do not imply
+complete compatibility or guaranteed frame rates.
 
-- `0.1.0-preview`: first public preview, still experimental.
-- Patch increments, such as `0.1.1-preview`: fixes and small refinements.
-- Minor increments, such as `0.2.0-preview`: substantial features or compatibility changes.
-- `1.0.0`: reserved for a future release that is deliberately declared stable.
+## Publish a release
 
-Preview versions are marked as GitHub prereleases. Version numbers do not imply
-that every Xbox 360 game is compatible.
+1. Preserve the previous executable, matching symbols and package.
+2. Update `VERSION`, English release notes and the changelog. Export Canary
+   modifications with `python tools/prepare_canary.py --export`.
+3. Build with `tools/build-canary-game.sh`, with experimental diagnostics OFF and
+   no version override. Check the compiled version marker and native image.
+4. Run relevant host regressions. Distinguish them from console gameplay results.
+5. Package corresponding AutoLog source with `tools/package-native-autolog.py`,
+   then run `tools/package-release.py`. It creates `dist/PPSA50011.zip`, containing
+   only the title folder, documentation and license/source notices, without games.
+6. Preserve matching `eboot.bin`, `eboot.elf` and `llvm-pie.elf` under
+   `build/symbols/<version>`. Review staged files for private data before pushing.
+7. Publish a release from the matching source commit with two user downloads:
+   `PPSA50011.zip` and the separately versioned AutoLog ELF. Keep the collector's
+   complete corresponding source archive in `PPSA50011/licenses/`.
+8. Verify the published assets, hashes and release status. Update the Desktop copy.
 
-## Publish the next version
-
-1. Update `VERSION` and add English notes to `docs/releases/v<version>.md`.
-2. Rebuild the native application and record what was actually verified on host and PS5.
-3. Run `python tools/package-release.py`. It reads `VERSION`, adds release metadata
-   to the ZIP and writes the matching `.sha256` file.
-4. Commit the corresponding source and documentation, then push `main`.
-5. Create an annotated `v<version>` tag on that commit and push the tag.
-6. Create a GitHub release for that tag, attach its versioned ZIP and checksum,
-   and use that version's notes. Keep preview releases marked as prereleases.
-7. Download the uploaded files and compare their hashes with the local artifacts.
-
-Keep older tags and published assets intact so users can return to earlier builds.
-Changes after a release belong in a new version; do not silently replace its executable.
-
-The original `preview-2026.10.03` tag is retained as a historical source marker.
-Its original release remains available as a legacy preview. Versioned releases
-start with `v0.1.0-preview`.
+Publishing requires explicit user authorization. Do not post Discord messages,
+reply to issues or close reports merely because a release was published.

@@ -12,7 +12,7 @@ cd "$root"
 reference="$root/.deps/references/PS5_Vulkan"
 sdk="$reference/.deps/native/ps5-payload-sdk"
 build="$root/build/canary-ps5"
-work="$root/build/canary-game"
+work="${XBOX360PS5_OUTPUT_DIR:-$root/build/canary-game}"
 mkdir -p "$work/obj" "$work/host" build/radv-stubs
 
 # Import metadata for the console's own graphics modules (never shipped).
@@ -23,9 +23,15 @@ for pair in 'libSceAgc:agc_canary_link_stub.c' 'libSceAgcDriver:agc_driver_canar
   "$sdk/bin/prospero-lld" --shared -soname "$library.prx" -o "build/radv-stubs/$library.so" "build/radv-stubs/$library.o"
 done
 
-if [[ ! -f "$build/build.ninja" ]]; then
+# Explicit defaults keep an experimental configure from leaking into the next
+# normal build. Separate output directories preserve release executables.
+if [[ ! -f "$build/build.ninja" ]] || \
+   ! grep -Fqx "XBOX360PS5_EXPERIMENTAL_DIAGNOSTICS:BOOL=${XBOX360PS5_EXPERIMENTAL_DIAGNOSTICS:-OFF}" "$build/CMakeCache.txt" || \
+   ! grep -Fqx "XBOX360PS5_VERSION_OVERRIDE:STRING=${XBOX360PS5_VERSION_OVERRIDE:-}" "$build/CMakeCache.txt"; then
   cmake -S canary -B "$build" -G Ninja -DCMAKE_BUILD_TYPE=Release \
-    -DCMAKE_TOOLCHAIN_FILE="$PS5_PAYLOAD_SDK/toolchain/prospero.cmake"
+    -DCMAKE_TOOLCHAIN_FILE="$PS5_PAYLOAD_SDK/toolchain/prospero.cmake" \
+    -DXBOX360PS5_EXPERIMENTAL_DIAGNOSTICS="${XBOX360PS5_EXPERIMENTAL_DIAGNOSTICS:-OFF}" \
+    -DXBOX360PS5_VERSION_OVERRIDE="${XBOX360PS5_VERSION_OVERRIDE:-}"
 fi
 # Canary's xenia-build.py normally writes this.
 commit=$(git -C .deps/xenia-canary rev-parse HEAD)

@@ -11,6 +11,14 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(XBOX360PS5_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/..")
 set(XENIA_CANARY "${XBOX360PS5_ROOT}/.deps/xenia-canary")
+set(XBOX360PS5_VERSION_OVERRIDE "" CACHE STRING "Version label for a separate experimental build")
+option(XBOX360PS5_EXPERIMENTAL_DIAGNOSTICS "Enable experimental GPU diagnostics and cache guards" OFF)
+if(XBOX360PS5_VERSION_OVERRIDE)
+  set(XBOX360PS5_VERSION "${XBOX360PS5_VERSION_OVERRIDE}")
+else()
+  file(STRINGS "${XBOX360PS5_ROOT}/VERSION" XBOX360PS5_VERSION LIMIT_COUNT 1)
+endif()
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${XBOX360PS5_ROOT}/VERSION")
 
 if(CMAKE_CROSSCOMPILING)
   # Headers Linux has and the console's FreeBSD-derived SDK does not.
@@ -59,7 +67,8 @@ if(NOT CMAKE_CROSSCOMPILING)
     "${XBOX360PS5_ROOT}/include" "${XENIA_CANARY}" "${XENIA_CANARY}/src"
     "${XENIA_CANARY}/third_party" "${XENIA_CANARY}/third_party/fmt/include"
     "${XENIA_CANARY}/third_party/Vulkan-Headers/include")
-  target_compile_definitions(xbox360ps5-launcher-preview PRIVATE XBOX360PS5_CANARY=1)
+  target_compile_definitions(xbox360ps5-launcher-preview PRIVATE XBOX360PS5_CANARY=1
+    XBOX360PS5_VERSION="${XBOX360PS5_VERSION}")
   target_compile_options(xbox360ps5-launcher-preview PRIVATE -mavx)
   target_link_libraries(xbox360ps5-launcher-preview PRIVATE
     -Wl,--start-group ${XBOX360PS5_CANARY_LIBRARIES} -Wl,--end-group
@@ -83,6 +92,7 @@ if(CMAKE_CROSSCOMPILING)
     "${XBOX360PS5_ROOT}/platform/ps5/ui_sounds.cpp"
     "${XBOX360PS5_ROOT}/platform/ps5/canary_system.cpp"
     "${XBOX360PS5_ROOT}/platform/ps5/crash_report.cpp"
+    "${XBOX360PS5_ROOT}/platform/ps5/thread_place.cpp"
     "${XBOX360PS5_ROOT}/platform/ps5/net_log.cpp"
     "${XBOX360PS5_ROOT}/platform/ps5/libc_bits.c"
     "${XBOX360PS5_ROOT}/platform/ps5/native_memory_calls.cpp"
@@ -92,9 +102,10 @@ if(CMAKE_CROSSCOMPILING)
     "${XBOX360PS5_ROOT}/include" "${XENIA_CANARY}" "${XENIA_CANARY}/src"
     "${XENIA_CANARY}/third_party" "${XENIA_CANARY}/third_party/fmt/include"
     "${XENIA_CANARY}/third_party/Vulkan-Headers/include")
-  file(STRINGS "${XBOX360PS5_ROOT}/VERSION" XBOX360PS5_VERSION LIMIT_COUNT 1)
-  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${XBOX360PS5_ROOT}/VERSION")
   target_compile_definitions(xbox360ps5-title-objects PRIVATE XBOX360PS5_CANARY=1 NDEBUG
     XBOX360PS5_VERSION="${XBOX360PS5_VERSION}")
+  if(XBOX360PS5_EXPERIMENTAL_DIAGNOSTICS)
+    target_compile_definitions(xbox360ps5-title-objects PRIVATE XBOX360PS5_EXPERIMENTAL_DIAGNOSTICS=1)
+  endif()
   target_compile_options(xbox360ps5-title-objects PRIVATE -O2 -mavx)
 endif()

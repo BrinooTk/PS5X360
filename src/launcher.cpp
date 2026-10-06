@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include "xbox360ps5/i18n.hpp"
+#include "xbox360ps5/build_version.hpp"
 #include "xbox360ps5/cover_geometry.hpp"
 #include "xbox360ps5/launcher.hpp"
 #include "xenia/base/cvar.h"
@@ -507,7 +508,7 @@ void Launcher::Press(Key key) {
       break;
     }
     case Mode::settings: {
-      const int rows = 12;
+      const int rows = 13;
       if (key == Key::up) settings_row_ = (settings_row_ + rows - 1) % rows;
       if (key == Key::down) settings_row_ = (settings_row_ + 1) % rows;
       if (key == Key::left || key == Key::right || key == Key::cross) {
@@ -530,7 +531,8 @@ void Launcher::Press(Key key) {
         else if (settings_row_ == 8 && key == Key::cross) StartCoverDownload();
         else if (settings_row_ == 9 && key == Key::cross) { mode_ = Mode::paths; path_row_ = 0; path_error_.clear(); }
         else if (settings_row_ == 10 && key == Key::cross) Scan();
-        else if (settings_row_ == 11 && key == Key::cross) { settings_.Save(); restart_ = true; }
+        else if (settings_row_ == 11 && key == Key::cross) { RefreshSaves(); mode_ = Mode::saves; }
+        else if (settings_row_ == 12 && key == Key::cross) { settings_.Save(); restart_ = true; }
         if (settings_row_ >= 1 && settings_row_ < 8) settings_changed_ = true;
       }
       if (key == Key::circle || key == Key::square) {
@@ -539,6 +541,13 @@ void Launcher::Press(Key key) {
         if (restart_needed_) restart_ = true;
         mode_ = Mode::shelf;
       }
+      break;
+    }
+    case Mode::saves: {
+      if (key == Key::up) save_row_ = std::max(0, save_row_ - 1);
+      if (key == Key::down) save_row_ = std::min(std::max(0, int(save_titles_.size()) - 1), save_row_ + 1);
+      if (key == Key::square) RefreshSaves();
+      if (key == Key::circle) mode_ = Mode::settings;
       break;
     }
     case Mode::paths: {
@@ -778,6 +787,10 @@ void Launcher::Draw(ImGuiIO& io) {
                ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoNav |
                ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoBringToFrontOnFocus);
   Canvas c{ImGui::GetWindowDrawList(), io.DisplaySize.y / 1080.0f, 1.0f, dt, &fonts_};
+  const auto draw_version = [&c] {
+    c.alpha = 1.0f;
+    c.Text(kBuildVersionLabel, 1824, 1040, 20, kMuted, 1.0f, 2);
+  };
   c.list->AddRectFilledMultiColor(ImVec2(0, 0), io.DisplaySize, c.Color(0x0f1b2e), c.Color(0x0b1322),
                                   c.Color(kInk), c.Color(0x06070a));
   if (!loading_.empty()) {
@@ -789,6 +802,7 @@ void Launcher::Draw(ImGuiIO& io) {
     c.Fill(660 + 600 * std::max(0.0f, phase - 0.35f) / 0.65f * (phase > 0.35f ? 1.0f : 0.0f), 620,
            600 * std::min(phase / 0.65f, 1.0f) - 600 * std::max(0.0f, phase - 0.35f) / 0.65f * (phase > 0.35f ? 1.0f : 0.0f),
            3, kAccent, 1.0f, 2);
+    draw_version();
     ImGui::End();
     return;
   }
@@ -799,12 +813,14 @@ void Launcher::Draw(ImGuiIO& io) {
     c.alpha = 1.0f;
     c.Fill(0, 0, 1920, 1080, 0x000000, 0.55f * sheet_);
     if (mode_ == Mode::settings) DrawSettingsSheet(c);
+    else if (mode_ == Mode::saves) DrawSavesSheet(c);
     else if (mode_ == Mode::paths) DrawPaths(c);
     else if (mode_ == Mode::folders) DrawFolders(c);
     else if (mode_ == Mode::profiles) DrawProfilesSheet(c);
     else if (mode_ == Mode::name) DrawNameSheet(c);
     else DrawGameSheet(c);
   }
+  draw_version();
   ImGui::End();
 }
 
@@ -1130,9 +1146,10 @@ void Launcher::DrawSettingsSheet(Canvas& c) {
       {Tr("Baixar capas"), covers_.Busy() ? Tr("Baixando...") : "", Tr("Baixa do XboxUnity (o mesmo serviço do Aurora) as capas dos jogos que ainda não têm uma. Precisa de internet no PS5. Uma imagem cover.jpg na pasta do jogo sempre tem prioridade.")},
       {Tr("Pastas de jogos"), std::to_string(settings_.game_paths.size()), Tr("Adicione várias pastas, inclusive em dispositivos externos. Pastas desconectadas continuam salvas. Apenas locais acessíveis ao aplicativo podem ser lidos.")},
       {Tr("Atualizar lista de jogos"), "", Tr("Procura de novo os jogos, as capas e os patches nas pastas.")},
+      {Tr("Saves"), "", Tr("Veja os dados por jogo e o local de armazenamento. Perfis e conquistas são preservados junto com os saves.")},
       {Tr("Reiniciar o emulador"), "", Tr("Fecha e abre o emulador de novo.")}};
-  for (int n = 0; n < 12; ++n) {
-    const float y = 122 + n * 45.0f;
+  for (int n = 0; n < 13; ++n) {
+    const float y = 122 + n * 42.0f;
     const bool focused = n == settings_row_;
     c.Fill(x + 40, y, 780, 40, focused ? kSurfaceHigh : kSurface, focused ? 1.0f : 0.6f, 10);
     if (focused) c.Edge(x + 40, y, 780, 40, kAccent, 0.9f, 10, 2.0f);
@@ -1152,6 +1169,45 @@ void Launcher::DrawSettingsSheet(Canvas& c) {
   c.Hint('v', Tr("Mover"), hint, 1004);
 }
 
+void Launcher::RefreshSaves() {
+  save_titles_.clear(); save_row_ = 0;
+  std::error_code error;
+  for (fs::directory_iterator profiles(save_root_, error), end; !error && profiles != end; profiles.increment(error)) {
+    std::error_code entry_error;
+    if (!profiles->is_directory(entry_error) || profiles->is_symlink(entry_error)) continue;
+    const auto profile = profiles->path().filename().string();
+    if (profile.size() != 16) continue;
+    for (fs::directory_iterator titles(profiles->path(), entry_error), last; !entry_error && titles != last; titles.increment(entry_error)) {
+      std::error_code type_error;
+      if (!titles->is_directory(type_error) || titles->is_symlink(type_error)) continue;
+      auto id = titles->path().filename().string();
+      if (id.size() != 8 || id == "FFFE07D1") continue; // Dashboard profile package.
+      std::transform(id.begin(), id.end(), id.begin(), [](unsigned char ch) { return char(std::toupper(ch)); });
+      std::string name = id;
+      for (const auto& game : games_) if (game.title_id == id) { name = game.name; break; }
+      save_titles_.push_back(name + "  [" + id + "]  / " + profile);
+    }
+  }
+  std::sort(save_titles_.begin(), save_titles_.end());
+  if (error) save_titles_.push_back(std::string(Tr("Não foi possível ler os saves.")) + " " + error.message());
+}
+void Launcher::DrawSavesSheet(Canvas& c) {
+  const float x = 1920 - 860 * sheet_;
+  c.Fill(x, 0, 860, 1080, kSheet, 0.98f);
+  c.Fill(x, 0, 3, 1080, kAccent, 0.9f);
+  c.Text(Tr("Saves"), x + 56, 64, 36, kText);
+  c.Wrapped(save_root_.string(), x + 56, 125, 22, kAccent, 750);
+  c.Wrapped(Tr("Cada perfil tem seus próprios dados. Para fazer um backup, copie toda a pasta saves com o emulador fechado, incluindo os perfis e conquistas."), x + 56, 200, 22, kBody, 750);
+  if (save_titles_.empty()) c.Text(Tr("Nenhum dado de jogo encontrado."), x + 56, 340, 24, kMuted);
+  const int first = std::max(0, save_row_ - 8);
+  for (int n = first; n < std::min(int(save_titles_.size()), first + 9); ++n) {
+    const float y = 330 + (n - first) * 60;
+    c.Fill(x + 40, y, 780, 54, n == save_row_ ? kSurfaceHigh : kSurface, 0.9f, 10);
+    c.Text(save_titles_[n], x + 56, y + 14, 20, n == save_row_ ? kAccent : kBody, 1, 0, 744);
+  }
+  float hint = c.Hint('o', Tr("Voltar"), x + 56, 1004);
+  c.Hint('s', Tr("Atualizar lista"), hint, 1004);
+}
 void Launcher::RefreshFolders() {
   browser_folders_.clear(); folder_row_ = 0; path_error_.clear();
   std::error_code error;
