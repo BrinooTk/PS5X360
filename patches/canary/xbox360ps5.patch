@@ -933,7 +933,6 @@ index a0cae20e2..8bf4ebbf6 100644
    // Returns the ID of the thread.
    virtual uint32_t system_id() const = 0;
 diff --git a/src/xenia/base/threading_posix.cc b/src/xenia/base/threading_posix.cc
-index 9982f67cf..dc36d9241 100644
 --- a/src/xenia/base/threading_posix.cc
 +++ b/src/xenia/base/threading_posix.cc
 @@ -34,14 +34,33 @@
@@ -972,7 +971,7 @@ index 9982f67cf..dc36d9241 100644
  #endif
  #else
  #define XE_HAS_SIGEV_THREAD_ID 0
-@@ -140,7 +159,7 @@ void EnableAffinityConfiguration() {}
+@@ -140,7 +159,7 @@
  // uint64_t ticks() { return mach_absolute_time(); }
  
  uint32_t current_thread_system_id() {
@@ -981,7 +980,7 @@ index 9982f67cf..dc36d9241 100644
  }
  
  void MaybeYield() {
-@@ -271,12 +290,22 @@ class PosixConditionBase {
+@@ -271,12 +290,22 @@
      if (predicate()) {
        executed = true;
      } else {
@@ -1004,7 +1003,7 @@ index 9982f67cf..dc36d9241 100644
      }
      if (executed) {
        post_execution();
-@@ -304,7 +333,28 @@ class PosixConditionBase {
+@@ -304,7 +333,28 @@
                          ? std::chrono::steady_clock::time_point::max()
                          : start_time + timeout;
  
@@ -1033,17 +1032,17 @@ index 9982f67cf..dc36d9241 100644
        // Check all handles to see if any/all are signaled
        // Use try_lock to avoid deadlocks from lock ordering issues
        size_t first_signaled = std::numeric_limits<size_t>::max();
-@@ -376,23 +426,37 @@ class PosixConditionBase {
+@@ -376,23 +426,37 @@
          } else {
            handles[first_signaled]->post_execution();
          }
 +        unregister(true);
          return std::make_pair(WaitResult::kSuccess, first_signaled);
        }
- 
+-
 -      // Release locks before sleeping
 -      locks.clear();
--
+ 
        // Check timeout
        auto now = std::chrono::steady_clock::now();
        if (now >= end_time) {
@@ -1077,7 +1076,7 @@ index 9982f67cf..dc36d9241 100644
      }
    }
  
-@@ -403,6 +467,28 @@ class PosixConditionBase {
+@@ -403,6 +467,28 @@
   protected:
    [[nodiscard]] inline virtual bool signaled() const = 0;
    inline virtual void post_execution() = 0;
@@ -1106,7 +1105,7 @@ index 9982f67cf..dc36d9241 100644
    std::condition_variable cond_;
    std::mutex mutex_;
  };
-@@ -422,24 +508,46 @@ class PosixCondition<Event> : public PosixConditionBase {
+@@ -422,24 +508,46 @@
    ~PosixCondition() override = default;
  
    bool Signal() override {
@@ -1141,9 +1140,11 @@ index 9982f67cf..dc36d9241 100644
    void post_execution() override {
      if (!manual_reset_) {
        signal_ = false;
+-    }
+-  }
 +      reserved_ = false;
-     }
-   }
++    }
++  }
 +  void begin_wait() override { ++waiters_; }
 +  void end_wait() override {
 +    // Nobody left of those the signal was kept for: anyone may take it.
@@ -1157,7 +1158,7 @@ index 9982f67cf..dc36d9241 100644
    bool signal_;
    const bool manual_reset_;
  };
-@@ -463,6 +571,7 @@ class PosixCondition<Semaphore> final : public PosixConditionBase {
+@@ -463,6 +571,7 @@
      }
      count_ += release_count;
      cond_.notify_all();
@@ -1165,7 +1166,7 @@ index 9982f67cf..dc36d9241 100644
      return true;
    }
  
-@@ -471,6 +580,7 @@ class PosixCondition<Semaphore> final : public PosixConditionBase {
+@@ -471,6 +580,7 @@
    void post_execution() override {
      count_--;
      cond_.notify_all();
@@ -1173,7 +1174,7 @@ index 9982f67cf..dc36d9241 100644
    }
    uint32_t count_;
    const uint32_t maximum_count_;
-@@ -495,6 +605,7 @@ class PosixCondition<Mutant> final : public PosixConditionBase {
+@@ -495,6 +605,7 @@
        // Free to be acquired by another thread
        if (count_ == 0) {
          cond_.notify_all();
@@ -1181,7 +1182,7 @@ index 9982f67cf..dc36d9241 100644
        }
        return true;
      }
-@@ -529,6 +640,7 @@ class PosixCondition<Timer> final : public PosixConditionBase {
+@@ -529,6 +640,7 @@
      std::lock_guard lock(mutex_);
      signal_ = true;
      cond_.notify_all();
@@ -1189,7 +1190,7 @@ index 9982f67cf..dc36d9241 100644
      return true;
    }
  
-@@ -629,7 +741,14 @@ class PosixCondition<Thread> final : public PosixConditionBase {
+@@ -629,7 +741,14 @@
      if (pthread_attr_init(&attr) != 0) {
        return false;
      }
@@ -1204,7 +1205,7 @@ index 9982f67cf..dc36d9241 100644
        pthread_attr_destroy(&attr);
        return false;
      }
-@@ -657,7 +776,7 @@ class PosixCondition<Thread> final : public PosixConditionBase {
+@@ -657,7 +776,7 @@
    /// Thread::GetCurrentThread() on the main thread
    explicit PosixCondition(pthread_t thread)
        : thread_(thread),
@@ -1213,7 +1214,7 @@ index 9982f67cf..dc36d9241 100644
          signaled_(false),
          exit_code_(0),
          state_(State::kRunning),
-@@ -742,7 +861,11 @@ class PosixCondition<Thread> final : public PosixConditionBase {
+@@ -742,7 +861,11 @@
    }
  #endif
  
@@ -1225,7 +1226,7 @@ index 9982f67cf..dc36d9241 100644
  
    uint64_t affinity_mask() const {
      WaitStarted();
-@@ -770,6 +893,14 @@ class PosixCondition<Thread> final : public PosixConditionBase {
+@@ -770,6 +893,14 @@
    }
  
    void set_affinity_mask(uint64_t mask) const {
@@ -1240,7 +1241,7 @@ index 9982f67cf..dc36d9241 100644
      WaitStarted();
      cpu_set_t cpu_set;
      CPU_ZERO(&cpu_set);
-@@ -850,6 +981,10 @@ class PosixCondition<Thread> final : public PosixConditionBase {
+@@ -850,6 +981,10 @@
  #if XE_PLATFORM_ANDROID
      sigqueue(pthread_gettid_np(thread_),
               GetSystemSignal(SignalType::kThreadUserCallback), value);
@@ -1251,7 +1252,7 @@ index 9982f67cf..dc36d9241 100644
  #else
      pthread_sigqueue(thread_, GetSystemSignal(SignalType::kThreadUserCallback),
                       value);
-@@ -929,7 +1064,7 @@ class PosixCondition<Thread> final : public PosixConditionBase {
+@@ -929,7 +1064,7 @@
      return result == 0;
    }
  
@@ -1260,7 +1261,7 @@ index 9982f67cf..dc36d9241 100644
      bool is_current_thread = pthread_self() == thread_;
      {
        std::unique_lock lock(state_mutex_);
-@@ -941,6 +1076,7 @@ class PosixCondition<Thread> final : public PosixConditionBase {
+@@ -941,6 +1076,7 @@
            // power instead.
            XELOGW("PosixThread::Terminate: thread was already finished");
            lock.unlock();
@@ -1268,7 +1269,7 @@ index 9982f67cf..dc36d9241 100644
            pthread_exit(reinterpret_cast<void*>(exit_code));
          }
          return;
-@@ -954,8 +1090,11 @@ class PosixCondition<Thread> final : public PosixConditionBase {
+@@ -954,8 +1090,11 @@
        exit_code_ = exit_code;
        signaled_ = true;
        cond_.notify_all();
@@ -1280,7 +1281,7 @@ index 9982f67cf..dc36d9241 100644
        pthread_exit(reinterpret_cast<void*>(exit_code));
      }
  #ifdef XE_PLATFORM_ANDROID
-@@ -1322,13 +1461,33 @@ class PosixThread final : public PosixConditionHandle<Thread> {
+@@ -1322,13 +1461,33 @@
    }
  
    void Terminate(int exit_code) override { handle_.Terminate(exit_code); }
@@ -1314,7 +1315,7 @@ index 9982f67cf..dc36d9241 100644
  #if !XE_PLATFORM_ANDROID
    if (pthread_setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS, nullptr) != 0) {
      assert_always();
-@@ -1346,7 +1505,7 @@ void* PosixCondition<Thread>::ThreadStartRoutine(void* parameter) {
+@@ -1346,9 +1505,13 @@
    delete start_data;
  
    current_thread_ = thread;
@@ -1322,8 +1323,22 @@ index 9982f67cf..dc36d9241 100644
 +  thread->handle_.tid_ = static_cast<pid_t>(XE_GETTID());
    {
      std::unique_lock lock(thread->handle_.state_mutex_);
++    // Publish the initial count together with the state. A caller may act as
++    // soon as WaitStarted sees that state; resetting the count afterwards
++    // would lose a suspension or undo the first resume.
++    thread->handle_.suspend_count_ = create_suspended ? 1 : 0;
      thread->handle_.state_ =
-@@ -1373,6 +1532,7 @@ void* PosixCondition<Thread>::ThreadStartRoutine(void* parameter) {
+         create_suspended ? State::kSuspended : State::kRunning;
+     thread->handle_.state_signal_.notify_all();
+@@ -1356,7 +1519,6 @@
+ 
+   if (create_suspended) {
+     std::unique_lock lock(thread->handle_.state_mutex_);
+-    thread->handle_.suspend_count_ = 1;
+     thread->handle_.state_signal_.wait(
+         lock, [thread] { return thread->handle_.suspend_count_ == 0; });
+   }
+@@ -1373,6 +1535,7 @@
      thread->handle_.exit_code_ = 0;
      thread->handle_.signaled_ = true;
      thread->handle_.cond_.notify_all();
@@ -1331,10 +1346,13 @@ index 9982f67cf..dc36d9241 100644
    }
  
    current_thread_ = nullptr;
-@@ -1423,6 +1583,19 @@ void Thread::Exit(int exit_code) {
-   assert_always();
- }
- 
+@@ -1420,6 +1583,19 @@
+     pthread_exit(reinterpret_cast<void*>(exit_code));
+   }
+   // Function must not return
++  assert_always();
++}
++
 +// Xbox360PS5: XThread owns its native Thread. Releasing the guest self-reference
 +// before Terminate locks the native mutexes can free those mutexes underneath it.
 +void Thread::ExitWithCleanup(int exit_code, std::function<void()> cleanup) {
@@ -1345,13 +1363,10 @@ index 9982f67cf..dc36d9241 100644
 +    if (cleanup) cleanup();
 +    pthread_exit(reinterpret_cast<void*>(exit_code));
 +  }
-+  assert_always();
-+}
-+
- void set_name(const std::string_view name) {
-   pthread_setname_np(pthread_self(), std::string(name).c_str());
- #if XE_PLATFORM_ANDROID
-@@ -1443,9 +1616,16 @@ static void signal_handler(int signal, siginfo_t* info, void* context) {
+   assert_always();
+ }
+ 
+@@ -1443,9 +1619,16 @@
        current_thread_->WaitSuspended();
      } break;
      case SignalType::kThreadUserCallback: {
@@ -6416,7 +6431,6 @@ index 8dbb6ce53..f728dfb00 100644
  
  uint32_t XSocket::GetLastWSAError() const {
 diff --git a/src/xenia/kernel/xthread.cc b/src/xenia/kernel/xthread.cc
-index 71643901d..e94c93cfa 100644
 --- a/src/xenia/kernel/xthread.cc
 +++ b/src/xenia/kernel/xthread.cc
 @@ -8,6 +8,9 @@
@@ -6429,18 +6443,18 @@ index 71643901d..e94c93cfa 100644
  
  #if !XE_PLATFORM_WIN32
  #include <signal.h>
-@@ -41,6 +44,10 @@ DEFINE_int64(main_xthread_stack_size_multiplier_hack, 1,
+@@ -40,6 +43,10 @@
+ 
  namespace xe {
  namespace kernel {
- 
++
 +#if !XE_PLATFORM_WIN32
 +static bool ReenterByJump();
 +#endif
-+
+ 
  const uint32_t XAPC::kSize;
  const uint32_t XAPC::kDummyKernelRoutine;
- const uint32_t XAPC::kDummyRundownRoutine;
-@@ -439,7 +446,12 @@ X_STATUS XThread::Create() {
+@@ -439,7 +446,12 @@
      xe::Profiler::ThreadExit();
  
      // Release the self-reference to the thread.
@@ -6453,7 +6467,7 @@ index 71643901d..e94c93cfa 100644
    });
  
    if (!thread_) {
-@@ -511,10 +523,15 @@ X_STATUS XThread::Exit(int exit_code) {
+@@ -511,10 +523,15 @@
    xe::Profiler::ThreadExit();
  
    running_ = false;
@@ -6469,7 +6483,7 @@ index 71643901d..e94c93cfa 100644
    return X_STATUS_SUCCESS;
  }
  
-@@ -531,8 +548,14 @@ X_STATUS XThread::Terminate(int exit_code) {
+@@ -531,8 +548,14 @@
  
    running_ = false;
    if (XThread::IsInThread(this)) {
@@ -6484,7 +6498,7 @@ index 71643901d..e94c93cfa 100644
    } else {
      thread_->Terminate(exit_code);
      ReleaseHandle();
-@@ -581,6 +604,33 @@ void XThread::Execute() {
+@@ -581,6 +604,33 @@
    // stack unwinding which already calls destructors.
    uint32_t next_address;
  #if !XE_PLATFORM_WIN32
@@ -6518,7 +6532,7 @@ index 71643901d..e94c93cfa 100644
    try {
      exit_code = static_cast<int>(kernel_state()->processor()->Execute(
          thread_state_, address, args.data(), args.size()));
-@@ -640,11 +690,44 @@ void XThread::Execute() {
+@@ -640,11 +690,44 @@
    Exit(!want_exit_code ? 0 : exit_code);
  }
  
@@ -6563,7 +6577,7 @@ index 71643901d..e94c93cfa 100644
    // Throw a C++ exception that unwinds through JIT frames (using DWARF
    // .eh_frame info) and host frames (using compiler-generated DWARF),
    // calling destructors properly along the way.
-@@ -765,6 +848,20 @@ void XThread::CheckQuantumAndDecay() {
+@@ -765,6 +848,20 @@
    quantum_start_ms_ = now;
  }
  
@@ -6584,6 +6598,50 @@ index 71643901d..e94c93cfa 100644
  void XThread::BoostOnWake(int32_t increment) {
    if (cvars::ignore_thread_priorities) {
      return;
+@@ -906,7 +1003,6 @@
+   }
+ #else
+   // Use mutex to protect suspend_count access and coordinate with SelfSuspend.
+-  bool should_resume_host = false;
+   {
+     std::lock_guard<std::mutex> lock(suspend_mutex_);
+     uint8_t previous = guest_thread->suspend_count;
+@@ -916,14 +1012,12 @@
+     if (out_suspend_count) {
+       *out_suspend_count = previous;
+     }
+-    should_resume_host = (guest_thread->suspend_count == 0);
++    // The host count increases on every remote Suspend, including nested
++    // suspensions. Balance each decrement, rather than only the final one.
++    if (previous > 0) thread_->Resume(&unused_host_suspend_count);
+     suspend_cv_.notify_all();
+   }
+ 
+-  // Try to resume host thread if fully resumed (for non-self-suspended case).
+-  if (should_resume_host) {
+-    thread_->Resume(&unused_host_suspend_count);
+-  }
+   return X_STATUS_SUCCESS;
+ #endif
+ }
+@@ -933,6 +1027,17 @@
+   // mode apc that does the actual suspension
+ 
+   X_KTHREAD* guest_thread = guest_object<X_KTHREAD>();
++
++#if !XE_PLATFORM_WIN32
++  if (GetCurrentThread() == this) {
++    const auto previous = SelfSuspend();
++    if (out_suspend_count) *out_suspend_count = previous;
++    return X_STATUS_SUCCESS;
++  }
++  // Serialize the guest and host transitions with Resume. Otherwise a resume
++  // can arrive between incrementing the guest count and suspending the host.
++  std::lock_guard<std::mutex> lock(suspend_mutex_);
++#endif
+ 
+   uint8_t previous_suspend_count =
+       reinterpret_cast<std::atomic_uint8_t*>(&guest_thread->suspend_count)
 diff --git a/src/xenia/kernel/xthread.h b/src/xenia/kernel/xthread.h
 index 2c1e75856..71151beef 100644
 --- a/src/xenia/kernel/xthread.h
@@ -6658,7 +6716,7 @@ index 706bd4809..fd0eee5d7 100644
 -  // When the host page size is larger than 4 KB (e.g. 16 KB on macOS ARM64,
 -  // 64 KB on some ARM64 Linux kernels), mprotect on 4 KB guest page boundaries
 -  // fails with EINVAL. All heaps are backed by a shared file mapping
--  // (MapFileView) that is already mapped RW, so the commit is a no-op â€” skip
+-  // (MapFileView) that is already mapped RW, so the commit is a no-op — skip
 -  // it.
 -  if (xe::memory::page_size() > 0x1000) {
 -    return true;
@@ -7654,3 +7712,58 @@ index 3df8db9e5..8a23c840a 100644
  #define HAVE_MALLOC_H 0
  #else
  #define HAVE_MALLOC_H 1
+diff --git a/src/xenia/kernel/xam/profile_manager.cc b/src/xenia/kernel/xam/profile_manager.cc
+--- a/src/xenia/kernel/xam/profile_manager.cc
++++ b/src/xenia/kernel/xam/profile_manager.cc
+@@ -621,6 +621,39 @@
+   return;
+ }
+ 
++bool ProfileManager::ArchiveProfile(const uint64_t xuid) {
++  if (!accounts_.count(xuid)) return false;
++  const auto root = kernel_state_->emulator()->content_root().lexically_normal();
++  const auto source = GetProfileContentPath(xuid).lexically_normal();
++  const auto backup = root / "removed-profiles";
++  std::error_code error;
++  if (source.parent_path() != root || std::filesystem::is_symlink(source, error) ||
++      !std::filesystem::is_directory(source, error)) return false;
++  error.clear();
++  if (std::filesystem::is_symlink(backup, error)) return false;
++  error.clear();
++  std::filesystem::create_directories(backup, error);
++  if (error) return false;
++  auto destination = backup / fmt::format("{:016X}", xuid);
++  for (unsigned n = 1; std::filesystem::exists(destination, error) && !error; ++n) {
++    if (n > 1024) return false;
++    destination = backup / fmt::format("{:016X}-{}", xuid, n);
++  }
++  if (error || destination.parent_path() != backup) return false;
++  const uint8_t slot = GetUserIndexAssignedToProfile(xuid);
++  if (slot < XUserMaxUserCount) Logout(slot, false);
++  else DismountProfile(xuid);
++  std::filesystem::rename(source, destination, error);
++  if (error) {
++    if (slot < XUserMaxUserCount) Login(xuid, slot, false);
++    XELOGE("Cannot archive profile: {}", error.message());
++    return false;
++  }
++  accounts_.erase(xuid);
++  XELOGW("Profile removed; recoverable data retained in {}", destination.string());
++  return true;
++}
++
+ bool ProfileManager::DeleteProfile(const uint64_t xuid) {
+   const uint8_t user_index = GetUserIndexAssignedToProfile(xuid);
+ 
+diff --git a/src/xenia/kernel/xam/profile_manager.h b/src/xenia/kernel/xam/profile_manager.h
+--- a/src/xenia/kernel/xam/profile_manager.h
++++ b/src/xenia/kernel/xam/profile_manager.h
+@@ -76,6 +76,8 @@
+   bool CreateProfile(const X_XAMACCOUNTINFO* account_info, uint64_t xuid);
+ 
+   bool DeleteProfile(const uint64_t xuid);
++  // Remove from the account list while retaining all data in a backup folder.
++  bool ArchiveProfile(const uint64_t xuid);
+ 
+   bool MountProfile(const uint64_t xuid, std::string mount_path = "");
+   bool DismountProfile(const uint64_t xuid);

@@ -135,6 +135,7 @@ struct ProfileHooks {
   std::function<bool(uint64_t, uint32_t)> use_player;
   std::function<bool(const std::string&, uint32_t)> create_player;
   std::function<void(uint64_t)> use;               // Signs it in on the first controller.
+  std::function<bool(uint64_t)> remove; // Retains saves in a recoverable backup.
 };
 struct AchievementEntry {
   std::string name, description;
@@ -290,6 +291,7 @@ class Launcher {
   std::vector<ProfileEntry> profiles_;
   int profile_player_ = 0;
   int profile_row_ = 0, key_row_ = 0, key_column_ = 0;
+  uint64_t profile_delete_pending_ = 0;
   std::string new_name_, name_error_;
   int path_row_ = 0, folder_row_ = 0;
   std::filesystem::path browser_path_ = "/mnt";

@@ -1138,16 +1138,20 @@ int main(int argc, char** argv) {
         if (accounts.count(saved)) sign_in(saved);
         else if (!signed_in() && !accounts.empty()) sign_in(accounts.begin()->first);
       }
-      // Prepare all local profiles before guest threads run. A disconnected
-      // controller stays disconnected in XInput; its profile remains available
-      // so reconnecting or joining a running game never mutates profile lifetime.
+      // Retain preferred accounts, but sign in extra users only for real pads.
       const auto player_profile_path = saves.root / "local-players.txt";
       std::array<uint64_t, 4> player_xuids{};
       { std::ifstream file(player_profile_path); for (auto& id : player_xuids) file >> std::hex >> id; }
       player_xuids[0] = signed_in();
       for (uint8_t slot = 1; slot < 4; ++slot) {
-        auto* current = profiles->GetProfile(slot);
-        if (current) { player_xuids[slot] = current->xuid(); continue; }
+        if (const auto* current = profiles->GetProfile(slot)) player_xuids[slot] = current->xuid();
+        profiles->Logout(slot, false); // Remove old persisted phantom sign-ins.
+      }
+      const auto connect_player = [&](uint8_t slot, bool notify) {
+        if (!pad.Read(slot).connected) return;
+        if (const auto* current = profiles->GetProfile(slot)) {
+          player_xuids[slot] = current->xuid(); return;
+        }
         uint64_t wanted = player_xuids[slot];
         if (!profiles->GetAccounts()->count(wanted) || profiles->GetUserIndexAssignedToProfile(wanted) < 4) {
           wanted = 0;
@@ -1157,15 +1161,19 @@ int main(int argc, char** argv) {
             for (const auto& [id, account] : *profiles->GetAccounts())
               if (account.GetGamertagString() == "Player " + std::to_string(slot + 1) && profiles->GetUserIndexAssignedToProfile(id) >= 4) wanted = id;
         }
-        if (wanted) profiles->Login(wanted, slot, false);
-        current = profiles->GetProfile(slot); player_xuids[slot] = current ? current->xuid() : 0;
-      }
+        if (wanted) profiles->Login(wanted, slot, notify);
+        const auto* current = profiles->GetProfile(slot);
+        player_xuids[slot] = current ? current->xuid() : 0;
+      };
+      for (uint8_t slot = 1; slot < 4; ++slot) connect_player(slot, false);
       const auto save_players = [&] {
         const auto temporary = player_profile_path.string() + ".tmp";
         std::ofstream file(temporary, std::ios::trunc);
         for (uint8_t slot = 0; slot < 4; ++slot) {
           const auto* profile = profiles->GetProfile(slot);
-          file << std::hex << (profile ? profile->xuid() : 0) << "\n";
+          if (profile) player_xuids[slot] = profile->xuid();
+          if (!profiles->GetAccounts()->count(player_xuids[slot])) player_xuids[slot] = 0;
+          file << std::hex << player_xuids[slot] << "\n";
         }
         file.close(); if (file) { std::error_code error; std::filesystem::rename(temporary, player_profile_path, error); }
       };
@@ -1176,6 +1184,9 @@ int main(int argc, char** argv) {
           const auto sample = pad.Read(slot); player_inputs[slot]->Submit(sample);
           if (sample.connected != players_connected[slot]) {
             players_connected[slot] = sample.connected;
+            if (sample.connected) connect_player(uint8_t(slot), true);
+            else profiles->Logout(uint8_t(slot), true);
+            save_players();
             const auto* profile = profiles->GetProfile(uint8_t(slot));
             const std::string name = profile ? profile->name() : "Player " + std::to_string(slot + 1);
             XELOGW("Local player {}: {} ({})", slot + 1, sample.connected ? "connected" : "disconnected", name);
@@ -1190,7 +1201,9 @@ int main(int argc, char** argv) {
         profile_name = found == accounts.end() ? std::string() : found->second.GetGamertagString();
       };
       refresh_name();
-      XELOGW("Profile: {} of {} signed in", profile_name.empty() ? "none" : profile_name, profiles->GetAccountCount());
+      unsigned active_profiles = 0;
+      for (uint8_t slot = 0; slot < 4; ++slot) active_profiles += profiles->GetProfile(slot) != nullptr;
+      XELOGW("Profile: primary {}, {} signed in, {} stored accounts", profile_name.empty() ? "none" : profile_name, active_profiles, profiles->GetAccountCount());
       xbox360ps5::ProfileHooks profile_hooks;
       profile_hooks.list = [profiles] {
         std::vector<xbox360ps5::ProfileEntry> entries;
@@ -1207,6 +1220,7 @@ int main(int argc, char** argv) {
       };
       profile_hooks.create_player = [&, profiles](const std::string& name, uint32_t slot) {
         if (slot >= 4 || !xe::kernel::xam::ProfileManager::IsGamertagValid(name)) return false;
+        if (slot && !pad.Read(slot).connected) return false;
         for (const auto& [id, account] : *profiles->GetAccounts())
           if (account.GetGamertagString() == name) return false;
         if (!profiles->CreateProfile(name, false)) return false;
@@ -1221,11 +1235,18 @@ int main(int argc, char** argv) {
       };
       profile_hooks.use_player = [&, profiles](uint64_t xuid, uint32_t slot) {
         if (slot >= 4 || !profiles->GetAccounts()->count(xuid)) return false;
+        if (slot && !pad.Read(slot).connected) return false;
         const uint8_t assigned = profiles->GetUserIndexAssignedToProfile(xuid);
         if (assigned < 4 && assigned != slot) return false;
         if (assigned != slot) { profiles->Logout(uint8_t(slot), false); profiles->Login(xuid, uint8_t(slot), true); }
         if (slot == 0) { SaveProfile(xuid); refresh_name(); }
         save_players(); return profiles->GetUserIndexAssignedToProfile(xuid) == slot;
+      };
+      profile_hooks.remove = [&](uint64_t xuid) {
+        if (launched || xuid == signed_in() || profiles->GetAccountCount() <= 1) return false;
+        if (!profiles->ArchiveProfile(xuid)) return false;
+        for (auto& id : player_xuids) if (id == xuid) id = 0;
+        save_players(); refresh_name(); return true;
       };
       launcher.SetAchievements([&emulator, profiles](uint32_t title, uint32_t slot) {
         std::vector<xbox360ps5::AchievementEntry> list;

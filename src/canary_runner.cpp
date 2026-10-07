@@ -37,6 +37,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <thread>
 #include <vector>
 #define STB_IMAGE_WRITE_IMPLEMENTATION
@@ -143,9 +144,56 @@ int main(int argc, char** argv) {
   if (!xbox360ps5::MountUtilityCache(*emulator.file_system(), root)) return 7;
   // Games give the controller to a signed-in profile: make one the first time.
   auto profiles = emulator.kernel_state()->xam_state()->profile_manager();
+  if (std::getenv("XBOX360PS5_CHECK_NESTED_SUSPEND")) {
+    std::puts("NESTED CHECK: creating suspended kernel thread"); std::fflush(stdout);
+    std::atomic<bool> executed{false};
+    auto thread = xe::kernel::object_ref<xe::kernel::XHostThread>(new xe::kernel::XHostThread(
+        emulator.kernel_state(), 128 * 1024, xe::kernel::X_CREATE_SUSPENDED,
+        [&] { executed.store(true); return 0; }, emulator.kernel_state()->GetSystemProcess()));
+    uint32_t previous = 99;
+    bool passed = thread->Create() == 0;
+    std::puts("NESTED CHECK: created; applying second suspension"); std::fflush(stdout);
+    passed = passed && thread->Suspend(&previous) == 0 && previous == 1;
+    std::puts("NESTED CHECK: resuming first hold"); std::fflush(stdout);
+    passed = passed && thread->Resume(&previous) == 0 && previous == 2;
+    std::this_thread::sleep_for(std::chrono::milliseconds(30));
+    passed = passed && !executed.load();
+    std::puts("NESTED CHECK: resuming final hold"); std::fflush(stdout);
+    passed = passed && thread->Resume(&previous) == 0 && previous == 1;
+    for (int n = 0; n < 100 && !executed.load(); ++n)
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    passed = passed && executed.load();
+    std::puts(passed ? "PASS: nested guest suspensions retain the first hold and execute after the final resume" : "FAIL: nested guest suspension");
+    std::fflush(stdout);
+    std::_Exit(passed ? 0 : 27);
+  }
   if (!profiles->GetAccountCount()) {
     const bool created = profiles->CreateProfile("Player", true);
     std::printf("RUNNER PROFILE %s\n", created ? "created" : "could not be created");
+  }
+  // Host-only regression: removing an account must preserve its save bytes,
+  // and rescanning must not bring the archived account back.
+  if (std::getenv("XBOX360PS5_CHECK_PROFILE_ARCHIVE")) {
+    bool passed = profiles->CreateProfile("Archive Test", false);
+    uint64_t target = 0;
+    for (const auto& [id, account] : *profiles->GetAccounts())
+      if (account.GetGamertagString() == "Archive Test") target = id;
+    const auto source = profiles->GetProfileContentPath(target);
+    if (target) {
+      profiles->Login(target, 1, false);
+      { std::ofstream save(source / "regression-save.bin", std::ios::binary); save << "preserved-save"; passed = passed && bool(save); }
+      passed = passed && profiles->ArchiveProfile(target);
+      passed = passed && !profiles->GetAccounts()->count(target) && !profiles->GetProfile(uint8_t(1)) && !std::filesystem::exists(source);
+      std::ifstream save(emulator.content_root() / "removed-profiles" / source.filename() / "regression-save.bin", std::ios::binary);
+      std::string bytes; std::getline(save, bytes);
+      passed = passed && bytes == "preserved-save";
+      profiles->ReloadProfiles();
+      passed = passed && !profiles->GetAccounts()->count(target);
+      passed = passed && !profiles->ArchiveProfile(target);
+    } else passed = false;
+    std::puts(passed ? "PASS: profile archive retains saves, signs out, survives rescan and rejects repeat removal" : "FAIL: profile archive");
+    std::fflush(stdout);
+    std::_Exit(passed ? 0 : 26);
   }
   // A game that starts another executable (a collection's menu) saves what to
   // run in launch_data.bin and asks for a restart: the console restarts the

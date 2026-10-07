@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.7-fix.1
+
+- Resolve the reported Left 4 Dead 2 loading stall on the development PS5.
+- Balance nested guest/host thread suspension counts and protect startup transitions.
+- Sign extra players in only while their controllers are connected.
+- Add confirmed profile removal with account/save backups in saves/removed-profiles.
+- Distinguish stored accounts from signed-in players in logs.
+- Keep AutoLog 1.0.9 unchanged. See docs/releases/v0.5.7-fix.1.md for validation and installation.
+
 ## 0.5.7
 
 - Fix Left 4 Dead 2 (start, menu text, match loading) and Forza Horizon closing at START (fiber switches).

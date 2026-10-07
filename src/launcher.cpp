@@ -1145,16 +1145,31 @@ void Launcher::Press(Key key) {
       break;
     }
     case Mode::profiles: {
+      if (key != Key::square) profile_delete_pending_ = 0;
       if (key == Key::l1 || key == Key::r1) { profile_player_ = (profile_player_ + (key == Key::r1 ? 1 : 3)) % 4; RefreshProfiles(); }
       // The profiles, then "create a new one".
       const int rows = int(profiles_.size()) + 1;
       if (key == Key::up) profile_row_ = (profile_row_ + rows - 1) % rows;
       if (key == Key::down) profile_row_ = (profile_row_ + 1) % rows;
+      if (key == Key::square && profile_row_ < int(profiles_.size())) {
+        const auto& profile = profiles_[size_t(profile_row_)];
+        if (profile.active) {
+          message_ = Tr("Troque o perfil principal antes de excluir este perfil.");
+        } else if (profile_delete_pending_ != profile.xuid) {
+          profile_delete_pending_ = profile.xuid;
+          message_ = Tr("Aperte Quadrado novamente para excluir. Saves e conquistas ficam no backup removed-profiles.");
+        } else {
+          const bool removed = profile_hooks_.remove && profile_hooks_.remove(profile.xuid);
+          profile_delete_pending_ = 0;
+          message_ = Tr(removed ? "Perfil excluído. Saves e conquistas preservados no backup." : "Não foi possível excluir. Encerre o jogo e mantenha um perfil principal.");
+          RefreshProfiles(); profile_row_ = std::min(profile_row_, int(profiles_.size()));
+        }
+      }
       if (key == Key::cross) {
         if (profile_row_ < int(profiles_.size())) {
           if (profile_hooks_.use_player) {
             if (!profile_hooks_.use_player(profiles_[size_t(profile_row_)].xuid, uint32_t(profile_player_)))
-              message_ = Tr("Este perfil já está vinculado a outro jogador.");
+              message_ = Tr("Conecte o controle deste jogador e escolha um perfil que não esteja em uso.");
           } else if (profile_hooks_.use) profile_hooks_.use(profiles_[size_t(profile_row_)].xuid);
           RefreshProfiles();
         } else {
@@ -2153,6 +2168,7 @@ void Launcher::DrawProfilesSheet(Canvas& c) {
   }
   float hint = c.Hint('x', profile_row_ < int(profiles_.size()) ? Tr("Usar este perfil") : Tr("Criar"), x + 56, 1004);
   hint = c.Hint('o', Tr("Voltar"), hint, 1004);
+  if (profile_row_ < int(profiles_.size())) hint = c.Hint('s', Tr("Excluir perfil"), hint, 1004);
   c.Hint('v', Tr("Mover"), hint, 1004);
   c.Text("L1 / R1 · " + std::string(Tr("Jogador")), x + 820, 956, 20, kMuted, 1, 2);
   if (!message_.empty()) c.Wrapped(message_, x + 56, 904, 20, kWarning, 750);
