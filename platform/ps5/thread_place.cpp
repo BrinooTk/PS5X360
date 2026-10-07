@@ -18,6 +18,7 @@ extern "C" {
 int scePthreadGetaffinity(pthread_t, unsigned long long*);
 int scePthreadSetaffinity(pthread_t, unsigned long long);
 int scePthreadGetprio(pthread_t, int*);
+int scePthreadSetprio(pthread_t, int);
 int sceKernelGetCurrentCpu(void);
 }
 namespace xbox360ps5 {
@@ -33,6 +34,9 @@ std::atomic<unsigned> placed{0}, refused{0};
 pthread_t Of(void* thread) { return thread ? static_cast<pthread_t>(thread) : pthread_self(); }
 void Place(pthread_t thread, bool gpu) {
   const bool own_core = dedicated.load(std::memory_order_relaxed);
+  // Without the dedicated core nothing is changed: a thread keeps the CPUs the
+  // system gave it, whatever they are on this firmware (as before v0.5.6).
+  if (!own_core) return;
   const unsigned long long wanted = !own_core ? kTitleCpus : gpu ? kGpuCpu : kTitleCpus & ~kGpuCore;
   unsigned long long have = 0;
   if (scePthreadGetaffinity(thread, &have) == 0 && have == wanted) return;
@@ -67,5 +71,27 @@ void SetGpuCoreDedicated(bool on) {
 bool GpuCoreDedicated() { return dedicated; }
 void ThreadPlaceCounts(unsigned* given, unsigned* not_given) {
   *given = placed; *not_given = refused;
+}
+SamplerSeat SeatSampler(void* target, int cpu) {
+  SamplerSeat seat;
+  const pthread_t thread = static_cast<pthread_t>(target), self = pthread_self();
+  if (!target || scePthreadGetaffinity(thread, &seat.target_cpus) != 0 || scePthreadGetaffinity(self, &seat.own_cpus) != 0 ||
+      scePthreadGetprio(self, &seat.own_priority) != 0) return seat;
+  const unsigned long long one = 1ull << cpu;
+  if (scePthreadSetaffinity(thread, one) != 0) return seat;
+  // 256 is the highest priority a title's thread may have (the range is 256 to 767, lower first).
+  if (scePthreadSetaffinity(self, one) != 0 || scePthreadSetprio(self, 256) != 0) {
+    scePthreadSetaffinity(thread, seat.target_cpus);
+    scePthreadSetaffinity(self, seat.own_cpus);
+    return seat;
+  }
+  seat.seated = true;
+  return seat;
+}
+void UnseatSampler(void* target, const SamplerSeat& seat) {
+  if (!seat.seated) return;
+  scePthreadSetprio(pthread_self(), seat.own_priority);
+  scePthreadSetaffinity(pthread_self(), seat.own_cpus);
+  scePthreadSetaffinity(static_cast<pthread_t>(target), seat.target_cpus);
 }
 }

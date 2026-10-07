@@ -1,0 +1,15 @@
+import assert from 'node:assert/strict';
+import {skeleton} from './pose.mjs';
+const points=Array.from({length:33},(_,i)=>({x:i,y:i+1,z:i+2,visibility:.8}));
+const frame=skeleton(points,123);
+assert.equal(frame.joints.length,20);
+assert.equal(frame.joints[0].x,23.5);
+assert.equal(frame.joints[4].x,11);
+assert.equal(frame.joints[8].x,12);
+assert.equal(frame.joints[4].y,-12);
+assert.equal(frame.joints[4].z,-13);
+assert.equal(frame.joints[1].x,17.5);
+assert.throws(()=>skeleton([],1));
+assert.throws(()=>skeleton(points,NaN));
+points[15].x=Infinity;assert.throws(()=>skeleton(points,1));
+console.log('PASS: joint order, interpolation, axis conversion, malformed input rejection');

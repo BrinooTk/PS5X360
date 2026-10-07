@@ -31,7 +31,7 @@ int16_t Axis(uint8_t value, bool invert = false) {
   return int16_t(std::clamp(invert ? -result : result, -32768, 32767));
 }
 }
-DualSenseInput::DualSenseInput(Rumble rumble) : InputDriver(nullptr, 0), rumble_(std::move(rumble)) {}
+DualSenseInput::DualSenseInput(Rumble rumble, uint32_t user) : InputDriver(nullptr, 0), user_(user), rumble_(std::move(rumble)) {}
 X_STATUS DualSenseInput::Setup() { return X_STATUS_SUCCESS; }
 void DualSenseInput::Submit(const PadSample& sample) {
   std::lock_guard<std::mutex> lock(mutex_);
@@ -51,6 +51,7 @@ void DualSenseInput::Submit(const PadSample& sample) {
     const uint16_t held = next.buttons;
     for (auto button : buttons) if ((old ^ held) & button.guest) {
       X_INPUT_KEYSTROKE key{};
+      key.user_index = uint8_t(user_);
       key.virtual_key = uint16_t(button.key);
       key.flags = held & button.guest ? X_INPUT_KEYSTROKE_KEYDOWN : X_INPUT_KEYSTROKE_KEYUP;
       if (keys_.size() == 256) keys_.pop_front();
@@ -63,7 +64,7 @@ void DualSenseInput::Submit(const PadSample& sample) {
 X_RESULT DualSenseInput::GetState(uint32_t user, X_INPUT_STATE* out) {
   if (!out) return X_ERROR_BAD_ARGUMENTS;
   std::lock_guard<std::mutex> lock(mutex_);
-  if (user || !connected_) return X_ERROR_DEVICE_NOT_CONNECTED;
+  if (user != user_ || !connected_) return X_ERROR_DEVICE_NOT_CONNECTED;
   *out = state_;
 #if !XBOX360PS5_CANARY  // Canary has no window focus gate for input drivers.
   if (!is_active()) out->gamepad = {};
@@ -73,7 +74,7 @@ X_RESULT DualSenseInput::GetState(uint32_t user, X_INPUT_STATE* out) {
 X_RESULT DualSenseInput::GetCapabilities(uint32_t user, uint32_t flags, X_INPUT_CAPABILITIES* out) {
   if (!out || (flags & ~uint32_t(X_INPUT_FLAG_GAMEPAD))) return X_ERROR_BAD_ARGUMENTS;
   std::lock_guard<std::mutex> lock(mutex_);
-  if (user || !connected_) return X_ERROR_DEVICE_NOT_CONNECTED;
+  if (user != user_ || !connected_) return X_ERROR_DEVICE_NOT_CONNECTED;
   *out = {};
   out->type = 1; out->sub_type = 1;
   if (rumble_) { out->flags = X_INPUT_CAPS_FFB_SUPPORTED; out->vibration.left_motor_speed = 65535; out->vibration.right_motor_speed = 65535; }
@@ -85,7 +86,7 @@ X_RESULT DualSenseInput::GetCapabilities(uint32_t user, uint32_t flags, X_INPUT_
 X_RESULT DualSenseInput::SetState(uint32_t user, X_INPUT_VIBRATION* vibration) {
   if (!vibration) return X_ERROR_BAD_ARGUMENTS;
   { std::lock_guard<std::mutex> lock(mutex_);
-    if (user || !connected_) return X_ERROR_DEVICE_NOT_CONNECTED;
+    if (user != user_ || !connected_) return X_ERROR_DEVICE_NOT_CONNECTED;
   }
   if (!rumble_) return X_RESULT_FROM_WIN32(50);  // Motor output not connected yet.
   return rumble_(vibration->left_motor_speed, vibration->right_motor_speed)
@@ -94,7 +95,7 @@ X_RESULT DualSenseInput::SetState(uint32_t user, X_INPUT_VIBRATION* vibration) {
 X_RESULT DualSenseInput::GetKeystroke(uint32_t user, uint32_t, X_INPUT_KEYSTROKE* out) {
   if (!out) return X_ERROR_BAD_ARGUMENTS;
   std::lock_guard<std::mutex> lock(mutex_);
-  if ((user && user != 255) || !connected_) return X_ERROR_DEVICE_NOT_CONNECTED;
+  if ((user != user_ && user != 255) || !connected_) return X_ERROR_DEVICE_NOT_CONNECTED;
 #if XBOX360PS5_CANARY
   if (keys_.empty()) return X_ERROR_EMPTY;
 #else

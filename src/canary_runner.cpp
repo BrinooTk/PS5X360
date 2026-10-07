@@ -8,6 +8,7 @@
 // D-pad right, for menus that need a choice), XBOX360PS5_CONFIG=<file> (a game
 // config with qualified keys, e.g. GPU.vsync = false, applied before start).
 #include "xbox360ps5/dualsense_input.hpp"
+#include "xbox360ps5/motion_input.hpp"
 #include "xbox360ps5/canary_audio.hpp"
 #include "xbox360ps5/gpu_upload_check.hpp"
 #include "xbox360ps5/utility_cache.hpp"
@@ -22,6 +23,8 @@
 #include "xenia/emulator.h"
 #include "xenia/kernel/kernel_state.h"
 #include "xenia/kernel/user_module.h"
+#include "xenia/kernel/xmutant.h"
+#include "xenia/kernel/xthread.h"
 #include "xenia/kernel/xam/profile_manager.h"
 #include "xenia/kernel/xam/xam_module.h"
 #include "xenia/kernel/xam/xam_state.h"
@@ -41,6 +44,9 @@
 #include "third_party/stb/stb_image_write.h"
 namespace config {
 void ReadGameConfig(const std::filesystem::path& file_path);  // config.cc, not in config.h.
+}
+namespace xe::kernel::xboxkrnl {
+bool CheckVirtualCameraAbi(KernelState* kernel);
 }
 DECLARE_int32(log_level);
 DECLARE_bool(flush_log);
@@ -161,7 +167,108 @@ int main(int argc, char** argv) {
   }
   // Kept with a later request, so the restart finds the game again.
   xam->loader_data().host_path = xe::path_to_utf8(game);
+  // Explicit host-only virtual-camera fixture; never enabled on the console.
+  std::jthread virtual_pose;
+  if (std::getenv("XBOX360PS5_VIRTUAL_KINECT")) {
+    xbox360ps5::motion::SetEnabled(true);
+    virtual_pose = std::jthread([](std::stop_token stop) {
+      using namespace xbox360ps5::motion;
+      while (!stop.stop_requested()) {
+        Frame f; f.tracked=true;f.received=std::chrono::steady_clock::now();
+        const float xyz[20][3]={{0,0,0},{0,.2f,0},{0,.45f,0},{0,.65f,0},{-.2f,.4f,0},{-.35f,.2f,0},{-.4f,0,0},{-.4f,-.03f,0},{.2f,.4f,0},{.35f,.6f,0},{.4f,.85f,0},{.4f,.9f,0},{-.12f,0,0},{-.12f,-.4f,0},{-.12f,-.8f,0},{-.12f,-.85f,-.12f},{.12f,0,0},{.12f,-.4f,0},{.12f,-.8f,0},{.12f,-.85f,-.12f}};
+        // The bridge's axes: +x is the right of the camera picture, which is the
+        // left side of a body that faces the camera. The table has the right arm
+        // at +x, so x is mirrored here. The right arm goes down and up again
+        // every six seconds: a title may want to see the hand being raised.
+        for (int i=0;i<20;++i)f.joints[i]={-xyz[i][0],xyz[i][1],xyz[i][2],1};
+        const auto since=std::chrono::duration_cast<std::chrono::milliseconds>(f.received.time_since_epoch()).count();
+        if (!std::getenv("XBOX360PS5_VIRTUAL_KINECT_STILL") && since%6000<2000) {
+          f.joints[9]={-.3f,.2f,0,1};f.joints[10]={-.33f,0,0,1};f.joints[11]={-.33f,-.05f,0,1};
+        }
+        {std::lock_guard lock(mutex);f.sequence=latest.sequence+1;f.session=1;latest=f;}
+        std::this_thread::sleep_for(std::chrono::milliseconds(33));
+      }
+    });
+  }
+  if (std::getenv("XBOX360PS5_CHECK_CAMERA_ABI")) {
+    xbox360ps5::motion::SetEnabled(true);
+    const bool passed = xe::kernel::xboxkrnl::CheckVirtualCameraAbi(emulator.kernel_state());
+    std::puts(passed ? "PASS: virtual camera state/version/table, invalid buffers, async depth and guest PPC callback, stop" : "FAIL: virtual camera ABI");
+    std::fflush(stdout);
+    std::_Exit(passed ? 0 : 25);
+  }
   const auto launched = emulator.LaunchPath(game);
+  if (!launched && std::getenv("XBOX360PS5_CHECK_GUEST_PACKAGE")) {
+    using xe::X_RESULT;
+    auto* manager = emulator.kernel_state()->content_manager();
+    uint32_t license = 0;
+    const auto opened = manager->OpenContentFromGuestFile("research-package-check", "game:\\Database.xmplr", license);
+    if (opened || !emulator.file_system()->ResolvePath("research-package-check:")) std::_Exit(14);
+    if (manager->OpenContentFromGuestFile("research-package-check", "game:\\Database.xmplr", license) != X_ERROR_ALREADY_EXISTS) std::_Exit(15);
+    if (manager->CloseContent("research-package-check")) std::_Exit(16);
+    if (emulator.file_system()->IsSymbolicLinkRegistered("research-package-check:")) std::_Exit(17);
+    if (manager->OpenContentFromGuestFile("research-package-invalid", "game:\\default.xex", license) != X_ERROR_FILE_NOT_FOUND) std::_Exit(18);
+    if (manager->OpenContentFromGuestFile("research-package-missing", "game:\\does-not-exist.xmplr", license) != X_ERROR_FILE_NOT_FOUND) std::_Exit(19);
+    std::puts("PASS: nested guest package mounted, duplicate rejected, closed cleanly, invalid and missing packages rejected");
+    std::fflush(stdout);
+    std::_Exit(0);
+  }
+  if (!launched && std::getenv("XBOX360PS5_CHECK_GUEST_MUTANT")) {
+    using xe::X_STATUS;
+    auto* kernel = emulator.kernel_state();
+    const uint32_t address = emulator.memory()->SystemHeapAlloc(sizeof(xe::kernel::X_KMUTANT));
+    if (!address) std::_Exit(20);
+    auto* native = emulator.memory()->TranslateVirtual<xe::kernel::X_KMUTANT*>(address);
+    std::memset(native, 0, sizeof(*native));
+    native->header.type = xe::kernel::MutantObject;
+    native->header.signal_state = 1;
+    auto mutant = xe::kernel::XObject::GetNativeObject<xe::kernel::XMutant>(kernel, native, xe::kernel::MutantObject);
+    uint64_t immediate = 0;
+    if (!mutant || mutant->Wait(0, 0, 0, &immediate) != X_STATUS_SUCCESS ||
+        mutant->Wait(0, 0, 0, &immediate) != X_STATUS_SUCCESS) std::_Exit(21);
+    auto foreign_wait = [&]() {
+      uint32_t status = 0;
+      std::thread other([&]() {
+        uint64_t timeout = 0;
+        status = mutant->Wait(0, 0, 0, &timeout);
+        if (status == X_STATUS_SUCCESS) mutant->ReleaseMutant(0, false, false);
+      });
+      other.join();
+      return status;
+    };
+    if (foreign_wait() != X_STATUS_TIMEOUT) std::_Exit(22);
+    if (mutant->ReleaseMutant(0, false, false) != X_STATUS_SUCCESS ||
+        foreign_wait() != X_STATUS_TIMEOUT) std::_Exit(23);
+    if (mutant->ReleaseMutant(0, false, false) != X_STATUS_SUCCESS ||
+        foreign_wait() != X_STATUS_SUCCESS) std::_Exit(24);
+    std::puts("PASS: embedded guest mutant supports recursive ownership and excludes other threads until fully released");
+    std::fflush(stdout);
+    std::_Exit(0);
+  }
+  // Offline research: preserve the loaded guest image and resolved imports.
+  // Opt-in host-only output, never part of console logging or AutoLog.
+  if (!launched) {
+    if (const char* output = std::getenv("XBOX360PS5_INSPECT_IMAGE")) {
+      const auto module = emulator.kernel_state()->GetExecutableModule();
+      const auto* xex = module ? module->xex_module() : nullptr;
+      if (!xex) std::_Exit(11);
+      FILE* file = std::fopen(output, "wb");
+      if (!file) std::_Exit(12);
+      const uint32_t size = xex->image_size();
+      const auto* bytes = emulator.memory()->TranslateVirtual<const uint8_t*>(xex->base_address());
+      const bool written = std::fwrite(bytes, 1, size, file) == size;
+      std::fclose(file);
+      std::printf("IMAGE %08X %08X %s\n", xex->base_address(), size, output);
+      for (const auto& library : *xex->import_libraries()) {
+        for (const auto& imported : library.imports) {
+          std::printf("IMPORT %s %04X %08X %08X\n", library.name.c_str(),
+                      imported.ordinal, imported.value_address, imported.thunk_address);
+        }
+      }
+      std::fflush(stdout);
+      std::_Exit(written ? 0 : 13);
+    }
+  }
   if (!launched && std::getenv("XBOX360PS5_CHECK_MODULE_LOOKUP")) {
     auto* kernel = emulator.kernel_state();
     auto module = kernel->GetExecutableModule();
@@ -239,6 +346,7 @@ int main(int argc, char** argv) {
     std::printf("RUNNER OUTPUT: %llu refreshed, %llu submitted swaps\n",
                 (unsigned long long)processor->refreshed_output_count(),
                 (unsigned long long)processor->swap_count());
+    if (xbox360ps5::motion::enabled.load()) std::printf("RUNNER MOTION: %s\n", xbox360ps5::motion::Status().c_str());
     std::fflush(stdout);
   }
   std::_Exit(0);

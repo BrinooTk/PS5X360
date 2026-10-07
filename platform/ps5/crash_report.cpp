@@ -12,8 +12,12 @@
 #include <pthread.h>
 #include <cerrno>
 #include <cstdio>
+#include <cstdlib>
+#include <exception>
 #include <signal.h>
+#include <typeinfo>
 #include <sys/mman.h>
+#include <sched.h>
 #include <unistd.h>
 extern "C" {
 int sceKernelGetCurrentCpu(void);
@@ -52,7 +56,7 @@ namespace {
 constexpr int kSignals[] = {SIGSEGV, SIGBUS, SIGILL, SIGFPE, SIGABRT, SIGSYS, SIGTRAP};
 int report_file = -1;
 int probe_pipe[2] = {-1, -1};
-std::atomic<bool> reporting{false};
+std::atomic<bool> reporting{false}, reported{false};
 char line[256];
 size_t used = 0;
 
@@ -89,10 +93,17 @@ void Handle(int number, siginfo_t* info, void* context) {
   struct sigaction standard{};
   standard.sa_handler = SIG_DFL;
   sigemptyset(&standard.sa_mask);
-  // Returning repeats the fault under the default action, which also gives
-  // the system's own dump. A second fault inside this handler ends the same way.
-  for (int signal : kSignals) sigaction(signal, &standard, nullptr);
-  if (reporting.exchange(true)) return;
+  if (reporting.exchange(true)) {
+    // Another thread's report is being written (or this handler faulted).
+    // Give it a moment, then let this fault take the default action.
+    for (int wait = 0; wait < 2000 && !reported.load(); ++wait) usleep(1000);
+    for (int signal : kSignals) sigaction(signal, &standard, nullptr);
+    return;
+  }
+  // The signals go back to the default action only once the report is on
+  // disk (at the end). Doing it first cut the report after its first line:
+  // the emulator's own access faults arrive as SIGSEGV on other threads all
+  // the time, and under the default action the next of them ended the process.
   // The console's context: FreeBSD's machine context after 64 bytes.
   const uint64_t* m = static_cast<const uint64_t*>(context) + 8;
   used = 0;
@@ -128,7 +139,36 @@ void Handle(int number, siginfo_t* info, void* context) {
     Put(' '); Address(value); ++found;
   }
   Flush();
+  if (report_file >= 0) fsync(report_file);
   // No network-drain wait from a fatal signal handler.
+  // Returning repeats the fault under the default action, which also gives
+  // the system's own dump.
+  for (int signal : kSignals) sigaction(signal, &standard, nullptr);
+  reported = true;
+}
+// An exception nothing caught ends in abort(): say which one first. This runs
+// on the throwing thread, not in a signal handler.
+void OnTerminate() {
+  const char* type = "no exception in flight";
+  char what[200] = "";
+  if (std::exception_ptr pending = std::current_exception()) {
+    try {
+      std::rethrow_exception(pending);
+    } catch (const std::exception& error) {
+      type = typeid(error).name();
+      std::snprintf(what, sizeof(what), "%s", error.what());
+    } catch (...) {
+      type = "not a std::exception";
+    }
+  }
+  char text[320];
+  const int size = std::snprintf(text, sizeof(text), "[X360] TERMINATE uncaught %s: %s\n", type, what);
+  if (size > 0) {
+    const size_t bytes = size_t(size) < sizeof(text) ? size_t(size) : sizeof(text) - 1;
+    if (report_file >= 0) { (void)!write(report_file, text, bytes); fsync(report_file); }
+    sceKernelDebugOutText(0, text);
+  }
+  std::abort();
 }
 // Where a thread is: asked of it with a signal, answered from its own context.
 std::atomic<bool> probe_done{true};
@@ -191,6 +231,26 @@ void InstallProbe() {
   installed = true;
 }
 }
+bool HostReadable(const void* address, size_t bytes) {
+  // A pipe of its own: the crash and sampling handlers use theirs from signals.
+  static int readable_pipe[2] = {-1, -1};
+  static std::atomic<int> state{0};  // 0 not made, 1 being made, 2 ready, 3 unavailable.
+  int expected = 0;
+  if (state.compare_exchange_strong(expected, 1)) state = pipe(readable_pipe) ? 3 : 2;
+  while (state.load() == 1) sched_yield();
+  if (state.load() != 2 || !bytes) return false;
+  static std::atomic_flag busy = ATOMIC_FLAG_INIT;
+  while (busy.test_and_set(std::memory_order_acquire)) sched_yield();
+  bool readable = true;
+  const uintptr_t first = reinterpret_cast<uintptr_t>(address), last = first + bytes - 1;
+  for (uintptr_t page = first & ~uintptr_t(0xFFF); page <= last && readable; page += 0x1000) {
+    const uintptr_t at = page < first ? first : page;
+    char byte;
+    readable = write(readable_pipe[1], reinterpret_cast<const void*>(at), 1) == 1 && read(readable_pipe[0], &byte, 1) == 1;
+  }
+  busy.clear(std::memory_order_release);
+  return readable;
+}
 bool SampleThread(void* thread, ThreadSample* out) {
   InstallProbe();
   if (!thread || !out) return false;
@@ -223,6 +283,7 @@ void InstallCrashReport(const char* path) {
   action.sa_flags = SA_SIGINFO;
   sigemptyset(&action.sa_mask);
   for (int signal : kSignals) sigaction(signal, &action, nullptr);
+  std::set_terminate(OnTerminate);
 }
 bool SetCrashReportFile(const char* path) {
   const int next = open(path, O_WRONLY | O_CREAT | O_APPEND, 0644);

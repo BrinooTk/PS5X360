@@ -1,7 +1,7 @@
 # Release versioning
 
-The current version lives in `VERSION`; tags use `v<version>`. v0.5.6 is a regular
-GitHub release without an experimental suffix. Version numbers do not imply
+The current version lives in `VERSION`; tags use `v<version>`. v0.5.6 and v0.5.7 are
+regular GitHub releases without an experimental suffix. Version numbers do not imply
 complete compatibility or guaranteed frame rates.
 
 ## Publish a release

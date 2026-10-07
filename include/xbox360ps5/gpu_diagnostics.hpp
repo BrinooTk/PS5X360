@@ -27,6 +27,16 @@ inline std::atomic<bool> lock_free_valid{true};
 // switched while a game runs: off, such pages go back to being watched as they
 // are next uploaded.
 inline std::atomic<bool> unwatched_pages{true};
+// Whether a draw may take its data from guest memory the game has released
+// (pages its heap marks as not accessible), when the host can still read them.
+inline std::atomic<bool> read_released_pages{false};
+// A folder for the bytes of small resolves and small textures (a diagnosis asked
+// for by a file in the title's folder), or null. Set before the game starts.
+inline const char* dump_folder = nullptr;
+// Draws made with the stand-in pixel shader of asynchronous pipeline creation
+// (their real pipeline was still being compiled), and draws that waited for
+// the real one instead. For the periodic performance line.
+inline std::atomic<unsigned long long> stand_in_draws{0}, pipeline_waits{0};
 // True when bits first..last of a bitmap of 64-bit words are all set. The words
 // are written by other threads under a lock and only read here: a request that
 // sees a page valid just before a guest write invalidates it is a draw ordered

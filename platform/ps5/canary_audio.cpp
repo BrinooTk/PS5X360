@@ -122,7 +122,7 @@ class PacedDriver final : public xe::apu::AudioDriver {
         frames_.pop_front();
       }
       ToStereo(frame, stereo);
-      const float volume = cvars::mute ? 0.0f : volume_;
+      const float volume = cvars::mute ? 0.0f : volume_ * audio_volume.load(std::memory_order_relaxed);
       int peak = 0;
       bool played = false;
       for (uint32_t at = 0; at + kGrain <= channel_samples_; at += kGrain) {

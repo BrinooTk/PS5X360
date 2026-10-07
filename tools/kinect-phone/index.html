@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PS5X360 Motion Lab</title>
+<style>body{background:#091421;color:#eaf5f0;font:18px system-ui;max-width:900px;margin:30px auto;padding:20px}button{background:#67e89b;color:#082319;border:0;border-radius:10px;padding:14px;margin:6px;font:inherit}button:disabled{opacity:.4}canvas{width:100%;border-radius:16px}video{display:none}small{color:#b8c5d2}</style>
+<h1>PS5X360 Motion Lab</h1>
+<p>Camera motion research. Sends your pose to PS5X360, which hands it to a Kinect game as its skeleton. Experimental.</p>
+<label>PS5 pairing key <input id="key" type="password" maxlength="6" autocomplete="off" placeholder="Six characters"></label><button id="connect">Connect PS5</button><button id="disconnect">Disconnect PS5</button><p id="relay" role="status">Console disconnected.</p><p id="game" role="status"></p>
+<button id="start">Start camera</button><button id="stop" disabled>Stop</button><button id="save" disabled>Export pose</button>
+<p id="status" role="status">Camera off. No connection to the emulator.</p>
+<video id="video" autoplay muted playsinline></video><canvas id="canvas"></canvas>
+<small>Processing stays in this browser. Models download from Google and jsDelivr. No video upload. Pose transmission to your LAN PS5 is opt-in. Use HTTPS on your phone, or localhost on a computer.</small>
+<script type="module">
+import {skeleton} from './pose.mjs';
+const start=document.querySelector('#start'), stop=document.querySelector('#stop'), save=document.querySelector('#save'), status=document.querySelector('#status'), video=document.querySelector('#video'), canvas=document.querySelector('#canvas'), ctx=canvas.getContext('2d');
+let stream,model,frame,latest,last=-1,active=false,busy=false,paired=false,sending=false,nextSend=0,sequence=0,session=0;
+const relay=document.querySelector('#relay'), game=document.querySelector('#game');
+// What the game on the console is doing with the pose, asked every two seconds.
+setInterval(async()=>{if(!paired){game.textContent='';return;}try{const response=await fetch('/relay/status');if(!response.ok)return;const s=await response.json();
+ game.textContent=s.guest_skeleton_bound?'Game: taking the skeleton ('+s.guest_skeleton_frames+' frames, '+s.guest_skeleton_bodies+' with a body).':s.guest_camera_open?'Game: camera opened, but its skeleton function was not found.':'Game: has not opened the camera (no Kinect game running, or still loading).';}catch(e){}},2000);
+async function sendPose(pose){
+ if(!paired||sending)return;
+ if(++sequence>0xffffffff){paired=false;relay.textContent='Reconnect the console to renew the motion session.';return;}
+ sending=true;
+ try{const joints=pose?.joints||Array.from({length:20},()=>({x:0,y:0,z:0,confidence:0}));const response=await fetch('/relay/frame',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session,sequence,tracked:!!pose,joints})});
+ if(!response.ok){const result=await response.json();throw Error(response.status===403?'Pairing expired. Enter the current key shown on the PS5 and click Connect PS5.':response.status===502?'PS5 connection lost. Reopen the emulator and check the settings-page port.':result.error||'PS5 rejected frame ('+response.status+').');}
+ relay.textContent='PS5 receiving '+(pose?'20 joints.':'body lost.');
+ }catch(e){paired=false;relay.textContent=e.message;}finally{sending=false;}
+}
+document.querySelector('#connect').onclick=async()=>{try{const response=await fetch('/relay/connect',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key:document.querySelector('#key').value.trim().toLowerCase()})});const result=await response.json();if(!response.ok)throw Error(result.error||'Pairing failed');if(!result.enabled)throw Error('Enable Camera motion (research) on the PS5 first.');session=crypto.getRandomValues(new Uint32Array(1))[0]||1;sequence=0;paired=true;nextSend=0;relay.textContent='Paired. Start camera to send joints; no video is sent.';}catch(e){paired=false;relay.textContent=e.message;}};
+document.querySelector('#disconnect').onclick=()=>{sendPose(null);paired=false;relay.textContent='Console disconnected; pose expires within 500 ms.';};
+function finish(){sendPose(null);active=false;cancelAnimationFrame(frame);stream?.getTracks().forEach(t=>t.stop());stream=null;video.srcObject=null;stop.disabled=true;start.disabled=busy;save.disabled=true;latest=null;status.textContent='Camera off.';}
+start.onclick=async()=>{busy=true;start.disabled=true;try{
+  if(!isSecureContext||!navigator.mediaDevices?.getUserMedia)throw Error('Camera requires HTTPS or localhost.');
+  if(!model){status.textContent='Loading pose model…';const {PoseLandmarker,FilesetResolver}=await import('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.21/vision_bundle.mjs');const files=await FilesetResolver.forVisionTasks('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.21/wasm');model=await PoseLandmarker.createFromOptions(files,{baseOptions:{modelAssetPath:'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task'},runningMode:'VIDEO',numPoses:1});}
+  stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'user',width:{ideal:640},height:{ideal:480}},audio:false});video.srcObject=stream;await video.play();
+  if(document.hidden){finish();return;}active=true;last=-1;stop.disabled=false;loop();
+}catch(e){finish();status.textContent=e.message;}finally{busy=false;start.disabled=active;}};
+function loop(){if(!active)return;try{
+  if(video.readyState>=2&&video.currentTime!==last){last=video.currentTime;canvas.width=video.videoWidth;canvas.height=video.videoHeight;ctx.drawImage(video,0,0);
+    const result=model.detectForVideo(video,performance.now()), points=result.landmarks[0];
+    latest=result.worldLandmarks[0]?skeleton(result.worldLandmarks[0],performance.now()):null;
+    save.disabled=!latest;status.textContent=latest?'Body detected — camera tracking active.':'Stand back so your full body is visible.';
+    if(performance.now()>=nextSend){nextSend=performance.now()+33;sendPose(latest);}
+    if(points){ctx.fillStyle='#68f3a5';for(const p of points){if(p.visibility<.5)continue;ctx.beginPath();ctx.arc(p.x*canvas.width,p.y*canvas.height,4,0,Math.PI*2);ctx.fill();}}
+  }
+}catch(e){finish();status.textContent=e.message;return;}frame=requestAnimationFrame(loop);}
+stop.onclick=finish;document.addEventListener('visibilitychange',()=>{if(document.hidden)finish();});window.addEventListener('pagehide',finish);
+save.onclick=()=>{if(!latest)return;const url=URL.createObjectURL(new Blob([JSON.stringify(latest,null,2)],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download='ps5x360-pose.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);};
+</script>
+</html>

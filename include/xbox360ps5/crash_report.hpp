@@ -25,6 +25,9 @@ void ProbeThread(void* thread, const char* name);
 // cpu: the CPU the thread was on when sampled.
 struct ThreadSample { unsigned long long rip = 0, caller = 0, caller2 = 0, slot = 0; int cpu = -1; bool in_title = false; };
 bool SampleThread(void* thread, ThreadSample* out);
+// Whether every page of a range can be read, found without touching it: the
+// kernel answers an unreadable address with an error instead of a fault.
+bool HostReadable(const void* address, size_t bytes);
 // One synchronous line in the kernel log and in the report file.
 void Stage(const char* text);
 // Logs the process address-space layout and memory budgets through Stage.

@@ -7,7 +7,10 @@
 // client fails to register may give up on its sound engine and then stall.
 #pragma once
 #include "xenia/apu/audio_system.h"
+#include <atomic>
 namespace xbox360ps5 {
+// The volume chosen in the settings, over every game voice (1 is unchanged).
+inline std::atomic<float> audio_volume{1.0f};
 class CanaryAudioSystem final : public xe::apu::AudioSystem {
  public:
   explicit CanaryAudioSystem(xe::cpu::Processor* processor) : AudioSystem(processor) {}

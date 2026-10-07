@@ -3,6 +3,8 @@
 #include "xbox360ps5/build_version.hpp"
 #include "xbox360ps5/cover_geometry.hpp"
 #include "xbox360ps5/launcher.hpp"
+#include "xbox360ps5/canary_audio.hpp"
+#include "xbox360ps5/gpu_diagnostics.hpp"
 #include "xenia/base/cvar.h"
 #include "xenia/base/logging.h"
 #include <algorithm>
@@ -11,7 +13,9 @@
 #include <cstdio>
 #include <cstring>
 #include <fstream>
+#include <chrono>
 #include <functional>
+#include <thread>
 #include <iterator>
 #include <set>
 #define STB_IMAGE_IMPLEMENTATION
@@ -28,6 +32,37 @@ DECLARE_bool(log_to_stdout);
 DECLARE_int32(draw_resolution_scale_x);
 DECLARE_int32(draw_resolution_scale_y);
 DECLARE_bool(gpu_allow_invalid_fetch_constants);
+DECLARE_int32(anisotropic_override);
+DECLARE_string(occlusion_query);
+DECLARE_string(readback_resolve);
+DECLARE_bool(readback_memexport);
+DECLARE_bool(async_shader_compilation);
+DECLARE_bool(clear_memory_page_state);
+DECLARE_bool(delay_via_maybeyield);
+DECLARE_int32(license_mask);
+DECLARE_uint32(custom_internal_display_resolution_x);
+DECLARE_uint32(custom_internal_display_resolution_y);
+DECLARE_uint64(framerate_limit);
+DECLARE_uint32(kernel_display_gamma_type);
+DECLARE_bool(present_letterbox);
+DECLARE_bool(depth_float24_convert_in_pixel_shader);
+DECLARE_bool(depth_float24_round);
+DECLARE_bool(depth_bias_shader_offset);
+DECLARE_bool(mulsc_round_toward_zero);
+DECLARE_int32(vulkan_pipeline_creation_threads);
+DECLARE_bool(disable_context_promotion);
+DECLARE_bool(use_fast_dot_product);
+DECLARE_bool(protect_zero);
+DECLARE_string(xma_decoder);
+DECLARE_bool(use_dedicated_xma_thread);
+// The core defines these three inside its input namespace.
+namespace xe {
+namespace hid {
+DECLARE_bool(vibration);
+DECLARE_double(left_stick_deadzone_percentage);
+DECLARE_double(right_stick_deadzone_percentage);
+}
+}
 #if XE_PLATFORM_PS5
 extern "C" int sceSystemServiceParamGetInt(int parameter_id, int* value);
 #endif
@@ -124,6 +159,200 @@ float Smooth(float value, float target, float dt, float speed) {
 }
 }
 
+const std::vector<Option>& Options() {
+  using S = Settings;
+  using W = OptionWhen;
+  static const std::vector<const char*> off_on = {"Desligado", "Ligado"};
+  static const std::vector<const char*> dead = {"0%", "5%", "10%", "15%", "20%", "25%"};
+  static const std::vector<Option> options = {
+      {"image_filter", &S::image_filter, 0, W::live, 0, true, "Filtro de imagem",
+       "Como a imagem do jogo é ampliada até a tela. Simples: mais leve e fiel. CAS: deixa a imagem mais nítida. FSR: upscale da AMD, bordas mais limpas. Quase não pesa.",
+       {"Simples", "CAS (nitidez)", "FSR (upscale)"}},
+      {"sharpness", &S::sharpness, 0, W::live, 1, true, "Nitidez do filtro",
+       "Força da nitidez do CAS e do FSR. Não muda nada com o filtro Simples.", {"Suave", "Padrão", "Forte"}},
+      {"dither", &S::dither, 0, W::live, 0, false, "Suavizar degradês",
+       "Mistura as cores na saída para o céu e as sombras não formarem faixas.", off_on},
+      {"stretch", &S::stretch, 0, W::live, 0, true, "Proporção da imagem",
+       "Manter: a imagem do jogo guarda a proporção original, com barras se preciso. Esticar: preenche a tela inteira, deformando jogos que não são 16:9.",
+       {"Manter", "Esticar na tela"}},
+      {"anisotropic", &S::anisotropic, 0, W::live, 0, true, "Filtro anisotrópico",
+       "Deixa as texturas mais nítidas no chão e nas paredes vistas de lado. Do jogo: usa o que o jogo pede. Valores maiores quase não pesam, mas raros jogos mostram defeitos.",
+       {"Do jogo", "2x", "4x", "8x", "16x"}},
+      {"internal_resolution", &S::internal_resolution, 0, W::launch, 0, true, "Resolução do console emulado",
+       "A resolução que o Xbox 360 emulado informa ao jogo. Em 480p ou 540p alguns jogos desenham menos pontos e ficam mais leves; em 1080p alguns desenham mais (mais pesado). Muitos jogos ignoram e continuam em 720p.",
+       {"720p", "1080p", "480p (848x480)", "540p (960x540)"}},
+      {"video_clock", &S::video_clock, 0, W::live, 0, true, "Ritmo do vídeo emulado",
+       "Quantas vezes por segundo o console emulado avisa o jogo de um novo quadro. Em 120 Hz alguns jogos presos em 30 quadros passam a 60, mas outros ficam acelerados. É um teste por jogo; não garante 60 quadros.",
+       {"60 Hz", "120 Hz (teste)"}},
+      {"vsync", &S::vsync, 0, W::start, 1, true, "VSync",
+       "Controla a sincronização vertical emulada. O ritmo automático permanece em 60 Hz mesmo quando desligado, para evitar acelerar o jogo.", off_on},
+      {"gamma", &S::gamma, 0, W::launch, 0, true, "Gama do console emulado",
+       "O tipo de tela que o console emulado informa ao jogo. Alguns jogos ficam com as sombras mais claras ou mais escuras conforme a escolha. TV HD é o padrão do Xbox 360.",
+       {"TV HD", "sRGB", "Linear"}},
+      {"depth_precision", &S::depth_precision, 0, W::start, 0, true, "Precisão da profundidade",
+       "Como a profundidade de 24 bits do Xbox 360 é reproduzida. Rápida serve à maioria. Exata corrige objetos distantes piscando ou atravessando outros em alguns jogos, mas pesa mais.",
+       {"Rápida", "Exata", "Exata e arredondada"}},
+      {"decal_bias", &S::decal_bias, 0, W::launch, 0, true, "Correção de decalques",
+       "Marcas no chão e nas paredes (sangue, faixas, sombras) que piscam em alguns jogos. Ligado, o deslocamento dessas marcas é calculado no shader.", off_on},
+      {"mulsc", &S::mulsc, 0, W::launch, 0, true, "Arredondamento de geometria",
+       "Uma conta dos shaders arredonda para zero. Corrige geometria deformada em jogos da Volition (Saints Row, Red Faction) e talvez outros. Deixe desligado nos demais.", off_on},
+      {"fast_locks", &S::fast_locks, 1, W::start, 0, true, "Travas rápidas",
+       "As travas internas do emulador giram um instante antes de dormir (novidade da 0.5.6). No GTA IV rendeu bem mais quadros por segundo. Se um jogo que funcionava parou de abrir ou trava, deixe desligado: é o comportamento da 0.5.5.",
+       off_on},
+      {"memory_boost", &S::memory_boost, 1, W::start, 0, true, "Memória de vídeo otimizada",
+       "Menos cópias e menos avisos de escrita entre o processador e o vídeo (novidade da 0.5.6). Ajuda jogos pesados. Se um jogo que funcionava parou de abrir ou mostra defeitos, deixe desligado: é o comportamento da 0.5.5. As duas opções seguintes só valem com esta ligada.",
+       off_on},
+      {"dynamic_buffers", &S::dynamic_buffers, 1, W::live, 1, true, "Otimizar buffers dinâmicos",
+       "Compara pelo conteúdo os dados que o jogo reescreve o tempo todo, em vez de vigiar a memória. Reduz trabalho do processador. Desligue só para comparar, se um jogo mostrar objetos piscando.", off_on},
+      {"memory_window", &S::memory_window, 1, W::live, 0, true, "Atualização de memória",
+       "Quanto de memória é reenviado ao vídeo quando o jogo escreve nela. 16 KiB reenviou menos nos testes; valores maiores trocam avisos de escrita por mais cópia.",
+       {"16 KiB", "64 KiB", "256 KiB"}},
+      {"occlusion", &S::occlusion, 1, W::start, 0, true, "Consultas de visibilidade",
+       "Como o emulador responde quando o jogo pergunta se um objeto está visível (brilho do sol, objetos escondidos). Rápida: pergunta ao vídeo sem esperar. Falsa: responde sem perguntar, mais leve, alguns efeitos podem errar. Precisa: espera a resposta, mais lenta.",
+       {"Rápida", "Falsa (mais leve)", "Rápida alternativa", "Precisa (mais lenta)"}},
+      {"readback", &S::readback, 1, W::live, 0, true, "Leitura da imagem pelo jogo",
+       "Alguns jogos leem de volta a imagem desenhada (foto do save, alguns efeitos). Desligada é o mais rápido. Use Rápida ou Completa só se um jogo mostrar imagens pretas ou efeitos faltando.",
+       {"Desligada", "Rápida", "Completa (lenta)"}},
+      {"memexport", &S::memexport, 1, W::live, 0, true, "Leitura de dados gerados no vídeo",
+       "Poucos jogos leem no processador dados que o vídeo grava. Deixa o jogo mais lento; ligue só se faltarem personagens ou partículas.", off_on},
+      {"async_shaders", &S::async_shaders, 1, W::live, 1, true, "Shaders em segundo plano",
+       "Ligado: o jogo não trava enquanto um efeito novo é preparado, mas o efeito pode aparecer um instante depois. Desligado: espera cada efeito ficar pronto, com travadinhas na primeira vez.", off_on},
+      {"clear_pages", &S::clear_pages, 1, W::live, 0, true, "Reler memória escrita pelo vídeo",
+       "Correção do Xenia para jogos da Team Ninja em que personagens somem. Mais lento; deixe desligado nos outros jogos.", off_on},
+      {"released_memory", &S::released_memory, 1, W::live, 0, true, "Desenhar com memória já liberada",
+       "Alguns jogos mandam desenhar com dados de memória que já devolveram (o Left 4 Dead 2 faz isso várias vezes por segundo). Desligado, esses desenhos são descartados e pode faltar algo na tela. Ligado, são feitos enquanto a memória ainda puder ser lida.",
+       off_on},
+      {"guest_yield", &S::guest_yield, 1, W::launch, 0, true, "Ceder o processador nas esperas",
+       "Quando o jogo fica girando à espera de outra tarefa, cede a vez no processador. Pode ajudar ou atrapalhar conforme o jogo.", off_on},
+      {"threaded_driver", &S::threaded_driver, 1, W::start, 0, false, "Driver de vídeo em segunda thread (teste)",
+       "O driver de vídeo grava os comandos em outra thread. É um teste: pode ajudar em jogos com muitos objetos na tela ou não mudar nada. Se algum jogo travar, desligue.", off_on},
+      {"pipeline_threads", &S::pipeline_threads, 1, W::start, 0, true, "Threads de preparo de shaders",
+       "Quantas threads preparam os efeitos em segundo plano. Automático usa a maior parte dos núcleos: prepara mais rápido, mas disputa o processador com o jogo. Menos threads podem dar um jogo mais estável enquanto os efeitos são preparados.",
+       {"Automático", "2", "4", "6"}},
+      {"fast_dot", &S::fast_dot, 1, W::launch, 0, true, "Produto escalar rápido (teste)",
+       "Uma conta muito usada pelos jogos é feita de um jeito mais leve e menos exato. Pode dar alguns quadros a mais; se a física ou a geometria ficarem estranhas, desligue.", off_on},
+      {"no_promotion", &S::no_promotion, 1, W::launch, 0, true, "Recompilador conservador",
+       "Desliga uma otimização do recompilador (context promotion). Alguns jogos de esporte só funcionam certo assim. Deixa o jogo mais lento; use só se ele travar ou se comportar errado.", off_on},
+      {"zero_page", &S::zero_page, 1, W::start, 0, true, "Permitir acesso ao endereço zero",
+       "Alguns jogos leem ou escrevem no endereço zero da memória por engano e fecham sozinhos. Ligado, esse acesso é tolerado.", off_on},
+      {"mute", &S::mute, 2, W::live, 0, false, "Som", "Silencia a saída de áudio dos jogos.", {"Ligado", "Mudo"}},
+      {"volume", &S::volume, 2, W::live, 3, true, "Volume dos jogos",
+       "Volume do som dos jogos. O volume da TV continua valendo por cima.", {"25%", "50%", "75%", "100%"}},
+      {"ui_sounds", &S::ui_sounds, 2, W::live, 1, false, "Sons da interface",
+       "Os sons ao mover, escolher e voltar nos menus do emulador.", {"Desligados", "Ligados"}},
+      {"ui_sound_volume", &S::ui_sound_volume, 2, W::live, 2, false, "Volume da interface",
+       "Volume dos efeitos de navegação dos menus, independente do som dos jogos.", {"0%", "10%", "20%", "35%", "50%", "100%"}},
+      {"xma_decoder", &S::xma_decoder, 2, W::start, 0, true, "Decodificador de áudio",
+       "Qual versão do decodificador de som do Xbox 360 (XMA) é usada. Troque se um jogo ficar sem som, com som picotado ou travar em vídeos.",
+       {"Novo", "Antigo", "Original do Xenia"}},
+      {"xma_inline", &S::xma_inline, 2, W::start, 0, true, "Áudio sem thread própria",
+       "O som é decodificado no ritmo do próprio jogo, sem uma thread separada. Pode corrigir som fora de sincronia; pesa um pouco mais.", off_on},
+      {"touchpad_menu", &S::touchpad_menu, 3, W::live, 1, false, "Clique do touchpad",
+       "Abre o guia: o touchpad chama o guia do emulador durante o jogo, e o botão Back do Xbox fica dentro do guia. Botão Back: o touchpad é o Back do Xbox, e o guia abre com OPTIONS + touchpad.",
+       {"Botão Back", "Abre o guia"}},
+      {"vibration", &S::vibration, 3, W::live, 1, true, "Vibração",
+       "A vibração que os jogos pedem vai para o controle.", {"Desligada", "Ligada"}},
+      {"deadzone_left", &S::deadzone_left, 3, W::live, 0, true, "Zona morta do analógico esquerdo",
+       "Ignora movimentos pequenos do analógico. Aumente se o personagem anda sozinho.", dead},
+      {"deadzone_right", &S::deadzone_right, 3, W::live, 0, true, "Zona morta do analógico direito",
+       "Ignora movimentos pequenos do analógico. Aumente se a câmera gira sozinha.", dead},
+      {"motion_phone", &S::motion_phone, 3, W::live, 0, true, "Movimento por câmera (pesquisa)",
+       "Recebe articulações pela rede local e mostra um diagnóstico. Ainda não fornece um sensor Kinect aos jogos. Requer a página de configurações ligada.", off_on},
+      {"show_fps", &S::show_fps, 4, W::live, 0, false, "Mostrar FPS no jogo",
+       "Mostra no canto da tela quantos quadros por segundo o jogo entrega.", off_on},
+      {"achievement_toasts", &S::achievement_toasts, 4, W::live, 1, false, "Avisos de conquista",
+       "Mostra uma notificação do PS5 quando um jogo libera uma conquista do Xbox 360.", {"Desligados", "Ligados"}},
+      {"web_page", &S::web_page, 4, W::start, 1, false, "Página de configurações pelo celular",
+       "Deixa um celular ou PC da mesma rede abrir a página de configurações do emulador e baixar os registros. Só funciona com o código mostrado na TV.",
+       {"Desligada", "Ligada"}},
+      {"arcade_full", &S::arcade_full, 4, W::launch, 0, true, "Jogos Arcade",
+       "Jogos do Xbox Live Arcade abrem como demonstração ou como versão completa. Use a versão completa com os jogos que você comprou.",
+       {"Demonstração", "Versão completa"}},
+      {"detailed_logs", &S::detailed_logs, 4, W::live, 0, false, "Registros detalhados",
+       "Grava cada chamada do jogo ao sistema no log. Deixa os jogos mais lentos; use só para investigar um problema.",
+       {"Desligados", "Ligados"}},
+  };
+  return options;
+}
+namespace {
+// "key=value" lines; anything else is skipped.
+std::map<std::string, int> ReadValues(const fs::path& path, const std::string& section = {}) {
+  std::map<std::string, int> values;
+  std::ifstream input(path);
+  std::string line;
+  bool inside = section.empty();
+  while (std::getline(input, line)) {
+    if (!line.empty() && line.back() == '\r') line.pop_back();
+    if (!line.empty() && line.front() == '[') { inside = !section.empty() && Lower(line) == "[" + Lower(section) + "]"; continue; }
+    const size_t split = line.find('=');
+    if (!inside || split == std::string::npos || line.front() == '#') continue;
+    values[line.substr(0, split)] = std::atoi(line.c_str() + split + 1);
+  }
+  return values;
+}
+const Option* FindOption(const std::string& key) {
+  for (const auto& option : Options()) if (key == option.key) return &option;
+  return nullptr;
+}
+// Keeps what the table knows, inside its range.
+GameOverrides Checked(const std::map<std::string, int>& values) {
+  GameOverrides overrides;
+  for (const auto& [key, value] : values) {
+    const Option* option = FindOption(key);
+    if (option && option->per_game && value >= 0 && value < int(option->choices.size())) overrides[key] = value;
+  }
+  return overrides;
+}
+}
+GameOverrides GamePreset(const std::string& title_id) {
+  if (title_id.empty()) return {};
+  // Confirmed on the development console. Grand Theft Auto IV: about 18 frames
+  // a second without the two, 26 to 40 with them (v0.5.6-experimental.11/12).
+  static const std::pair<const char*, GameOverrides> built_in[] = {
+      {"545407F2", {{"fast_locks", 1}, {"memory_boost", 1}}},
+      // Left 4 Dead 2: 546 draws refused in two minutes for one released page
+      // (v0.5.7-experimental.7, development console).
+      // and its text is drawn by the GPU and read back by the game: without
+      // the readback every glyph of the menu is garbage (user's screenshot).
+      // Its match loads with the alternative fast visibility queries only: of
+      // the seventeen sessions kept on the development console, the one that
+      // ran a match (nine minutes at 30 frames a second, experimental.10) had
+      // them; the others stayed on the loading screen at 16 frames a second or
+      // stopped. The core's own note on that mode names this title.
+      {"454108D4", {{"released_memory", 1}, {"readback", 2}, {"occlusion", 2}}},
+  };
+  GameOverrides preset;
+  for (const auto& [id, values] : built_in) if (Lower(title_id) == Lower(id)) preset = values;
+  for (const auto& [key, value] : Checked(ReadValues("/app0/assets/presets.txt", title_id))) preset[key] = value;
+  return preset;
+}
+Settings ForGame(const Settings& general, const std::string& title_id, const GameOverrides& own) {
+  return WithOverrides(WithOverrides(general, GamePreset(title_id)), own);
+}
+GameOverrides LoadGameOverrides(const std::string& title_id) {
+  return title_id.empty() ? GameOverrides() : Checked(ReadValues(kStorage / "game-settings" / (title_id + ".txt")));
+}
+bool SaveGameOverrides(const std::string& title_id, const GameOverrides& overrides) {
+  if (title_id.empty()) return false;
+  std::error_code error;
+  const fs::path folder = kStorage / "game-settings", path = folder / (title_id + ".txt");
+  if (overrides.empty()) { fs::remove(path, error); return true; }
+  fs::create_directories(folder, error);
+  std::ofstream output(path, std::ios::trunc);
+  for (const auto& [key, value] : overrides) output << key << "=" << value << "\n";
+  output.flush();
+  return output.good();
+}
+Settings WithOverrides(Settings settings, const GameOverrides& overrides) {
+  for (const auto& [key, value] : Checked(overrides)) settings.*(FindOption(key)->field) = value;
+  return settings;
+}
+bool StartOptionsDiffer(const Settings& a, const Settings& b) {
+  for (const auto& option : Options())
+    if (option.when == OptionWhen::start && a.*option.field != b.*option.field) return true;
+  return false;
+}
+
 void Settings::Load() {
   int ps5_language = -1;
 #if XE_PLATFORM_PS5
@@ -136,51 +365,81 @@ void Settings::Load() {
     ReadGamePaths("/app0/assets/game_paths.txt", game_paths);
     WriteGamePaths(kStorage / "game_paths.txt", game_paths);
   }
-  std::ifstream input(kStorage / "settings.txt");
   int logging_policy = 0;
-  std::string line;
-  while (std::getline(input, line)) {
-    const size_t split = line.find('=');
-    if (split == std::string::npos) continue;
-    const std::string key = line.substr(0, split);
-    const int value = std::atoi(line.c_str() + split + 1);
+  for (const auto& [key, value] : ReadValues(kStorage / "settings.txt")) {
     if (key == "language") language = value;
     else if (key == "interface_language") interface_language = value;
-    else if (key == "mute") mute = value != 0;
-    else if (key == "detailed_logs") detailed_logs = value != 0;
     else if (key == "logging_policy") logging_policy = value;
-    else if (key == "show_fps") show_fps = value != 0;
-    else if (key == "vsync") vsync = value != 0;
     // resolution_scale: not read. Scaled rendering takes the PS5's memory away
     // from the game's threads (every game crashed at its first frame).
-    else if (key == "image_filter") image_filter = std::clamp(value, 0, 2);
-    else if (key == "touchpad_menu") touchpad_menu = value != 0;
+    else if (const Option* option = FindOption(key))
+      this->*option->field = std::clamp(value, 0, int(option->choices.size()) - 1);
   }
   if (language < 0 || language > 17) language = 0;
   if (interface_language < 0 || interface_language > 17) interface_language = 0;
   ui_language.store(SupportedUiLanguage(interface_language ? interface_language : console_language));
   // One-time migration: previous builds could enable continuous tracing via
   // a debug sentinel. Start with normal logging; explicit later choices persist.
-  if (logging_policy < 1) { detailed_logs = false; Save(); }
+  if (logging_policy < 1) { detailed_logs = 0; Save(); }
 }
 void Settings::Save() const {
   std::ofstream output(kStorage / "settings.txt", std::ios::trunc);
   output << "language=" << language << "\ninterface_language=" << interface_language
-         << "\nmute=" << int(mute) << "\nlogging_policy=1\ndetailed_logs=" << int(detailed_logs)
-         << "\nshow_fps=" << int(show_fps) << "\nresolution_scale=" << resolution_scale << "\nimage_filter="
-         << image_filter << "\ntouchpad_menu=" << int(touchpad_menu) << "\nvsync=" << int(vsync) << "\n";
+         << "\nlogging_policy=1\nresolution_scale=" << resolution_scale << "\n";
+  for (const auto& option : Options()) output << option.key << "=" << this->*option.field << "\n";
 }
 void Settings::Apply() const {
   cvars::gpu_allow_invalid_fetch_constants = true;
   ui_language.store(SupportedUiLanguage(interface_language ? interface_language : console_language));
   cvars::user_language = GameLanguage();
-  cvars::mute = mute;
+  cvars::mute = mute != 0;
   cvars::draw_resolution_scale_x = cvars::draw_resolution_scale_y = resolution_scale;
   // Normal gameplay records warnings/errors plus explicit session metadata.
   // Do not duplicate every line into the platform stdout transport, and do
   // not let stale debug files silently override the user's visible setting.
   cvars::log_to_stdout = false;
   cvars::log_level = detailed_logs ? 3 : 1;
+  // Read by the core each time they matter, so they also apply to a running game.
+  cvars::anisotropic_override = anisotropic ? anisotropic + 1 : -1;  // 2x is 2 ... 16x is 5.
+  static const char* const kOcclusion[] = {"fast", "fake", "fast-alt", "strict"};
+  if (cvars::occlusion_query != kOcclusion[occlusion & 3]) cvars::occlusion_query = kOcclusion[occlusion & 3];
+  static const char* const kReadback[] = {"none", "fast", "full"};
+  if (cvars::readback_resolve != kReadback[readback % 3]) cvars::readback_resolve = kReadback[readback % 3];
+  cvars::readback_memexport = memexport != 0;
+  cvars::async_shader_compilation = async_shaders != 0;
+  cvars::clear_memory_page_state = clear_pages != 0;
+  gpu_diag::read_released_pages = released_memory != 0;
+  xe::hid::cvars::vibration = vibration != 0;
+  xe::hid::cvars::left_stick_deadzone_percentage = deadzone_left * 0.05;
+  xe::hid::cvars::right_stick_deadzone_percentage = deadzone_right * 0.05;
+  gpu_diag::unwatched_pages = dynamic_buffers != 0;
+  static constexpr uint32_t kWindows[] = {0x4000, 0x10000, 0};
+  gpu_diag::invalidation_window = kWindows[memory_window % 3];
+  audio_volume = float(volume + 1) * 0.25f;
+  // Read when a game starts.
+  cvars::delay_via_maybeyield = guest_yield != 0;
+  cvars::license_mask = arcade_full ? 1 : 0;
+  static constexpr uint32_t kResolutions[][2] = {{0, 0}, {1920, 1080}, {848, 480}, {960, 540}};
+  cvars::custom_internal_display_resolution_x = kResolutions[internal_resolution & 3][0];
+  cvars::custom_internal_display_resolution_y = kResolutions[internal_resolution & 3][1];
+  static constexpr uint32_t kGamma[] = {2, 1, 0};
+  cvars::kernel_display_gamma_type = kGamma[gamma % 3];
+  cvars::depth_bias_shader_offset = decal_bias != 0;
+  cvars::mulsc_round_toward_zero = mulsc != 0;
+  cvars::use_fast_dot_product = fast_dot != 0;
+  cvars::disable_context_promotion = no_promotion != 0;
+  // Read each time they matter.
+  cvars::framerate_limit = video_clock ? 120 : 60;
+  cvars::present_letterbox = stretch == 0;
+  // Read as the emulator starts.
+  cvars::depth_float24_convert_in_pixel_shader = depth_precision != 0;
+  cvars::depth_float24_round = depth_precision == 2;
+  static constexpr int32_t kPipelineThreads[] = {-1, 2, 4, 6};
+  cvars::vulkan_pipeline_creation_threads = kPipelineThreads[pipeline_threads & 3];
+  cvars::protect_zero = zero_page == 0;
+  static const char* const kXma[] = {"new", "old", "master"};
+  if (cvars::xma_decoder != kXma[xma_decoder % 3]) cvars::xma_decoder = kXma[xma_decoder % 3];
+  cvars::use_dedicated_xma_thread = xma_inline == 0;
 }
 const char* Settings::ScaleName(int scale) {
   return scale >= 3 ? Tr("3x (2160p, muito pesado)") : scale == 2 ? Tr("2x (1440p, pesado)") : Tr("1x (720p, original)");
@@ -246,7 +505,103 @@ int Launcher::LoadCover(const std::vector<uint8_t>& bytes) {
   return int(textures_.size()) - 1;
 }
 
+uint64_t LibrarySignature(const std::vector<std::string>& roots) {
+  uint64_t hash = 1469598103934665603ull;
+  const auto mix = [&hash](const std::string& text, uint64_t number) {
+    for (unsigned char ch : text) { hash ^= ch; hash *= 1099511628211ull; }
+    for (int n = 0; n < 8; ++n) { hash ^= uint8_t(number >> (n * 8)); hash *= 1099511628211ull; }
+  };
+  std::set<std::string> seen_roots;
+  // The same walk as Launcher::Scan: a folder with one executable is a game
+  // and is not looked into; images and packages count with their size, which
+  // keeps changing while one is being copied.
+  const std::function<void(const fs::path&, int, const fs::path&)> look =
+      [&](const fs::path& directory, int depth, const fs::path& root) {
+    std::error_code error;
+    std::vector<fs::directory_entry> entries;
+    for (fs::directory_iterator at(directory, error), end; !error && at != end; at.increment(error)) entries.push_back(*at);
+    // The order a folder is read in is not always the same.
+    std::sort(entries.begin(), entries.end(), [](const fs::directory_entry& a, const fs::directory_entry& b) { return a.path() < b.path(); });
+    int executables = 0;
+    for (const auto& entry : entries) {
+      if (Lower(entry.path().extension().string()) != ".xex" || entry.is_directory(error)) continue;
+      ++executables;
+      if (Lower(entry.path().filename().string()) == "default.xex") { executables = 1; break; }
+    }
+    if (executables == 1) {
+      // How many things the game's folder holds: it grows during a copy.
+      mix(directory.generic_string(), entries.size());
+      if (directory != root) return;
+    }
+    for (const auto& entry : entries) {
+      const fs::path& path = entry.path();
+      const std::string extension = Lower(path.extension().string());
+      if (entry.is_directory(error)) {
+        if (depth < 6 && extension != ".data") look(path, depth + 1, root);
+      } else if (extension == ".iso" || extension.empty() || extension == ".xbla" || extension == ".god") {
+        mix(path.generic_string(), uint64_t(entry.file_size(error)));
+      }
+    }
+  };
+  for (const auto& configured : roots) {
+    const fs::path root(configured);
+    std::error_code error;
+    const auto identity = NormalizeGamePath(root.generic_string());
+    if (identity.empty() || !seen_roots.insert(identity).second) continue;
+    const bool visible = fs::is_directory(root, error);
+    mix(identity, visible ? 1 : 0);
+    if (visible) look(root, 0, root);
+  }
+  return hash;
+}
+
+namespace {
+long long SteadyMilliseconds() {
+  return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+}
+LibraryWatch::~LibraryWatch() {
+  stop_ = true;
+  if (thread_.joinable()) thread_.join();
+}
+void LibraryWatch::Known(std::vector<std::string> roots, uint64_t signature) {
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    roots_ = std::move(roots);
+    known_ = signature;
+  }
+  changed_ = false;
+  if (!thread_.joinable()) thread_ = std::thread([this] { Run(); });
+}
+void LibraryWatch::Shown() { shown_at_ = SteadyMilliseconds(); }
+void LibraryWatch::Run() {
+  uint64_t last = 0;
+  bool looked = false;
+  while (!stop_) {
+    // A look every four seconds, in short naps so that closing does not wait.
+    for (int nap = 0; nap < 40 && !stop_; ++nap) std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    if (stop_) break;
+    if (SteadyMilliseconds() - shown_at_.load() > 1500) { looked = false; continue; }
+    std::vector<std::string> roots;
+    uint64_t known = 0;
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      roots = roots_;
+      known = known_;
+    }
+    const uint64_t now = LibrarySignature(roots);
+    if (now != known && looked && now == last) changed_ = true;
+    last = now;
+    looked = true;
+  }
+}
+
 void Launcher::Scan() {
+  // The game that is selected stays selected when the list is rebuilt. It is
+  // found again by its path: the old positions mean nothing in the new list.
+  const GameEntry* shown = Selected();
+  const std::string keep = shown ? shown->path.string() : std::string();
+  view_.clear();
   games_.clear();
   textures_.clear();
   arts_.clear();
@@ -347,7 +702,33 @@ void Launcher::Scan() {
     return ra != rb ? ra < rb : Lower(a.name) < Lower(b.name);
   });
   ApplyFilter();
+  for (int n = 0; n < int(view_.size()); ++n) if (games_[size_t(view_[size_t(n)])].path.string() == keep) selected_ = n;
+  scroll_ = float(selected_);
+  SelectionChanged();
+  if (mode_ == Mode::settings && settings_tab_ == 1) RefreshPerGame();
+  watch_.Known(settings_.game_paths, LibrarySignature(settings_.game_paths));
   XELOGW("LAUNCHER found {} games", games_.size());
+}
+
+void Launcher::RefreshLibrary(bool automatic) {
+  std::set<std::string> before;
+  for (const auto& game : games_) before.insert(game.path.string());
+  Scan();
+  int added = 0;
+  std::string first;
+  for (const auto& game : games_) {
+    if (before.count(game.path.string())) continue;
+    if (!added++) first = game.name;
+  }
+  XELOGW("LAUNCHER list rebuilt ({}): {} games, {} new", automatic ? "the folders changed" : "asked for", games_.size(), added);
+  scan_result_ = std::to_string(games_.size()) + " " + Tr(games_.size() == 1 ? "jogo" : "jogos");
+  if (added) scan_result_ += ", " + std::to_string(added) + " " + Tr(added == 1 ? "novo" : "novos");
+  notice_ = added == 1 ? Tr("Novo jogo encontrado: ") + first
+            : added ? Tr("Novos jogos encontrados: ") + std::to_string(added)
+                    : std::string(Tr("Lista de jogos atualizada")) + ": " + scan_result_;
+  notice_until_ = time_ + 8.0f;
+  // A new game gets its cover fetched like the ones found at the start.
+  covers_requested_ = false;
 }
 
 const GameEntry* Launcher::Selected() const {
@@ -372,7 +753,7 @@ void Launcher::ApplyFilter() {
 }
 
 // Covers for the identified games that have none of their own yet.
-void Launcher::StartCoverDownload() {
+void Launcher::StartCoverDownload(bool automatic) {
   std::vector<std::string> ids;
   std::error_code error;
   for (const auto& game : games_) {
@@ -382,6 +763,7 @@ void Launcher::StartCoverDownload() {
     if (fs::exists(beside.string() + ".jpg", error) || fs::exists(beside.string() + ".png", error)) continue;
     if (std::find(ids.begin(), ids.end(), game.title_id) == ids.end()) ids.push_back(game.title_id);
   }
+  if (automatic && ids.empty()) return;
   covers_.Start(std::move(ids));
 }
 
@@ -400,9 +782,11 @@ void Launcher::SelectionChanged() {
   patch_summary_.clear();
   other_version_ = false;
   patch_row_ = 0;
+  overrides_.clear();
   if (!Selected()) return;
   const GameEntry& game = *Selected();
   if (game.title_id.empty()) return;
+  overrides_ = LoadGameOverrides(game.title_id);
   const uint32_t title_id = uint32_t(std::strtoul(game.title_id.c_str(), nullptr, 16));
   int enabled = 0;
   auto patch_candidates = LoadPatchFiles(title_id);
@@ -449,6 +833,43 @@ void Launcher::RecordLaunch(const GameEntry& game, uint32_t title_id, const std:
   for (const auto& line : recents_) output << line << "\n";
 }
 
+void Launcher::ChangeOption(const Option& option, int step) {
+  const int count = int(option.choices.size());
+  int& value = settings_.*option.field;
+  value = (value + step + count) % count;
+  settings_.Save();
+  settings_.Apply();
+}
+void Launcher::ChangeGameOption(const Option& option, int step) {
+  // Round through "as the general option" and then each choice.
+  const int count = int(option.choices.size());
+  const auto found = overrides_.find(option.key);
+  int value = (found == overrides_.end() ? -1 : found->second) + step;
+  if (value >= count) value = -1;
+  else if (value < -1) value = count - 1;
+  if (value < 0) overrides_.erase(option.key);
+  else overrides_[option.key] = value;
+  if (Selected()) SaveGameOverrides(Selected()->title_id, overrides_);
+}
+
+void Launcher::SetWebPage(const std::string& url, const std::string& plain, const std::string& key) {
+  if (url == web_url_) return;
+  web_url_ = url;
+  web_plain_ = plain;
+  web_key_ = key;
+  web_qr_ = url.empty() ? QrCode() : MakeQrCode(url);
+}
+std::vector<std::pair<std::string, std::string>> Launcher::Games() const {
+  std::vector<std::pair<std::string, std::string>> games;
+  for (const auto& game : games_) {
+    if (game.title_id.empty()) continue;
+    bool listed = false;
+    for (const auto& other : games) listed = listed || other.first == game.title_id;
+    if (!listed) games.emplace_back(game.title_id, game.name);
+  }
+  return games;
+}
+
 bool Launcher::TakeLaunch(GameEntry& game) {
   if (!launch_pending_) return false;
   launch_pending_ = false;
@@ -456,11 +877,48 @@ bool Launcher::TakeLaunch(GameEntry& game) {
   return true;
 }
 
-void Launcher::OpenGameSheet() {
+void Launcher::OpenGameSheet(int tab) {
   if (!Selected()) return;
   SelectionChanged();
+  game_tab_ = tab;
+  game_option_row_ = game_category_ = 0;
+  game_category_open_ = false;
+  achievement_row_ = 0; RefreshAchievements();
+  // The subjects a game has options of its own in.
+  game_categories_.clear();
+  for (int category = 0; category < int(std::size(kOptionCategories)); ++category)
+    for (const auto& option : Options())
+      if (option.per_game && option.category == category) { game_categories_.push_back(category); break; }
+  FillGameRows();
+  game_return_ = Mode::shelf;
   mode_ = Mode::game;
   sheet_ = 0.0f;
+}
+void Launcher::FillGameRows() {
+  game_rows_.clear();
+  if (game_categories_.empty()) return;
+  const int category = game_categories_[size_t(game_category_) % game_categories_.size()];
+  for (int n = 0; n < int(Options().size()); ++n)
+    if (Options()[size_t(n)].per_game && Options()[size_t(n)].category == category) game_rows_.push_back(n);
+}
+// One entry per identified title, in the shelf's order.
+void Launcher::RefreshPerGame() {
+  per_game_.clear();
+  for (int n = 0; n < int(games_.size()); ++n) {
+    const std::string& id = games_[size_t(n)].title_id;
+    if (id.empty() || id == "00000000") continue;
+    bool listed = false;
+    for (int other : per_game_) listed = listed || games_[size_t(other)].title_id == id;
+    if (!listed) per_game_.push_back(n);
+  }
+  per_game_row_ = std::clamp(per_game_row_, 0, std::max(0, int(per_game_.size()) - 1));
+}
+void Launcher::CloseSettings() {
+  if (settings_changed_) { settings_.Save(); settings_.Apply(); settings_changed_ = false; }
+  // An option that is only read as the emulator starts: start again.
+  if (StartOptionsDiffer(settings_, started_)) restart_ = true;
+  restored_ = false;
+  mode_ = Mode::shelf;
 }
 
 void Launcher::Press(Key key) {
@@ -479,12 +937,66 @@ void Launcher::Press(Key key) {
         break;
       }
       if (selected_ != before) SelectionChanged();
-      if (key == Key::cross && count) { launch_ = *Selected(); launch_pending_ = true; loading_ = launch_.name; }
-      if (key == Key::triangle || key == Key::down) OpenGameSheet();
-      if (key == Key::square) { mode_ = Mode::settings; sheet_ = 0.0f; settings_row_ = 0; }
+      // A game opens its sheet first: play, its patches, its own settings.
+      if ((key == Key::cross || key == Key::down) && count) OpenGameSheet(0);
+      if (key == Key::triangle && count) OpenGameSheet(2);
+      if (key == Key::square) { mode_ = Mode::settings; sheet_ = 0.0f; settings_row_ = 0; settings_tab_ = 0; }
+      if (key == Key::options) RefreshLibrary(false);
       break;
     }
     case Mode::game: {
+      if (key == Key::l1 || key == Key::r1) { game_tab_ = (game_tab_ + (key == Key::r1 ? 1 : 3)) % 4; if (game_tab_ == 3) RefreshAchievements(); break; }
+      // Closing goes back to where the sheet was opened from.
+      const auto close = [this] { mode_ = game_return_; game_return_ = Mode::shelf; if (mode_ == Mode::settings) RefreshPerGame(); };
+      if (game_tab_ == 0) {
+        if (key == Key::cross && Selected()) {
+          launch_ = *Selected(); launch_pending_ = true; loading_ = launch_.name;
+          mode_ = Mode::shelf; game_return_ = Mode::shelf;
+        }
+        if (key == Key::right) game_tab_ = 1;
+        if (key == Key::circle || key == Key::triangle) close();
+        break;
+      }
+      if (game_tab_ == 3) {
+        const int rows = int(achievements_.size());
+        if (key == Key::up && rows) achievement_row_ = (achievement_row_ + rows - 1) % rows;
+        if (key == Key::down && rows) achievement_row_ = (achievement_row_ + 1) % rows;
+        if (key == Key::triangle) { achievement_player_ = (achievement_player_ + 1) % 4; achievement_row_ = 0; RefreshAchievements(); }
+        if (key == Key::circle) close();
+        break;
+      }
+      if (game_tab_ == 2) {
+        // Choose a subject first, then open its options.
+        if (!game_category_open_) {
+          const int categories = int(game_categories_.size());
+          if (key == Key::up && categories) game_category_ = (game_category_ + categories - 1) % categories;
+          if (key == Key::down && categories) game_category_ = (game_category_ + 1) % categories;
+          if (key == Key::cross && categories && Selected() && !Selected()->title_id.empty()) {
+            FillGameRows(); game_option_row_ = 0; game_category_open_ = true;
+          }
+          if (key == Key::circle) close();
+          break;
+        }
+        // The game's own options: each follows the general one until changed here.
+        const int own_rows = Selected() && !Selected()->title_id.empty() ? int(game_rows_.size()) : 0;
+        if (key == Key::up && own_rows) game_option_row_ = (game_option_row_ + own_rows - 1) % own_rows;
+        if (key == Key::down && own_rows) game_option_row_ = (game_option_row_ + 1) % own_rows;
+        if ((key == Key::left || key == Key::right || key == Key::cross) && own_rows)
+          ChangeGameOption(Options()[size_t(game_rows_[size_t(game_option_row_)])], key == Key::left ? -1 : 1);
+        if (key == Key::triangle && game_categories_.size() > 1) {
+          // The next subject.
+          game_category_ = (game_category_ + 1) % int(game_categories_.size());
+          game_option_row_ = 0;
+          FillGameRows();
+        }
+        if (key == Key::square && own_rows) {
+          // Back to what is recommended for this game, or to the general options.
+          overrides_.clear();
+          SaveGameOverrides(Selected()->title_id, overrides_);
+        }
+        if (key == Key::circle) game_category_open_ = false;
+        break;
+      }
       const int rows = int(patch_rows_.size());
       if (key == Key::up && rows) patch_row_ = (patch_row_ + rows - 1) % rows;
       if (key == Key::down && rows) patch_row_ = (patch_row_ + 1) % rows;
@@ -504,10 +1016,33 @@ void Launcher::Press(Key key) {
         SelectionChanged();
         patch_row_ = keep;
       }
-      if (key == Key::circle || key == Key::triangle) mode_ = Mode::shelf;
+      if (key == Key::circle || key == Key::triangle) close();
       break;
     }
     case Mode::settings: {
+      if (key == Key::l1 || key == Key::r1) {
+        settings_tab_ = 1 - settings_tab_;
+        if (settings_tab_ == 1) RefreshPerGame();
+        break;
+      }
+      if (settings_tab_ == 1) {
+        // Every identified game: its own settings open from here too.
+        const int games = int(per_game_.size());
+        if (key == Key::up && games) per_game_row_ = (per_game_row_ + games - 1) % games;
+        if (key == Key::down && games) per_game_row_ = (per_game_row_ + 1) % games;
+        if (key == Key::cross && games) {
+          const int wanted = per_game_[size_t(per_game_row_)];
+          filter_ = 0;
+          ApplyFilter();
+          for (int n = 0; n < int(view_.size()); ++n) if (view_[size_t(n)] == wanted) selected_ = n;
+          scroll_ = float(selected_);
+          OpenGameSheet(2);
+          game_return_ = Mode::settings;
+          sheet_ = 1.0f;  // One sheet turns into the other: no slide.
+        }
+        if (key == Key::circle || key == Key::square) CloseSettings();
+        break;
+      }
       const int rows = 13;
       if (key == Key::up) settings_row_ = (settings_row_ + rows - 1) % rows;
       if (key == Key::down) settings_row_ = (settings_row_ + 1) % rows;
@@ -522,25 +1057,41 @@ void Launcher::Press(Key key) {
           settings_.language = kLanguages[(index + step + total) % total].id;
           settings_.interface_language = settings_.language;
           settings_.Apply(); // Update interface text immediately while the sheet is open.
-        } else if (settings_row_ == 2) settings_.mute = !settings_.mute;
-        else if (settings_row_ == 3) settings_.image_filter = (settings_.image_filter + step + 3) % 3;
-        else if (settings_row_ == 4) settings_.touchpad_menu = !settings_.touchpad_menu;
-        else if (settings_row_ == 5) settings_.detailed_logs = !settings_.detailed_logs;
-        else if (settings_row_ == 6) settings_.show_fps = !settings_.show_fps;
-        else if (settings_row_ == 7) { settings_.vsync = !settings_.vsync; restart_needed_ = settings_.vsync != cvars::vsync; }
-        else if (settings_row_ == 8 && key == Key::cross) StartCoverDownload();
-        else if (settings_row_ == 9 && key == Key::cross) { mode_ = Mode::paths; path_row_ = 0; path_error_.clear(); }
-        else if (settings_row_ == 10 && key == Key::cross) Scan();
-        else if (settings_row_ == 11 && key == Key::cross) { RefreshSaves(); mode_ = Mode::saves; }
+          settings_changed_ = true;
+        } else if (settings_row_ >= 2 && settings_row_ <= 6) {
+          // A sub-menu: the options of one subject.
+          if (key != Key::left) {
+            category_ = settings_row_ - 2;
+            option_row_ = 0;
+            category_rows_.clear();
+            for (int n = 0; n < int(Options().size()); ++n)
+              if (Options()[size_t(n)].category == category_) category_rows_.push_back(n);
+            mode_ = Mode::options;
+          }
+        }
+        else if (settings_row_ == 7 && key == Key::cross) StartCoverDownload();
+        else if (settings_row_ == 8 && key == Key::cross) { mode_ = Mode::paths; path_row_ = 0; path_error_.clear(); }
+        else if (settings_row_ == 9 && key == Key::cross) RefreshLibrary(false);
+        else if (settings_row_ == 10 && key == Key::cross) { RefreshSaves(); mode_ = Mode::saves; }
+        else if (settings_row_ == 11 && key == Key::cross) {
+          for (const auto& option : Options()) settings_.*option.field = option.recommended;
+          settings_.Save();
+          settings_.Apply();
+          restored_ = true;
+        }
         else if (settings_row_ == 12 && key == Key::cross) { settings_.Save(); restart_ = true; }
-        if (settings_row_ >= 1 && settings_row_ < 8) settings_changed_ = true;
       }
-      if (key == Key::circle || key == Key::square) {
-        if (settings_changed_) { settings_.Save(); settings_.Apply(); settings_changed_ = false; }
-        // The rendering resolution is set up with the emulator: start again.
-        if (restart_needed_) restart_ = true;
-        mode_ = Mode::shelf;
-      }
+      if (key == Key::up || key == Key::down) { restored_ = false; scan_result_.clear(); }
+      if (key == Key::circle || key == Key::square) CloseSettings();
+      break;
+    }
+    case Mode::options: {
+      const int rows = int(category_rows_.size());
+      if (key == Key::up && rows) option_row_ = (option_row_ + rows - 1) % rows;
+      if (key == Key::down && rows) option_row_ = (option_row_ + 1) % rows;
+      if ((key == Key::left || key == Key::right || key == Key::cross) && rows)
+        ChangeOption(Options()[size_t(category_rows_[size_t(option_row_)])], key == Key::left ? -1 : 1);
+      if (key == Key::circle || key == Key::square) mode_ = Mode::settings;
       break;
     }
     case Mode::saves: {
@@ -594,13 +1145,17 @@ void Launcher::Press(Key key) {
       break;
     }
     case Mode::profiles: {
+      if (key == Key::l1 || key == Key::r1) { profile_player_ = (profile_player_ + (key == Key::r1 ? 1 : 3)) % 4; RefreshProfiles(); }
       // The profiles, then "create a new one".
       const int rows = int(profiles_.size()) + 1;
       if (key == Key::up) profile_row_ = (profile_row_ + rows - 1) % rows;
       if (key == Key::down) profile_row_ = (profile_row_ + 1) % rows;
       if (key == Key::cross) {
         if (profile_row_ < int(profiles_.size())) {
-          if (profile_hooks_.use) profile_hooks_.use(profiles_[size_t(profile_row_)].xuid);
+          if (profile_hooks_.use_player) {
+            if (!profile_hooks_.use_player(profiles_[size_t(profile_row_)].xuid, uint32_t(profile_player_)))
+              message_ = Tr("Este perfil já está vinculado a outro jogador.");
+          } else if (profile_hooks_.use) profile_hooks_.use(profiles_[size_t(profile_row_)].xuid);
           RefreshProfiles();
         } else {
           mode_ = Mode::name;
@@ -633,7 +1188,7 @@ void Launcher::Press(Key key) {
       if (key == Key::square && !new_name_.empty()) new_name_.pop_back();
       if (key == Key::triangle) {
         if (new_name_.empty()) name_error_ = Tr("Digite um nome.");
-        else if (profile_hooks_.create && profile_hooks_.create(new_name_)) {
+        else if (profile_hooks_.create_player ? profile_hooks_.create_player(new_name_, uint32_t(profile_player_)) : (profile_hooks_.create && profile_hooks_.create(new_name_))) {
           RefreshProfiles();
           mode_ = Mode::profiles;
           profile_row_ = 0;
@@ -721,6 +1276,10 @@ struct Launcher::Canvas {
                         ImVec2(centre.x - g, centre.y + g * 0.8f), ink, 2 * scale);
     } else if (button == 's') {
       list->AddRect(ImVec2(centre.x - g, centre.y - g), ImVec2(centre.x + g, centre.y + g), ink, 0, 0, 2 * scale);
+    } else if (button == 'm') {
+      // OPTIONS, as printed on the controller: three short lines.
+      for (float row : {-1.0f, 0.0f, 1.0f})
+        list->AddLine(ImVec2(centre.x - g, centre.y + row * 4.5f * scale), ImVec2(centre.x + g, centre.y + row * 4.5f * scale), ink, 2 * scale);
     } else {
       // The directional buttons: a pair of arrows, sideways ('h') or up and down.
       const float a = 3.5f * scale, b = 8 * scale, w = 4.5f * scale;
@@ -776,10 +1335,18 @@ void Launcher::Draw(ImGuiIO& io) {
   // Downloaded covers show up as soon as the download ends.
   if (covers_.TakeFinished() && loading_.empty()) Scan();
   // Missing covers are fetched as soon as the shelf shows.
-  if (!covers_requested_ && !games_.empty() && loading_.empty()) {
+  if (!covers_requested_ && !games_.empty() && loading_.empty() && !covers_.Busy()) {
     covers_requested_ = true;
-    StartCoverDownload();
+    StartCoverDownload(true);
   }
+  // A game copied to the console while the shelf is on screen shows up by
+  // itself, once its folder has stopped changing. Not under an open sheet:
+  // the list would change under what the user is doing there.
+  if (loading_.empty()) watch_.Shown();
+  if (mode_ == Mode::shelf && loading_.empty() && watch_.TakeChanged()) RefreshLibrary(true);
+  // The end of a cover download is said on the shelf for a few seconds.
+  if (covers_busy_ && !covers_.Busy()) { notice_ = covers_.Status(); notice_until_ = time_ + 8.0f; }
+  covers_busy_ = covers_.Busy();
   sheet_ = Smooth(sheet_, mode_ == Mode::shelf ? 0.0f : 1.0f, dt, 14);
   ImGui::SetNextWindowPos(ImVec2(0, 0));
   ImGui::SetNextWindowSize(io.DisplaySize);
@@ -813,12 +1380,22 @@ void Launcher::Draw(ImGuiIO& io) {
     c.alpha = 1.0f;
     c.Fill(0, 0, 1920, 1080, 0x000000, 0.55f * sheet_);
     if (mode_ == Mode::settings) DrawSettingsSheet(c);
+    else if (mode_ == Mode::options) DrawOptionsSheet(c);
     else if (mode_ == Mode::saves) DrawSavesSheet(c);
     else if (mode_ == Mode::paths) DrawPaths(c);
     else if (mode_ == Mode::folders) DrawFolders(c);
     else if (mode_ == Mode::profiles) DrawProfilesSheet(c);
     else if (mode_ == Mode::name) DrawNameSheet(c);
     else DrawGameSheet(c);
+  }
+  // What is happening by itself: covers being fetched, a game just found.
+  // Under the name, on the left: the sheets cover the right side.
+  c.alpha = 1.0f;
+  if (covers_.Busy()) {
+    const std::string status = covers_.Status();
+    c.Chip(status.rfind(Tr("Baixando capas: "), 0) == 0 ? status : std::string(Tr("Baixando capas...")), 96, 112, kAccent);
+  } else if (!notice_.empty() && time_ < notice_until_) {
+    c.Chip(notice_, 96, 112, kText);
   }
   draw_version();
   ImGui::End();
@@ -983,7 +1560,7 @@ void Launcher::DrawShelf(Canvas& c) {
     c.Text(Tr("Copie cada jogo por FTP para uma pasta em"), 960, 470, 24, kMuted, 1.0f, 1);
     c.Text("/data/homebrew/PPSA50011/assets/roms/", 960, 510, 28, kAccent, 1.0f, 1);
     c.Text(Tr("Vale pasta extraída (com default.xex), imagem .iso ou pacote GOD/STFS."), 960, 570, 24, kMuted, 1.0f, 1);
-    c.Text(Tr("Depois aperte Quadrado e escolha Atualizar lista de jogos."), 960, 610, 24, kMuted, 1.0f, 1);
+    c.Text(Tr("O jogo aparece aqui sozinho alguns segundos depois do fim da cópia."), 960, 610, 24, kMuted, 1.0f, 1);
   } else if (!count) {
     c.Text(Tr("Nenhum jogo neste filtro"), 960, 420, 36, kText, 1.0f, 1);
     c.Text(Tr("Use L1 e R1 para trocar de filtro."), 960, 480, 24, kMuted, 1.0f, 1);
@@ -1059,14 +1636,18 @@ void Launcher::DrawShelf(Canvas& c) {
   if (!message_.empty()) c.Text(message_, 96, 916, 24, kWarning, 1.0f, 0, 1700);
   else if(Selected() && Lower(Selected()->name).find("garden warfare")!=std::string::npos)
     c.Text(Tr("Este jogo exige serviços online. Autenticação Xbox Live/EA não está disponível."),96,916,24,kWarning,1,0,1700);
+  // The settings page's address and key, on the bottom line beside the version.
+  if (!web_plain_.empty())
+    c.Text(Tr("Celular ou computador: ") + web_plain_ + "    " + Tr("Código: ") + web_key_, 96, 1040, 20, kMuted, 1.0f, 0, 1500);
   c.Fill(96, 964, 1728, 1, kWhite, 0.08f);
   float x = 96;
   if (count) {
-    x = c.Hint('x', Tr("Jogar"), x, 990);
-    x = c.Hint('t', Tr("Detalhes e patches"), x, 990);
+    x = c.Hint('x', Tr("Abrir"), x, 990);
+    x = c.Hint('t', Tr("Configurações do jogo"), x, 990);
   }
   x = c.Hint('s', Tr("Configurações"), x, 990);
   if (count > 1) x = c.Hint('h', Tr("Trocar de jogo"), x, 990);
+  x = c.Hint('m', Tr("Recarregar lista"), x, 990);
   c.Text(Tr("L1 / R1   Filtro"), 1824, 992, 20, kMuted, 1.0f, 2);
 }
 
@@ -1083,7 +1664,21 @@ void Launcher::DrawGameSheet(Canvas& c) {
   c.Text(Tr("ID do título  ") + (game.title_id.empty() ? std::string(Tr("ainda não identificado")) : game.title_id), x + 260, 160, 20, kMuted, 1.0f, 0, 540);
   c.Text(game.path.string(), x + 260, 192, 20, kFaint, 1.0f, 0, 540);
 
-  c.Text(Tr("Patches"), x + 56, 286, 28, kText);
+  // Three pages: play, the game's patches and its own settings.
+  {
+    const char* const tabs[] = {"Jogar", "Patches", "Configurações", "Conquistas"};
+    float tab_x = x + 56;
+    for (int n = 0; n < 4; ++n) {
+      const float width = c.Width(Tr(tabs[n]), 28);
+      c.Text(Tr(tabs[n]), tab_x, 272, 28, n == game_tab_ ? kText : kFaint);
+      if (n == game_tab_) c.Fill(tab_x, 310, width, 3, kAccent, 0.9f, 2);
+      tab_x += width + 26;
+    }
+    c.Text("L1 / R1", tab_x, 278, 20, kFaint);
+  }
+  if (game_tab_ == 0) { DrawGamePlay(c, x); return; }
+  if (game_tab_ == 2) { DrawGameOptions(c, x); return; }
+  if (game_tab_ == 3) { DrawAchievements(c, x); return; }
   const int rows = int(patch_rows_.size());
   if (!rows) {
     const char* reason = game.title_id.empty()
@@ -1124,29 +1719,238 @@ void Launcher::DrawGameSheet(Canvas& c) {
   if (rows > 1) c.Hint('v', Tr("Mover"), hint, 1004);
 }
 
+void Launcher::RefreshAchievements() {
+  achievements_.clear();
+  if (!achievement_list_ || !Selected() || Selected()->title_id.empty()) return;
+  try { achievements_ = achievement_list_(uint32_t(std::stoul(Selected()->title_id, nullptr, 16)), uint32_t(achievement_player_)); }
+  catch (const std::exception&) { achievements_.clear(); }
+  achievement_row_ = std::clamp(achievement_row_, 0, std::max(0, int(achievements_.size()) - 1));
+}
+void Launcher::DrawAchievements(Canvas& c, float x) {
+  const std::string profile = achievement_player_name_ ? achievement_player_name_(uint32_t(achievement_player_)) : "";
+  c.Text(std::string(Tr("Jogador")) + " " + std::to_string(achievement_player_ + 1) + " · " + profile, x + 56, 334, 24, kAccent);
+  unsigned unlocked = 0, earned = 0, total = 0;
+  for (const auto& entry : achievements_) { total += entry.score; if (entry.unlocked) { ++unlocked; earned += entry.score; } }
+  c.Text(std::to_string(unlocked) + " / " + std::to_string(achievements_.size()) + " · " + std::to_string(earned) + " / " + std::to_string(total) + "G", x + 796, 338, 20, kMuted, 1, 2);
+  const int rows = int(achievements_.size()), shown = 7;
+  const int first = std::clamp(achievement_row_ - shown / 2, 0, std::max(0, rows - shown));
+  for (int n = first; n < std::min(rows, first + shown); ++n) {
+    const auto& entry = achievements_[size_t(n)]; const float y = 388 + (n - first) * 56.f;
+    c.Fill(x + 40, y, 780, 50, n == achievement_row_ ? kSurfaceHigh : kSurface, 1, 10);
+    c.Text(entry.name, x + 64, y + 12, 22, entry.unlocked ? kAccent : kBody, 1, 0, 520);
+    c.Text(std::string(Tr(entry.unlocked ? "Desbloqueada" : "Bloqueada")) + " · " + std::to_string(entry.score) + "G", x + 796, y + 12, 20, kMuted, 1, 2);
+  }
+  if (rows) c.Wrapped(achievements_[size_t(achievement_row_)].description, x + 56, 826, 20, kBody, 750);
+  else c.Wrapped(Tr("Abra este jogo com este perfil para carregar as conquistas disponíveis."), x + 56, 400, 22, kMuted, 730);
+  float hint = c.Hint('t', Tr("Jogador"), x + 56, 1004); c.Hint('o', Tr("Voltar"), hint, 1004);
+}
+
+void Launcher::DrawGameOptions(Canvas& c, float x) {
+  const GameEntry& game = *Selected();
+  float hint = x + 56;
+  if (game.title_id.empty() || game_rows_.empty()) {
+    c.Wrapped(Tr("Abra este jogo uma vez: o emulador identifica o título e os ajustes dele passam a aparecer aqui."),
+              x + 56, 340, 24, kMuted, 740);
+    c.Hint('o', Tr("Fechar"), hint, 1004);
+    return;
+  }
+  const auto& options = Options();
+  const GameOverrides preset = GamePreset(game.title_id);
+  if (!game_category_open_) {
+    for (int n = 0; n < int(game_categories_.size()); ++n) {
+      const int category = game_categories_[size_t(n)];
+      int count = 0, own = 0;
+      for (const auto& option : options) if (option.per_game && option.category == category) {
+        ++count; if (overrides_.count(option.key)) ++own;
+      }
+      const float y = 336 + n * 88.0f;
+      const bool focused = n == game_category_;
+      c.Fill(x + 40, y, 780, 76, focused ? kSurfaceHigh : kSurface, focused ? 1.0f : 0.6f, 12);
+      if (focused) c.Edge(x + 40, y, 780, 76, kAccent, 0.9f, 12, 2.0f);
+      c.Text(Tr(category == 0 ? "Gráficos" : kOptionCategories[category]), x + 64, y + 12, 26, focused ? kText : kBody);
+      std::string detail = std::to_string(count) + " " + Tr("Opções");
+      if (own) detail += " · " + std::to_string(own) + " " + Tr("Personalizadas");
+      c.Text(detail, x + 64, y + 44, 19, own ? kAccent : kMuted);
+      c.Text(">", x + 792, y + 22, 28, focused ? kAccent : kFaint, 1.0f, 2);
+    }
+    hint = c.Hint('x', Tr("Abrir"), hint, 1004);
+    c.Hint('o', Tr("Voltar"), hint, 1004);
+    return;
+  }
+  const int category = game_categories_[size_t(game_category_)];
+  c.Text(Tr(category == 0 ? "Gráficos" : kOptionCategories[category]), x + 56, 334, 28, kText);
+  const int rows = int(game_rows_.size()), shown = 8;
+  const int first = std::clamp(game_option_row_ - shown / 2, 0, std::max(0, rows - shown));
+  if (rows > shown) {
+    char position[32];
+    std::snprintf(position, sizeof(position), Tr("%d de %d"), game_option_row_ + 1, rows);
+    c.Text(position, x + 820, 336, 20, kFaint, 1.0f, 2);
+  }
+  for (int n = first; n < rows && n < first + shown; ++n) {
+    const Option& option = options[size_t(game_rows_[size_t(n)])];
+    const float y = 384 + (n - first) * 48.0f;
+    const bool focused = n == game_option_row_;
+    c.Fill(x + 40, y, 780, 44, focused ? kSurfaceHigh : kSurface, focused ? 1.0f : 0.6f, 10);
+    if (focused) c.Edge(x + 40, y, 780, 44, kAccent, 0.9f, 10, 2.0f);
+    c.Text(Tr(option.label), x + 64, y + 10, 22, focused ? kText : kBody, 1.0f, 0, 420);
+    // The game's own value stands out; one it does not change shows the general value.
+    const auto found = overrides_.find(option.key);
+    const auto recommended = preset.find(option.key);
+    const bool own = found != overrides_.end(), preset_here = !own && recommended != preset.end();
+    const int value = own ? found->second : preset_here ? recommended->second : settings_.*option.field;
+    std::string text = Tr(option.choices[size_t(value)]);
+    if (!own) text = std::string(preset_here ? Tr("Recomendado: ") : Tr("Geral: ")) + text;
+    c.Text(text, x + 796, y + 10, 22, own ? kAccent : preset_here ? kBody : kFaint, 1.0f, 2, 360);
+  }
+  const Option& option = options[size_t(game_rows_[size_t(game_option_row_)])];
+  c.Fill(x + 40, 774, 780, 1, kWhite, 0.10f);
+  c.list->PushClipRect(c.At(x + 40, 780), c.At(x + 820, 930), true);
+  c.Wrapped(Tr(option.about), x + 56, 786, 20, kBody, 750);
+  c.list->PopClipRect();
+  const char* when = option.when == OptionWhen::start ? Tr("O emulador reinicia sozinho ao abrir este jogo.")
+                   : option.when == OptionWhen::launch ? Tr("Vale a partir da próxima vez que o jogo abrir.")
+                                                       : Tr("Vale na hora, também com o jogo aberto (pelo guia).");
+  c.Text(when, x + 56, 936, 20, kMuted, 1.0f, 0, 750);
+  char own_count[64];
+  std::snprintf(own_count, sizeof(own_count), Tr("%d ajustes próprios deste jogo"), int(overrides_.size()));
+  c.Text(own_count, x + 56, 966, 20, overrides_.empty() ? kFaint : kAccent);
+  hint = c.Hint('x', Tr("Alterar"), hint, 1004);
+  if (game_categories_.size() > 1) hint = c.Hint('t', Tr("Outro assunto"), hint, 1004);
+  hint = c.Hint('s', preset.empty() ? Tr("Limpar") : Tr("Recomendado"), hint, 1004);
+  c.Hint('o', Tr("Voltar"), hint, 1004);
+}
+
+// The first page of a game's sheet: the button that starts it, and what it starts with.
+void Launcher::DrawGamePlay(Canvas& c, float x) {
+  const GameEntry& game = *Selected();
+  const float pulse = 0.5f + 0.5f * std::sin(time_ * 3.0f);
+  c.Fill(x + 40, 338, 780, 88, kAccent, 1.0f, 16);
+  c.Edge(x + 36, 334, 788, 96, kAccent, 0.25f + 0.35f * pulse, 20, 3.0f);
+  c.Text(Tr("Jogar"), x + 430, 360, 36, kInk, 1.0f, 1);
+  // What is in force for this game: its own choices, then what is recommended for it.
+  c.Text(Tr("Este jogo abre com"), x + 56, 462, 24, kText);
+  const GameOverrides preset = game.title_id.empty() ? GameOverrides() : GamePreset(game.title_id);
+  int line = 0, more = 0;
+  for (const auto& option : Options()) {
+    if (!option.per_game) continue;
+    const auto own = overrides_.find(option.key);
+    const auto recommended = preset.find(option.key);
+    const bool is_own = own != overrides_.end();
+    if (!is_own && recommended == preset.end()) continue;
+    if (line >= 8) { ++more; continue; }
+    const float y = 506 + line * 40.0f;
+    const int value = is_own ? own->second : recommended->second;
+    c.Text(Tr(option.label), x + 56, y, 22, kBody, 1.0f, 0, 430);
+    c.Text(std::string(Tr(option.choices[size_t(value)])) + (is_own ? "" : std::string("  ·  ") + Tr("recomendado")),
+           x + 820, y, 22, is_own ? kAccent : kMuted, 1.0f, 2, 330);
+    ++line;
+  }
+  if (!line) {
+    c.Wrapped(game.title_id.empty()
+                  ? Tr("As configurações gerais. Depois da primeira vez que abrir, este jogo pode ter as suas.")
+                  : Tr("As configurações gerais, sem nenhum ajuste próprio. A página Configurações guarda ajustes só deste jogo."),
+              x + 56, 506, 22, kMuted, 750);
+  } else if (more) {
+    char rest[48];
+    std::snprintf(rest, sizeof(rest), Tr("e mais %d"), more);
+    c.Text(rest, x + 56, 506 + line * 40.0f, 20, kFaint);
+  }
+  c.Fill(x + 40, 864, 780, 1, kWhite, 0.10f);
+  c.Text(patch_summary_.empty() ? std::string(Tr("Nenhum patch ligado")) : patch_summary_, x + 56, 884, 22,
+         patch_summary_.empty() ? kFaint : kAccent, 1.0f, 0, 750);
+  c.Text(Tr("L1 / R1 mostram os patches e as configurações deste jogo."), x + 56, 922, 20, kMuted, 1.0f, 0, 750);
+  float hint = c.Hint('x', Tr("Jogar"), x + 56, 1004);
+  c.Hint('o', game_return_ == Mode::settings ? Tr("Voltar") : Tr("Fechar"), hint, 1004);
+}
+
+void Launcher::DrawOptionsSheet(Canvas& c) {
+  const float x = 1920 - 860 * sheet_;
+  c.Fill(x, 0, 860, 1080, kSheet, 0.98f);
+  c.Fill(x, 0, 3, 1080, kAccent, 0.9f);
+  c.Text(Tr("Configurações"), x + 56, 52, 24, kMuted);
+  c.Text(Tr(kOptionCategories[category_]), x + 56, 88, 36, kText);
+  const auto& options = Options();
+  const int rows = int(category_rows_.size());
+  if (!rows) return;
+  const int shown = 9;
+  const int first = std::clamp(option_row_ - shown / 2, 0, std::max(0, rows - shown));
+  if (rows > shown) {
+    char position[32];
+    std::snprintf(position, sizeof(position), Tr("%d de %d"), option_row_ + 1, rows);
+    c.Text(position, x + 820, 104, 20, kFaint, 1.0f, 2);
+  }
+  for (int n = first; n < rows && n < first + shown; ++n) {
+    const Option& option = options[size_t(category_rows_[size_t(n)])];
+    const float y = 156 + (n - first) * 48.0f;
+    const bool focused = n == option_row_;
+    c.Fill(x + 40, y, 780, 44, focused ? kSurfaceHigh : kSurface, focused ? 1.0f : 0.6f, 10);
+    if (focused) c.Edge(x + 40, y, 780, 44, kAccent, 0.9f, 10, 2.0f);
+    c.Text(Tr(option.label), x + 64, y + 10, 22, focused ? kText : kBody, 1.0f, 0, 440);
+    const int value = settings_.*option.field;
+    c.Text(Tr(option.choices[size_t(value)]), x + 796, y + 10, 22,
+           focused ? kAccent : value == option.recommended ? kMuted : kWarning, 1.0f, 2, 320);
+  }
+  const Option& option = options[size_t(category_rows_[size_t(option_row_)])];
+  c.Fill(x + 40, 612, 780, 1, kWhite, 0.10f);
+  c.Wrapped(Tr(option.about), x + 56, 632, 20, kBody, 750);
+  // What is recommended, and when a change takes effect.
+  c.Text(std::string(Tr("Recomendado: ")) + Tr(option.choices[size_t(option.recommended)]), x + 56, 860, 20, kAccent, 1.0f, 0, 750);
+  const char* when = option.when == OptionWhen::start ? Tr("O emulador reinicia para aplicar, ao fechar as configurações.")
+                   : option.when == OptionWhen::launch ? Tr("Vale a partir da próxima vez que um jogo abrir.")
+                                                       : Tr("Vale na hora, também com o jogo aberto (pelo guia).");
+  c.Text(when, x + 56, 892, 20, kMuted, 1.0f, 0, 750);
+  if (option.per_game)
+    c.Text(Tr("Cada jogo pode ter o seu valor: abra o jogo e vá à página Configurações."), x + 56, 924, 20, kMuted, 1.0f, 0, 750);
+  float hint = c.Hint('x', Tr("Alterar"), x + 56, 1004);
+  hint = c.Hint('o', Tr("Voltar"), hint, 1004);
+  c.Hint('v', Tr("Mover"), hint, 1004);
+}
+
 void Launcher::DrawSettingsSheet(Canvas& c) {
   const float x = 1920 - 860 * sheet_;
   c.Fill(x, 0, 860, 1080, kSheet, 0.98f);
   c.Fill(x, 0, 3, 1080, kAccent, 0.9f);
   c.Text(Tr("Configurações"), x + 56, 64, 36, kText);
+  {
+    const char* const tabs[] = {"Geral", "Por jogo"};
+    float tab_x = x + 400;
+    for (int n = 0; n < 2; ++n) {
+      const float width = c.Width(Tr(tabs[n]), 26);
+      c.Text(Tr(tabs[n]), tab_x, 72, 26, n == settings_tab_ ? kText : kFaint);
+      if (n == settings_tab_) c.Fill(tab_x, 106, width, 3, kAccent, 0.9f, 2);
+      tab_x += width + 36;
+    }
+    c.Text("L1 / R1", tab_x, 78, 20, kFaint);
+  }
+  if (settings_tab_ == 1) { DrawPerGame(c, x); return; }
   const char* language = "English";
   for (const auto& entry : kLanguages) if (entry.id == settings_.interface_language) language = Tr(entry.name);
   std::string profile = Tr("Nenhum");
   for (const auto& entry : profiles_) if (entry.active) profile = entry.name;
+  // How many options of a subject are not at the recommended value.
+  const auto changed = [this](int category) {
+    int count = 0;
+    for (const auto& option : Options())
+      if (option.category == category && settings_.*option.field != option.recommended) ++count;
+    if (!count) return std::string(">");
+    char text[48];
+    std::snprintf(text, sizeof(text), Tr("%d alteradas  >"), count);
+    return std::string(text);
+  };
   struct Row { const char* label; std::string value; const char* about; };
   const Row rows[] = {
       {Tr("Perfil do jogador"), profile, Tr("O perfil (gamertag) conectado no console emulado. Os jogos gravam os saves e as conquistas no perfil; cada perfil tem os seus.")},
       {Tr("Idioma"), language, Tr("Automático usa o idioma do PS5. Sem tradução da interface, usa inglês. A seleção também vale para o próximo jogo; os idiomas disponíveis dependem de cada jogo.")},
-      {Tr("Som"), settings_.mute ? Tr("Mudo") : Tr("Ligado"), Tr("Silencia a saída de áudio dos jogos.")},
-      {Tr("Filtro de imagem"), Settings::FilterName(settings_.image_filter), Tr("Como a imagem do jogo é ampliada até a tela. Simples: mais leve. CAS: deixa a imagem mais nítida. FSR: upscale da AMD, bordas mais limpas. Quase não pesa.")},
-      {Tr("Clique do touchpad"), settings_.touchpad_menu ? Tr("Abre o guia") : Tr("Botão Back"), Tr("Abre o guia: o touchpad chama o guia do emulador durante o jogo, e o botão Back do Xbox fica dentro do guia. Botão Back: o touchpad é o Back do Xbox, e o guia abre com OPTIONS + touchpad.")},
-      {Tr("Registros detalhados"), settings_.detailed_logs ? Tr("Ligados") : Tr("Desligados"), Tr("Grava cada chamada do jogo ao sistema no log. Deixa os jogos mais lentos; use só para investigar um problema.")},
-      {Tr("Mostrar FPS no jogo"), settings_.show_fps ? Tr("Ligado") : Tr("Desligado"), Tr("Mostra no canto da tela quantos quadros por segundo o jogo entrega.")},
-      {Tr("VSync"), settings_.vsync ? Tr("Ligado") : Tr("Desligado"), Tr("Controla a sincronização vertical emulada. O ritmo automático permanece em 60 Hz mesmo quando desligado, para evitar acelerar o jogo. Ao fechar este painel, o emulador reinicia para aplicar a mudança.")},
+      {Tr("Vídeo"), changed(0), Tr("Filtro de imagem (Simples, CAS, FSR), nitidez, filtro anisotrópico, resolução do console emulado e VSync.")},
+      {Tr("Desempenho"), changed(1), Tr("Opções que trocam precisão por velocidade: memória de vídeo, consultas de visibilidade, leituras de imagem, shaders em segundo plano e testes.")},
+      {Tr("Áudio"), changed(2), Tr("Som, volume dos jogos e sons da interface.")},
+      {Tr("Controles"), changed(3), Tr("Clique do touchpad, vibração e zona morta dos analógicos.")},
+      {Tr("Sistema"), changed(4), Tr("Contador de FPS, avisos de conquista, jogos Arcade e registros.")},
       {Tr("Baixar capas"), covers_.Busy() ? Tr("Baixando...") : "", Tr("Baixa do XboxUnity (o mesmo serviço do Aurora) as capas dos jogos que ainda não têm uma. Precisa de internet no PS5. Uma imagem cover.jpg na pasta do jogo sempre tem prioridade.")},
       {Tr("Pastas de jogos"), std::to_string(settings_.game_paths.size()), Tr("Adicione várias pastas, inclusive em dispositivos externos. Pastas desconectadas continuam salvas. Apenas locais acessíveis ao aplicativo podem ser lidos.")},
-      {Tr("Atualizar lista de jogos"), "", Tr("Procura de novo os jogos, as capas e os patches nas pastas.")},
+      {Tr("Atualizar lista de jogos"), scan_result_, Tr("Procura de novo os jogos, as capas e os patches nas pastas. Um jogo copiado para o console também aparece sozinho, alguns segundos depois do fim da cópia.")},
       {Tr("Saves"), "", Tr("Veja os dados por jogo e o local de armazenamento. Perfis e conquistas são preservados junto com os saves.")},
+      {Tr("Restaurar o recomendado"), restored_ ? Tr("Feito") : "", Tr("Volta todas as opções de Vídeo, Desempenho, Áudio, Controles e Sistema para o valor recomendado. Os ajustes próprios de cada jogo não mudam.")},
       {Tr("Reiniciar o emulador"), "", Tr("Fecha e abre o emulador de novo.")}};
   for (int n = 0; n < 13; ++n) {
     const float y = 122 + n * 42.0f;
@@ -1158,13 +1962,74 @@ void Launcher::DrawSettingsSheet(Canvas& c) {
   }
   c.Wrapped(rows[settings_row_].about, x + 56, 684, 20, kBody, 750);
   const std::string covers = covers_.Status();
-  if (settings_row_ == 8 && !covers.empty()) c.Text(covers, x + 56, 770, 20, kAccent, 1.0f, 0, 750);
+  if (settings_row_ == 7 && !covers.empty()) c.Text(covers, x + 56, 770, 20, kAccent, 1.0f, 0, 750);
   c.Fill(x + 40, 808, 780, 1, kWhite, 0.10f);
-  c.Text(Tr("Sobre"), x + 56, 820, 28, kText);
-  c.Wrapped(std::string(Tr("PS5X360: emulador experimental de Xbox 360 para PlayStation 5.")) +
-            " Xenia. " + Tr("Vídeo RADV (PS5_Vulkan), áudio XMA (FFmpeg) e patches Xenia Canary. Nenhum jogo, BIOS ou chave acompanha o emulador."),
-            x + 56, 860, 20, kMuted, 750);
-  float hint = c.Hint('x', Tr("Alterar"), x + 56, 1004);
+  if (web_qr_.size) {
+    // The settings page: its QR code on a white card, the address and the key beside it.
+    const float card = 164, module = float(int((card - 16) / float(web_qr_.size)));
+    const float qx = x + 56, qy = 824, inset = (card - module * float(web_qr_.size)) / 2;
+    c.Fill(qx, qy, card, card, kWhite, 1.0f, 8);
+    for (int my = 0; my < web_qr_.size; ++my) {
+      for (int mx = 0; mx < web_qr_.size;) {
+        if (!web_qr_.At(mx, my)) { ++mx; continue; }
+        int run = 1;
+        while (mx + run < web_qr_.size && web_qr_.At(mx + run, my)) ++run;
+        c.Fill(qx + inset + float(mx) * module, qy + inset + float(my) * module, float(run) * module, module, 0x000000);
+        mx += run;
+      }
+    }
+    c.Text(Tr("Configurações pelo celular"), x + 244, 822, 24, kText);
+    c.Text(web_plain_, x + 244, 858, 22, kAccent, 1.0f, 0, 570);
+    c.Text(std::string(Tr("Código: ")) + web_key_, x + 244, 890, 20, kBody);
+    c.Wrapped(Tr("Aponte a câmera do celular para o código, na mesma rede do PS5. Muda as opções com o jogo aberto e baixa os registros."),
+              x + 244, 922, 18, kMuted, 570);
+  } else {
+    c.Text(Tr("Sobre"), x + 56, 820, 28, kText);
+    c.Wrapped(std::string(Tr("PS5X360: emulador experimental de Xbox 360 para PlayStation 5.")) +
+              " Xenia. " + Tr("Vídeo RADV (PS5_Vulkan), áudio XMA (FFmpeg) e patches Xenia Canary. Nenhum jogo, BIOS ou chave acompanha o emulador."),
+              x + 56, 860, 20, kMuted, 750);
+  }
+  float hint = c.Hint('x', settings_row_ >= 2 && settings_row_ <= 6 ? Tr("Abrir") : Tr("Alterar"), x + 56, 1004);
+  hint = c.Hint('o', Tr("Fechar"), hint, 1004);
+  c.Hint('v', Tr("Mover"), hint, 1004);
+}
+
+// The settings sheet's second page: every identified game, and how it differs from the general options.
+void Launcher::DrawPerGame(Canvas& c, float x) {
+  const int rows = int(per_game_.size()), shown = 13;
+  if (!rows) {
+    c.Wrapped(Tr("Nenhum jogo identificado ainda. Abra um jogo uma vez: o emulador reconhece o título e ele passa a aparecer aqui, com as configurações só dele."),
+              x + 56, 140, 24, kMuted, 750);
+    c.Hint('o', Tr("Fechar"), x + 56, 1004);
+    return;
+  }
+  const int first = std::clamp(per_game_row_ - shown / 2, 0, std::max(0, rows - shown));
+  for (int n = first; n < rows && n < first + shown; ++n) {
+    const GameEntry& game = games_[size_t(per_game_[size_t(n)])];
+    const float y = 122 + (n - first) * 42.0f;
+    const bool focused = n == per_game_row_;
+    c.Fill(x + 40, y, 780, 40, focused ? kSurfaceHigh : kSurface, focused ? 1.0f : 0.6f, 10);
+    if (focused) c.Edge(x + 40, y, 780, 40, kAccent, 0.9f, 10, 2.0f);
+    c.Text(game.name, x + 64, y + 8, 24, focused ? kText : kBody, 1.0f, 0, 470);
+    const size_t own = LoadGameOverrides(game.title_id).size();
+    const bool preset = !GamePreset(game.title_id).empty();
+    char text[64];
+    if (own) std::snprintf(text, sizeof(text), own == 1 ? Tr("%d ajuste próprio") : Tr("%d ajustes próprios"), int(own));
+    c.Text(own ? std::string(text) : std::string(preset ? Tr("Recomendado") : Tr("Geral")), x + 796, y + 8, 22,
+           own ? kAccent : preset ? kBody : kFaint, 1.0f, 2, 250);
+  }
+  if (rows > shown) {
+    char position[32];
+    std::snprintf(position, sizeof(position), Tr("%d de %d"), per_game_row_ + 1, rows);
+    c.Text(position, x + 820, 678, 20, kFaint, 1.0f, 2);
+  }
+  c.Wrapped(Tr("Cada jogo pode ter as suas configurações de vídeo, desempenho, áudio e sistema. O que ele não muda segue as configurações gerais. Também dá para chegar aqui pela prateleira: abra o jogo e vá à página Configurações."),
+            x + 56, 704, 20, kBody, 750);
+  c.Fill(x + 40, 808, 780, 1, kWhite, 0.10f);
+  const GameEntry& game = games_[size_t(per_game_[size_t(per_game_row_)])];
+  c.Text(game.name, x + 56, 826, 24, kText, 1.0f, 0, 750);
+  c.Text(std::string("ID ") + game.title_id + "   ·   " + game.kind, x + 56, 862, 20, kMuted, 1.0f, 0, 750);
+  float hint = c.Hint('x', Tr("Configurações deste jogo"), x + 56, 1004);
   hint = c.Hint('o', Tr("Fechar"), hint, 1004);
   c.Hint('v', Tr("Mover"), hint, 1004);
 }
@@ -1265,7 +2130,7 @@ void Launcher::DrawProfilesSheet(Canvas& c) {
   const float x = 1920 - 860 * sheet_;
   c.Fill(x, 0, 860, 1080, kSheet, 0.98f);
   c.Fill(x, 0, 3, 1080, kAccent, 0.9f);
-  c.Text(Tr("Perfis"), x + 56, 64, 36, kText);
+  c.Text(Tr("Perfis") + std::string(" · ") + Tr("Jogador") + " " + std::to_string(profile_player_ + 1), x + 56, 64, 36, kText);
   c.Wrapped(Tr("Cada perfil guarda os seus próprios saves e conquistas. O perfil em uso vale para o próximo jogo iniciado."),
             x + 56, 118, 20, kMuted, 750);
   const int rows = int(profiles_.size()) + 1;
@@ -1279,7 +2144,8 @@ void Launcher::DrawProfilesSheet(Canvas& c) {
     if (n < int(profiles_.size())) {
       const ProfileEntry& profile = profiles_[size_t(n)];
       c.Text(profile.name, x + 64, y + 20, 24, focused ? kText : kBody, 1.0f, 0, 520);
-      if (profile.active) c.Text(Tr("Em uso"), x + 796, y + 20, 24, kAccent, 1.0f, 2);
+      if (profile.player >= 0) c.Text(std::string(Tr("Jogador")) + " " + std::to_string(profile.player + 1), x + 796, y + 20, 24, kAccent, 1.0f, 2);
+      else if (profile.active) c.Text(Tr("Em uso"), x + 796, y + 20, 24, kAccent, 1.0f, 2);
     } else {
       c.Text(Tr("Criar novo perfil"), x + 64, y + 20, 24, focused ? kText : kBody);
       c.Text("+", x + 796, y + 16, 28, kAccent, 1.0f, 2);
@@ -1288,6 +2154,8 @@ void Launcher::DrawProfilesSheet(Canvas& c) {
   float hint = c.Hint('x', profile_row_ < int(profiles_.size()) ? Tr("Usar este perfil") : Tr("Criar"), x + 56, 1004);
   hint = c.Hint('o', Tr("Voltar"), hint, 1004);
   c.Hint('v', Tr("Mover"), hint, 1004);
+  c.Text("L1 / R1 · " + std::string(Tr("Jogador")), x + 820, 956, 20, kMuted, 1, 2);
+  if (!message_.empty()) c.Wrapped(message_, x + 56, 904, 20, kWarning, 750);
 }
 
 void Launcher::DrawNameSheet(Canvas& c) {

@@ -32,6 +32,7 @@ if(CMAKE_CROSSCOMPILING)
 endif()
 
 add_subdirectory("${XENIA_CANARY}" core EXCLUDE_FROM_ALL)
+target_include_directories(xenia-kernel PRIVATE "${XBOX360PS5_ROOT}/include")
 
 set(XBOX360PS5_CANARY_LIBRARIES
   xenia-apu xenia-apu-nop xenia-base xenia-core xenia-cpu xenia-gpu xenia-hid
@@ -93,6 +94,8 @@ if(CMAKE_CROSSCOMPILING)
     "${XBOX360PS5_ROOT}/platform/ps5/canary_system.cpp"
     "${XBOX360PS5_ROOT}/platform/ps5/crash_report.cpp"
     "${XBOX360PS5_ROOT}/platform/ps5/thread_place.cpp"
+    "${XBOX360PS5_ROOT}/platform/ps5/notify.cpp"
+    "${XBOX360PS5_ROOT}/platform/ps5/web_settings.cpp"
     "${XBOX360PS5_ROOT}/platform/ps5/net_log.cpp"
     "${XBOX360PS5_ROOT}/platform/ps5/libc_bits.c"
     "${XBOX360PS5_ROOT}/platform/ps5/native_memory_calls.cpp"

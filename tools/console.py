@@ -42,7 +42,7 @@ def update(host, canary=False, experimental=False, experimental_version=None):
     if experimental:
         canary = True
     build = "build/canary-game-experimental" if experimental else "build/canary-game"
-    expected_version = "0.5.6-experimental.12"
+    expected_version = "0.5.8-experimental.1"
     if experimental_version:
         if not experimental or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+-experimental\.[0-9]+", experimental_version):
             raise ValueError("A preserved experimental version is required")

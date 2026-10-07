@@ -28,6 +28,7 @@ struct Voice { int clip; size_t at; };
 std::mutex mutex;
 std::vector<Voice> voices;
 std::atomic<bool> muted{false};
+std::atomic<float> gain{0.20f};
 bool started = false;
 
 void Run(int port) {
@@ -44,7 +45,9 @@ void Run(int port) {
         voice = voice->at >= clip.size() ? voices.erase(voice) : voice + 1;
       }
     }
-    for (size_t n = 0; n < mix.size(); ++n) grain[n] = int16_t(std::clamp(mix[n], -32768, 32767));
+    const float level = muted.load() ? 0.0f : gain.load();
+    for (size_t n = 0; n < mix.size(); ++n)
+      grain[n] = int16_t(std::clamp(float(mix[n]) * level, -32768.0f, 32767.0f));
     // The output call waits for the port, which paces this loop.
     if (sceAudioOutOutput(port, grain.data()) < 0) std::this_thread::sleep_for(std::chrono::milliseconds(5));
   }
@@ -77,4 +80,8 @@ void PlayUiSound(UiSound sound) {
   voices.push_back({clip, 0});
 }
 void MuteUiSounds(bool mute) { muted = mute; }
+void SetUiSoundVolume(int level) {
+  static constexpr float levels[] = {0.0f, 0.10f, 0.20f, 0.35f, 0.50f, 1.0f};
+  gain = levels[std::clamp(level, 0, 5)];
+}
 }

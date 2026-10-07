@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.5.7
+
+- Fix Left 4 Dead 2 (start, menu text, match loading) and Forza Horizon closing at START (fiber switches).
+- Fix readbacks returned before the GPU had finished, guest socket addresses on the PS5, cut crash records
+  and Arcade/LIVE packages started as games; add nested packages and the LZX decompression service.
+- Make the v0.5.6 speed-ups (fast locks, optimized video memory) options that are off by default.
+- Add per-game settings, the game sheet (Play, Patches, Settings, Achievements) and new video, performance,
+  audio and control options.
+- Add the settings page for a phone or computer, with log download as ZIP.
+- Keep the library up to date by itself, announce cover downloads, reload the list with OPTIONS.
+- Add four local players, achievement notifications and lists, and interface sound volume.
+- Report what a stopped game was waiting for in its log.
+- Add the camera motion research option (off by default; not Kinect support).
+- See `docs/releases/v0.5.7.md` for installation, testing limits and what was seen on a console.
+
 ## 0.5.6
 
 - Improve shared memory lookups, invalidation granularity and CPU/GPU synchronization.

@@ -13,7 +13,7 @@ struct PadSample {
 class DualSenseInput final : public xe::hid::InputDriver {
  public:
   using Rumble = std::function<bool(uint16_t, uint16_t)>;
-  explicit DualSenseInput(Rumble rumble = {});
+  explicit DualSenseInput(Rumble rumble = {}, uint32_t user = 0);
   void Submit(const PadSample& sample);
   xe::X_STATUS Setup() override;
   xe::X_RESULT GetCapabilities(uint32_t, uint32_t, xe::hid::X_INPUT_CAPABILITIES*) override;
@@ -24,6 +24,7 @@ class DualSenseInput final : public xe::hid::InputDriver {
   xe::hid::InputType GetInputType() const override { return xe::hid::InputType::Controller; }
 #endif
  private:
+  uint32_t user_ = 0;
   std::mutex mutex_;
   bool connected_ = false;
   xe::hid::X_INPUT_STATE state_{};

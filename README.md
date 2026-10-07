@@ -15,9 +15,9 @@ An **Xbox 360 emulator for PlayStation 5**, built on Xenia Canary with native Du
 
 **Games already run on the development PS5. Compatibility varies, and development is ongoing.** Expect crashes, visual errors and uneven performance in some titles. There is no promise of full-library compatibility or 60 FPS.
 
-## Latest release: v0.5.6
+## Latest release: v0.5.7
 
-Further game compatibility improvements, optimized memory and CPU/GPU synchronization, a Saved data panel, visible build version, and optional AutoLog 1.0.9. [Read the release notes](docs/releases/v0.5.6.md). Performance and compatibility vary by game.
+Fixes for Left 4 Dead 2 and Forza Horizon, settings for each game, a settings page for a phone or computer, a library that keeps itself up to date, four local players and achievement lists. [Read the release notes](docs/releases/v0.5.7.md). Performance and compatibility vary by game.
 
 ## What is included
 
@@ -97,7 +97,7 @@ The active core is Xenia Canary at `b083312b8b18e07e6e410b82104191f126722794`. T
 
 [Build notes and source dependencies](docs/BUILD.md) · [Third-party credits](docs/CREDITS.md)
 
-The current release is **v0.5.6**. See the [changelog](CHANGELOG.md) and
+The current release is **v0.5.7**. See the [changelog](CHANGELOG.md) and
 [release versioning guide](docs/RELEASING.md) for future updates.
 
 ## Support the projects
@@ -119,7 +119,7 @@ PS5X360 is an independent community project and is not affiliated with Sony or M
 
 ## Downloads
 
-The [v0.5.6 release](https://github.com/BrinooTk/PS5X360/releases/tag/v0.5.6)
+The [v0.5.7 release](https://github.com/BrinooTk/PS5X360/releases/tag/v0.5.7)
 offers **PPSA50011.zip** and the optional **AutoLog 1.0.9-preview ELF**.
 Extract the ZIP and copy `PPSA50011` to `/data/homebrew/`. Preserve existing games,
 saves and logs when updating. AutoLog is loaded separately once per console boot;

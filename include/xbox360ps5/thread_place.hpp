@@ -26,4 +26,14 @@ void SetGpuCoreDedicated(bool on);
 bool GpuCoreDedicated();
 // How many placements the system accepted and refused.
 void ThreadPlaceCounts(unsigned* given, unsigned* not_given);
+// For a sample without the lean towards system calls. On the console a signal
+// sent from another CPU is taken when the target next enters the kernel, so a
+// thread that makes many system calls is mostly caught in them. With the
+// sampler on the target's own CPU and at the highest priority, its wake-up
+// preempts the target, which then takes the signal where it was interrupted.
+// SeatSampler puts the target (a pthread_t) and the calling thread on one CPU
+// and raises the caller; UnseatSampler puts both back as they were.
+struct SamplerSeat { unsigned long long target_cpus = 0, own_cpus = 0; int own_priority = -1; bool seated = false; };
+SamplerSeat SeatSampler(void* target, int cpu);
+void UnseatSampler(void* target, const SamplerSeat& seat);
 }

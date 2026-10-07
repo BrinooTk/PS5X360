@@ -98,8 +98,41 @@ int main(int argc,char** argv) {
     xbox360ps5::Launcher launcher(fonts,settings);launcher.SetDrawer(&drawer);launcher.Scan();launcher.SetPadConnected(true);
     if (launcher.GamePaths().size() != 7) throw std::runtime_error("Overlapping roots duplicated games");
     puts("PASS: seven different default.xex paths remain distinct; overlapping and normalized roots deduplicate");
+    launcher.SetWebPage("http://192.168.0.19:8360/?k=1a2b3c", "http://192.168.0.19:8360/", "1a2b3c");
     for(int i=0;i<3;++i) launcher.Press(xbox360ps5::Key::right);
-    if (argc == 3 && std::string(argv[2]) == "logging") {
+    uint32_t assigned_player = 99;
+    if (argc == 3 && std::string(argv[2]) == "ui-volume") {
+      fs::create_directories("/download0/xbox360ps5");
+      std::ofstream("/download0/xbox360ps5/settings.txt") << "volume=3\nui_sounds=1\n";
+      xbox360ps5::Settings legacy; legacy.Load();
+      if (legacy.ui_sound_volume != 2 || legacy.volume != 3) throw std::runtime_error("Legacy settings must default interface volume to 20% and keep game volume");
+      legacy.ui_sound_volume = 1; legacy.Save();
+      xbox360ps5::Settings saved; saved.Load();
+      if (saved.ui_sound_volume != 1 || saved.volume != 3) throw std::runtime_error("Independent UI volume must persist");
+      settings = saved;
+      launcher.Press(xbox360ps5::Key::square);
+      for(int i=0;i<4;++i) launcher.Press(xbox360ps5::Key::down);
+      launcher.Press(xbox360ps5::Key::cross);
+      puts("PASS: legacy default 20%, independent UI volume persistence, game volume preserved");
+    } else if (argc == 3 && std::string(argv[2]) == "profiles4") {
+      xbox360ps5::ProfileHooks hooks;
+      hooks.list = [] { return std::vector<xbox360ps5::ProfileEntry>{{"Player",1,true,0},{"Alex",2,false,1},{"Chris",3,false,2},{"Morgan",4,false,3},{"Guest",5,false,-1}}; };
+      hooks.use_player = [&](uint64_t, uint32_t slot) { assigned_player = slot; return true; };
+      launcher.SetProfiles(std::move(hooks));
+      launcher.Press(xbox360ps5::Key::square); launcher.Press(xbox360ps5::Key::cross);
+      launcher.Press(xbox360ps5::Key::r1); launcher.Press(xbox360ps5::Key::cross);
+      if (assigned_player != 1) throw std::runtime_error("Profile selected for wrong player");
+      puts("PASS: player selector routes profile association to player 2");
+    } else if (argc == 3 && std::string(argv[2]) == "achievements") {
+      const auto paths = launcher.GamePaths();
+      for (const auto& path : paths) launcher.RecordLaunch({path.parent_path().filename().string(),path,"XEX",path.parent_path().string()},0x545407F2,path.parent_path().filename().string(),{},0);
+      launcher.Scan();
+      launcher.SetAchievements([](uint32_t, uint32_t slot) {
+        return std::vector<xbox360ps5::AchievementEntry>{{"First steps","Complete the opening mission.",1,10,slot==0},{"Explorer","Visit all districts.",2,30,false},{"Finish line","Win your first race.",3,20,slot==0}};
+      }, [](uint32_t slot){ return slot==0 ? "Player" : "Alex"; });
+      launcher.Press(xbox360ps5::Key::cross);
+      for(int i=0;i<3;++i) launcher.Press(xbox360ps5::Key::r1);
+    } else if (argc == 3 && std::string(argv[2]) == "logging") {
       fs::create_directories("/download0/xbox360ps5");
       std::ofstream("/download0/xbox360ps5/settings.txt") << "detailed_logs=1\nvsync=0\n";
       xbox360ps5::Settings migrated; migrated.Load(); migrated.Apply();
@@ -115,40 +148,133 @@ int main(int argc,char** argv) {
         throw std::runtime_error("Debug sentinel must not override normal logging");
       puts("PASS: legacy traces reset once; explicit choices persist; VSync preserved; debug sentinel ignored");
     } else if (argc == 3 && std::string(argv[2]) == "vsync") {
+      // VSync is the eighth option of the Video sub-menu, the third row of the settings.
+      const auto to_vsync = [](xbox360ps5::Launcher& l) {
+        l.Press(xbox360ps5::Key::square);
+        for (int i=0;i<2;++i) l.Press(xbox360ps5::Key::down);
+        l.Press(xbox360ps5::Key::cross);
+        for (int i=0;i<7;++i) l.Press(xbox360ps5::Key::down);
+      };
       fs::create_directories("/download0/xbox360ps5");
       cvars::vsync = true;
-      launcher.Press(xbox360ps5::Key::square);
-      for (int i=0;i<7;++i) launcher.Press(xbox360ps5::Key::down);
+      launcher.SetStarted(settings);
+      to_vsync(launcher);
       launcher.Press(xbox360ps5::Key::cross);
+      launcher.Press(xbox360ps5::Key::circle);
       launcher.Press(xbox360ps5::Key::circle);
       if (settings.vsync || !launcher.TakeRestart() || !cvars::vsync)
         throw std::runtime_error("VSync toggle must request restart without changing the live flag");
       xbox360ps5::Settings restored; restored.Load();
       if (restored.vsync) throw std::runtime_error("VSync off was not persisted");
       xbox360ps5::Launcher cancel(fonts,settings);
+      cancel.SetStarted(settings);
       cvars::vsync = false;
-      cancel.Press(xbox360ps5::Key::square);
-      for (int i=0;i<7;++i) cancel.Press(xbox360ps5::Key::down);
+      to_vsync(cancel);
       cancel.Press(xbox360ps5::Key::cross);
       cancel.Press(xbox360ps5::Key::cross);
+      cancel.Press(xbox360ps5::Key::circle);
       cancel.Press(xbox360ps5::Key::circle);
       if (cancel.TakeRestart() || settings.vsync)
         throw std::runtime_error("Reverting VSync should cancel the restart");
       puts("PASS: VSync off persists, restart requested, live flag unchanged, reverting cancels restart");
-      launcher.Press(xbox360ps5::Key::square);
-      for (int i=0;i<7;++i) launcher.Press(xbox360ps5::Key::down);
+      to_vsync(launcher);
     } else if (argc == 3 && std::string(argv[2]) == "saves") {
       fs::create_directories("/data/homebrew/PPSA50011/saves/0009000000000001/454108CF");
       launcher.SetSaveRoot("/data/homebrew/PPSA50011/saves");
       launcher.Press(xbox360ps5::Key::square);
-      for (int i=0;i<11;++i) launcher.Press(xbox360ps5::Key::down);
+      for (int i=0;i<10;++i) launcher.Press(xbox360ps5::Key::down);
       launcher.Press(xbox360ps5::Key::cross);
-    } else if (argc == 3) {
-      launcher.Press(xbox360ps5::Key::square);
-      if (std::string(argv[2]) != "settings") {
-        for (int i=0;i<9;++i) launcher.Press(xbox360ps5::Key::down);
+    } else if (argc == 3 && std::string(argv[2]) == "game") {
+      // A game the emulator has identified: its sheet's second page holds its own options.
+      fs::create_directories("/download0/xbox360ps5");
+      const auto paths = launcher.GamePaths();
+      launcher.RecordLaunch({"Visual sample 1", paths[0], "XEX", paths[0].parent_path().string()}, 0x545407F2,
+                            "Visual sample 1", {}, 0);
+      launcher.Scan();
+      for (int i=0;i<3;++i) launcher.Press(xbox360ps5::Key::left);  // Recently played comes first.
+      launcher.Press(xbox360ps5::Key::triangle);        // Straight to the game's own settings.
+      launcher.Press(xbox360ps5::Key::cross);           // Open Graphics.
+      launcher.Press(xbox360ps5::Key::right);           // The image filter: this game's own.
+      launcher.Press(xbox360ps5::Key::right);
+      for (int i=0;i<5;++i) launcher.Press(xbox360ps5::Key::down);
+      launcher.Press(xbox360ps5::Key::cross);           // And one more further down.
+      const auto own = xbox360ps5::LoadGameOverrides("545407F2");
+      if (own.size() != 2 || own.at("image_filter") != 1) throw std::runtime_error("A game's own options were not kept");
+      xbox360ps5::Settings general;
+      // (The second option changed above is now one of the preset's: checked with a map of its own below.)
+      const auto in_force = xbox360ps5::ForGame(general, "545407F2", {{"image_filter", 1}});
+      if (in_force.image_filter != 1 || general.image_filter != 0) throw std::runtime_error("Own options must not change the general ones");
+      // The built-in preset of this title is in force without being asked for; other titles follow the general options.
+      if (!in_force.fast_locks || !in_force.memory_boost || general.fast_locks || general.memory_boost ||
+          xbox360ps5::ForGame(general, "4D5307E6", {}).fast_locks)
+        throw std::runtime_error("A game's preset must apply to that game only");
+      xbox360ps5::GameOverrides off = {{"fast_locks", 0}};
+      if (xbox360ps5::ForGame(general, "545407F2", off).fast_locks) throw std::runtime_error("A game's own option must win over its preset");
+      puts("PASS: a game's own options are kept apart, in its file, and laid over the general ones");
+    } else if (argc == 3 && (std::string(argv[2]) == "play" || std::string(argv[2]) == "gameperf" ||
+                             std::string(argv[2]) == "categories" || std::string(argv[2]) == "gamecontrols" ||
+                             std::string(argv[2]) == "pergame" || std::string(argv[2]) == "pergame-open")) {
+      // Two identified games: one with a built-in preset and a setting of its own, one with nothing.
+      const std::string what = argv[2];
+      fs::create_directories("/download0/xbox360ps5");
+      const auto paths = launcher.GamePaths();
+      launcher.RecordLaunch({"Visual sample 2", paths[1], "XEX", paths[1].parent_path().string()}, 0x4D5307E6,
+                            "Visual sample 2", {}, 0);
+      launcher.RecordLaunch({"Visual sample 1", paths[0], "XEX", paths[0].parent_path().string()}, 0x545407F2,
+                            "Visual sample 1", {}, 0);
+      xbox360ps5::SaveGameOverrides("545407F2", {{"image_filter", 2}, {"readback", 1}});
+      launcher.Scan();
+      for (int i=0;i<3;++i) launcher.Press(xbox360ps5::Key::left);
+      xbox360ps5::GameEntry launched;
+      if (what == "play") {
+        // The shelf's X opens the sheet; it does not start the game. X on its first page does.
         launcher.Press(xbox360ps5::Key::cross);
-        if (std::string(argv[2]) == "folders") launcher.Press(xbox360ps5::Key::square);
+        if (launcher.TakeLaunch(launched)) throw std::runtime_error("X on the shelf must open the game's sheet, not start it");
+        xbox360ps5::Launcher second(fonts, settings); second.SetDrawer(&drawer); second.Scan();
+        for (int i=0;i<3;++i) second.Press(xbox360ps5::Key::left);
+        second.Press(xbox360ps5::Key::cross);
+        second.Press(xbox360ps5::Key::cross);
+        if (!second.TakeLaunch(launched) || launched.title_id != "545407F2")
+          throw std::runtime_error("X on the Play page must start the selected game");
+        second.SetDrawer(nullptr);
+        puts("PASS: X opens the game's sheet; X on its Play page starts that game");
+      } else if (what == "categories" || what == "gamecontrols") {
+        launcher.Press(xbox360ps5::Key::triangle);
+        if (what == "gamecontrols") {
+          for (int i=0;i<3;++i) launcher.Press(xbox360ps5::Key::down);
+          launcher.Press(xbox360ps5::Key::cross);
+        }
+      } else if (what == "gameperf") {
+        launcher.Press(xbox360ps5::Key::triangle);
+        launcher.Press(xbox360ps5::Key::down);       // Choose Performance.
+        launcher.Press(xbox360ps5::Key::cross);      // Open its options.
+        for (int i=0;i<5;++i) launcher.Press(xbox360ps5::Key::down);
+      } else {
+        launcher.Press(xbox360ps5::Key::square);
+        launcher.Press(xbox360ps5::Key::r1);
+        if (what == "pergame-open") {
+          launcher.Press(xbox360ps5::Key::down);       // The second game in the list.
+          launcher.Press(xbox360ps5::Key::cross);
+          launcher.Press(xbox360ps5::Key::cross);      // Open Graphics.
+          launcher.Press(xbox360ps5::Key::right);      // Its first video option becomes its own.
+          launcher.Press(xbox360ps5::Key::right);
+          const auto own = xbox360ps5::LoadGameOverrides("4D5307E6");
+          if (own.size() != 1 || own.at("image_filter") != 1 || xbox360ps5::LoadGameOverrides("545407F2").size() != 2)
+            throw std::runtime_error("The game opened from the settings' list must be the one that is changed");
+          puts("PASS: a game opened from the settings' list keeps its own options, and only its own");
+        }
+      }
+    } else if (argc == 3) {
+      const std::string what = argv[2];
+      launcher.Press(xbox360ps5::Key::square);
+      // The sub-menus by the row that opens them.
+      const std::pair<const char*, int> menus[] = {{"video", 2}, {"performance", 3}, {"audio", 4}, {"controls", 5},
+                                                   {"system", 6}, {"paths", 8}, {"folders", 8}};
+      for (const auto& [name, row] : menus) if (what == name) {
+        for (int i=0;i<row;++i) launcher.Press(xbox360ps5::Key::down);
+        launcher.Press(xbox360ps5::Key::cross);
+        if (what == "folders") launcher.Press(xbox360ps5::Key::square);
+        if (what == "performance") for (int i=0;i<2;++i) launcher.Press(xbox360ps5::Key::down);
       }
     }
     for(int i=0;i<180;++i) {ImGui::NewFrame();launcher.Draw(io);ImGui::Render();}

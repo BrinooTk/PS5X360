@@ -7,4 +7,5 @@ enum class UiSound { move, select, back };
 void StartUiSounds();
 void PlayUiSound(UiSound sound);
 void MuteUiSounds(bool mute);
+void SetUiSoundVolume(int level);
 }
