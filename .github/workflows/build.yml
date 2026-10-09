@@ -1,0 +1,302 @@
+# PS5X360 - the title (docs/BUILD.md) and a ready-to-install PPSA50011 bundle, on a GitHub-hosted runner.
+# SPDX-License-Identifier: MIT
+#
+# BUILD.md's "prepared environment", made from public sources at their pins:
+#
+#   .deps/xenia-canary              Xenia Canary at deps.json's revision; tools/prepare_canary.py
+#                                   fetches its submodules and applies patches/canary
+#   .deps/references/PS5_Vulkan     mihawk-99/PS5_Vulkan at the revision docs/CREDITS.md names, with
+#                                   its SDK fork, zlib and static RADV built by its own scripts, and
+#                                   the PS5_PayloadSDK fork and PS5_Mesa revisions it pins beside it
+#   .deps/ps5-payload-sdk           the payload SDK v0.42 release, PS5_PAYLOAD_SDK for CMake (what
+#                                   Castation's setup installs, the SDK BUILD.md's examples use)
+#   build/native-runtime-stage      Castation's tools/verify-image.py, the image check the build runs
+#   .deps/references/game-patches   xenia-canary/game-patches at the revision the releases ship
+#
+# Then tools/build-canary-game.sh, and .github/scripts/stage-bundle.py: dist/PPSA50011.zip, the
+# PPSA50011 folder tools/package-release.py zips (eboot.bin, sce_module/libc.prx from PS5_Vulkan's
+# make libc, sce_sys, sounds, fonts, game patches, notices, manifest), ready for /data/homebrew or a
+# folder ShadowMountPlus scans. It leaves out what only the author's machine has: the AutoLog source
+# archive (packaged with the owner's credentials checked) and the releases' assets/presets.txt.
+#
+# Two host steps BUILD.md's environment had from elsewhere:
+#   - Xenia Canary compiles its Vulkan shaders with glslangValidator and spirv-opt, whose flags
+#     (--canonicalize-ids) are newer than Ubuntu's: .github/scripts/build-shader-tools.sh builds both
+#     from Canary's own submodules, and VULKAN_SDK points the shader script at them.
+#   - zlib from GitHub only: PS5_Vulkan's setup downloads it from zlib.net, and Mesa's zlib subproject
+#     from zlib.net and wrapdb.mesonbuild.com, which can answer a CI runner with something else.
+#     seed-zlib.sh and seed-mesa-wrap.sh put zlib's and WrapDB's GitHub releases where each looks,
+#     checked against their own pins.
+#
+# Runs in an Ubuntu 24.04 container with LLVM 18 alone, as Castation's build image
+# (tooling/docker/Dockerfile), plus Mesa's host needs for RADV. Cached: downloads, RADV, the shader
+# tools and ccache.
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+    # not for documentation alone, except what the bundle carries
+    paths: ['**', '!docs/**', '!**.md', 'docs/INSTALLATION.md', 'docs/CREDITS.md', 'docs/releases/**',
+            'native/autolog/README.md']
+  pull_request:
+    paths: ['**', '!docs/**', '!**.md', 'docs/INSTALLATION.md', 'docs/CREDITS.md', 'docs/releases/**',
+            'native/autolog/README.md']
+  workflow_dispatch:
+    inputs:
+      experimental_diagnostics:
+        description: XBOX360PS5_EXPERIMENTAL_DIAGNOSTICS (GPU diagnostics and cache guards)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # docs/CREDITS.md's development checkouts
+  PS5_VULKAN_REVISION: 3f3ee69607013b345d2baa6d6a37c86745649a08
+  # Castation's public history was rewritten after CREDITS.md's 94dfef7; tools/verify-image.py and
+  # sce_sys/param.json are unchanged in it since 2026-08-31 (4d80777)
+  CASTATION_REVISION: 761a8201bdc083d55a7b0d819da2c8e0e0083bea
+  # the revision the published releases ship (their assets/patches/ORIGEM.txt)
+  GAME_PATCHES_REVISION: 01bff555f18e58dde570588449cf3477ce2ea0b8
+  SDK_RELEASE_URL: https://github.com/ps5-payload-dev/sdk/releases/download/v0.42/ps5-payload-sdk.zip
+  SDK_RELEASE_SHA256: 8cfbc7cd5811e719eb4f0c47eea668d3dc7b40bc8ab11c4a5031d40c23ec02da
+
+jobs:
+  build:
+    name: Build PS5X360
+    runs-on: ubuntu-24.04
+    timeout-minutes: 300
+    container:
+      image: ubuntu:24.04
+      # SDKs preinstalled on the runner, mounted so the job can delete them for disk space
+      volumes:
+        - /usr/share/dotnet:/host-free/dotnet
+        - /usr/local/lib/android:/host-free/android
+        - /opt/ghc:/host-free/ghc
+        - /usr/local/.ghcup:/host-free/ghcup
+        - /opt/hostedtoolcache:/host-free/toolcache
+        - /usr/local/share/boost:/host-free/boost
+    env:
+      DEBIAN_FRONTEND: noninteractive
+      CCACHE_MAXSIZE: 3G
+      # version.h has XE_BUILD_DATE __DATE__: ccache can still cache what includes it
+      CCACHE_SLOPPINESS: time_macros
+      CMAKE_C_COMPILER_LAUNCHER: ccache
+      CMAKE_CXX_COMPILER_LAUNCHER: ccache
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Free disk space
+        run: |
+          find /host-free -mindepth 2 -maxdepth 2 -exec rm -rf {} + 2>/dev/null || true
+          df -h "$GITHUB_WORKSPACE"
+
+      - name: Install the build tools
+        run: |
+          apt-get update
+          # Castation's build image (Clang/LLD/LLVM 18 with its runtime builtins, CMake, Ninja, Python 3),
+          # Mesa's host needs for RADV (LLVM 18 and Clang development files, libclc, the SPIR-V translator,
+          # glslangValidator, meson from pip), and rev, flock and the CA certificates a minimal image lacks.
+          apt-get install --yes --no-install-recommends \
+            ca-certificates git curl wget unzip zip xz-utils file make build-essential pkgconf \
+            bsdextrautils util-linux patch rsync ccache binutils \
+            cmake ninja-build bison flex glslang-tools spirv-tools \
+            python3 python3-pip \
+            clang-18 lld-18 llvm-18 libclang-rt-18-dev llvm-18-dev libclang-18-dev libclc-18-dev \
+            libllvmspirvlib-18-dev llvm-spirv-18 zlib1g-dev
+          # Mesa needs meson 1.4 or newer; Ubuntu 24.04 has 1.3
+          python3 -m pip install --break-system-packages --no-cache-dir meson mako packaging
+          git config --global --add safe.directory '*'
+          for tool in clang-18 clang++-18 ld.lld-18 llvm-nm-18 llvm-config-18 meson ninja; do
+            command -v "$tool" >/dev/null || { echo "missing $tool" >&2; exit 2; }
+          done
+          test -f "$(clang-18 --print-resource-dir)/lib/linux/libclang_rt.builtins-x86_64.a"
+
+      - uses: actions/checkout@v7
+
+      - name: Locate the caches
+        run: |
+          cache_root="$GITHUB_WORKSPACE/../ci-cache"
+          mkdir -p "$cache_root"
+          cache_root=$(cd "$cache_root" && pwd)
+          version=$(head -n 1 VERSION | tr -d '\r')
+          {
+            echo "CACHE_ROOT=$cache_root"
+            echo "CI_DOWNLOADS=$cache_root/downloads"
+            echo "CCACHE_DIR=$cache_root/ccache"
+            echo "VULKAN_SDK=$cache_root/shader-tools"
+            echo "JOBS=$(nproc)"
+            echo "VERSION=$version"
+            echo "SHORT_SHA=${GITHUB_SHA:0:7}"
+          } >> "$GITHUB_ENV"
+          echo "PS5X360 $version at ${GITHUB_SHA:0:7}, $(nproc) jobs"
+
+      - name: Fetch the pinned sources
+        run: |
+          fetch_at() { # fetch_at <dir> <url> <commit>: just that commit, checked out
+            rm -rf "$1"
+            git init -q "$1"
+            git -C "$1" remote add origin "$2"
+            git -C "$1" fetch -q --depth 1 origin "$3"
+            git -C "$1" checkout -q --detach FETCH_HEAD
+          }
+          # Xenia Canary at its pin first: prepare_canary.py's own first clone (--no-checkout) reads
+          # the default branch's files as removed, and fails restoring ones the pin does not have
+          read -r url revision < <(python3 -c '
+          import json
+          d = json.load(open("deps.json"))["xenia_canary"]
+          print(d["url"], d["revision"])')
+          fetch_at .deps/xenia-canary "$url" "$revision"
+          python3 tools/prepare_canary.py
+          refs=.deps/references
+          fetch_at "$refs/PS5_Vulkan" https://github.com/mihawk-99/PS5_Vulkan.git "$PS5_VULKAN_REVISION"
+          sdk_fork=$(sed -n 's/^sdk_revision=\([0-9a-f]\{40\}\).*/\1/p' "$refs/PS5_Vulkan/tools/setup-native-dependencies.sh")
+          mesa=$(sed -n 's/^mesa_revision=\([0-9a-f]\{40\}\).*/\1/p' "$refs/PS5_Vulkan/tools/build-radv.sh")
+          [[ -n $sdk_fork && -n $mesa ]] || { echo "PS5_Vulkan's SDK or Mesa pin was not found" >&2; exit 2; }
+          fetch_at "$refs/PS5_PayloadSDK" https://github.com/mihawk-99/PS5_PayloadSDK.git "$sdk_fork"
+          fetch_at "$refs/PS5_Mesa" https://github.com/mihawk-99/PS5_Mesa.git "$mesa"
+          fetch_at "$refs/game-patches" https://github.com/xenia-canary/game-patches.git "$GAME_PATCHES_REVISION"
+          fetch_at .deps/castation https://github.com/BrinooTk/castation.git "$CASTATION_REVISION"
+          {
+            echo "SDK_FORK_REVISION=$sdk_fork"
+            echo "MESA_REVISION=$mesa"
+            echo "SHADER_TOOLS_KEY=$(git -C .deps/xenia-canary/third_party/SPIRV-Tools rev-parse HEAD)-$(git -C .deps/xenia-canary/third_party/glslang rev-parse HEAD)"
+          } >> "$GITHUB_ENV"
+          echo "PS5_Vulkan ${PS5_VULKAN_REVISION:0:12}: SDK fork ${sdk_fork:0:12}, Mesa ${mesa:0:12}"
+          df -h .
+
+      - name: Restore downloads
+        uses: actions/cache@v5
+        with:
+          path: ${{ env.CACHE_ROOT }}/downloads
+          key: ps5x360-downloads-${{ env.SDK_RELEASE_SHA256 }}-${{ env.SDK_FORK_REVISION }}-${{ env.MESA_REVISION }}
+          restore-keys: ps5x360-downloads-
+
+      - name: The payload SDK (PS5_PAYLOAD_SDK for CMake)
+        run: |
+          zip="$CI_DOWNLOADS/ps5-payload-sdk-v0.42.zip"
+          mkdir -p "$CI_DOWNLOADS"
+          [[ -f $zip ]] || curl --fail --location --retry 3 --silent --show-error -o "$zip" "$SDK_RELEASE_URL"
+          echo "$SDK_RELEASE_SHA256  $zip" | sha256sum --check --strict
+          rm -rf .deps/ps5-payload-sdk .deps/sdk-unzip
+          unzip -q "$zip" -d .deps/sdk-unzip
+          mv .deps/sdk-unzip/ps5-payload-sdk .deps/ps5-payload-sdk
+          rmdir .deps/sdk-unzip
+          echo "PS5_PAYLOAD_SDK=$PWD/.deps/ps5-payload-sdk" >> "$GITHUB_ENV"
+
+      - name: PS5_Vulkan's SDK, zlib and libc.prx
+        run: |
+          # the SDK fork RADV and the link use, and zlib for the native tool (setup-native-dependencies.sh)
+          bash .github/scripts/seed-zlib.sh .deps/references/PS5_Vulkan
+          BUILD_JOBS=$JOBS bash .deps/references/PS5_Vulkan/tools/setup-native-dependencies.sh
+          # sce_module/libc.prx: the clean-room runtime, checked by rebuild-libc.sh against its digest
+          make -C .deps/references/PS5_Vulkan -s libc
+          sha256sum .deps/references/PS5_Vulkan/runtime/libc.prx
+
+      - name: Restore the RADV driver
+        id: radv
+        uses: actions/cache/restore@v5
+        with:
+          path: .deps/references/PS5_Vulkan/.deps/native/radv-release
+          key: ps5x360-radv-${{ env.MESA_REVISION }}-${{ env.SDK_FORK_REVISION }}-${{ env.PS5_VULKAN_REVISION }}
+
+      - name: Build RADV (PS5_Vulkan tools/build-radv.sh release)
+        run: |
+          bash .github/scripts/seed-mesa-wrap.sh .deps/references/PS5_Vulkan .deps/references/PS5_Mesa
+          if ! bash .deps/references/PS5_Vulkan/tools/build-radv.sh release; then
+            for log in .deps/references/PS5_Vulkan/.deps/work/*.log; do
+              [[ -f $log ]] && { echo "::group::$log"; tail -n 60 "$log"; echo "::endgroup::"; }
+            done
+            exit 1
+          fi
+          cat .deps/references/PS5_Vulkan/.deps/native/radv-release/PROVENANCE.txt
+
+      - name: Save the RADV driver
+        if: steps.radv.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: .deps/references/PS5_Vulkan/.deps/native/radv-release
+          key: ps5x360-radv-${{ env.MESA_REVISION }}-${{ env.SDK_FORK_REVISION }}-${{ env.PS5_VULKAN_REVISION }}
+
+      - name: Restore the shader tools
+        id: shader-tools
+        uses: actions/cache/restore@v5
+        with:
+          path: ${{ env.CACHE_ROOT }}/shader-tools/bin
+          key: ps5x360-shader-tools-${{ env.SHADER_TOOLS_KEY }}
+
+      - name: Build the shader tools (Canary's SPIRV-Tools and glslang)
+        if: steps.shader-tools.outputs.cache-hit != 'true'
+        run: bash .github/scripts/build-shader-tools.sh .deps/xenia-canary "$VULKAN_SDK"
+
+      - name: Save the shader tools
+        if: steps.shader-tools.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: ${{ env.CACHE_ROOT }}/shader-tools/bin
+          key: ps5x360-shader-tools-${{ env.SHADER_TOOLS_KEY }}
+
+      - name: The image check (build/native-runtime-stage)
+        run: |
+          mkdir -p build/native-runtime-stage/tools
+          cp .deps/castation/tools/verify-image.py build/native-runtime-stage/tools/
+
+      - name: Restore ccache
+        uses: actions/cache/restore@v5
+        with:
+          path: ${{ env.CACHE_ROOT }}/ccache
+          key: ps5x360-ccache-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: ps5x360-ccache-
+
+      - name: Build the title (tools/build-canary-game.sh)
+        timeout-minutes: 240
+        env:
+          XBOX360PS5_EXPERIMENTAL_DIAGNOSTICS: ${{ inputs.experimental_diagnostics && 'ON' || 'OFF' }}
+        run: |
+          ccache --zero-stats
+          bash tools/build-canary-game.sh
+
+      - name: Report disk and ccache
+        if: always()
+        run: |
+          df -h "$GITHUB_WORKSPACE"
+          ccache --show-stats || true
+
+      - name: Save ccache
+        if: always()
+        uses: actions/cache/save@v5
+        with:
+          path: ${{ env.CACHE_ROOT }}/ccache
+          key: ps5x360-ccache-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Stage the bundle (dist/PPSA50011.zip)
+        run: |
+          python3 .github/scripts/stage-bundle.py --eboot build/canary-game/eboot.bin \
+            --libc .deps/references/PS5_Vulkan/runtime/libc.prx --castation .deps/castation \
+            --patches .deps/references/game-patches \
+            --build "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          cat dist/PPSA50011.zip.sha256
+
+      - uses: actions/upload-artifact@v7
+        with:
+          # the artifact downloads as a zip itself: PPSA50011.zip is inside it
+          name: PS5X360-v${{ env.VERSION }}-${{ env.SHORT_SHA }}
+          path: |
+            dist/PPSA50011.zip
+            dist/PPSA50011.zip.sha256
+          retention-days: 14
+
+      # The linked executable with its symbols, for this build's crash reports
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ps5x360-elf-v${{ env.VERSION }}-${{ env.SHORT_SHA }}
+          path: build/canary-game/llvm-pie.elf
+          retention-days: 30
