@@ -1,0 +1,23 @@
+{
+  "version": "0.5.9",
+  "native_sha256": "c500380836132fdab06d8998fe316606074ca3b89d27993b4e2944feeb121c04",
+  "native_recompiled": false,
+  "assets": {
+    "Kinect-Phone.zip": {
+      "bytes": 37824,
+      "sha256": "ca0d59ede35b918aa78f19b4f67fce9f28f54e0462f49c3a045c6d39f183f8b8"
+    },
+    "PPSA50011.zip": {
+      "bytes": 24376522,
+      "sha256": "2a3b93e5f94eb8d3db6d1aae3ddef0141f7ebf96246c88f4a507fade8faabd75"
+    },
+    "PS5X360-AutoLog-v1.0.9-preview.elf": {
+      "bytes": 941920,
+      "sha256": "5da64c23263e6868696aa0f8b1bfd0eb97581bae73124d08066b507652adfbfb"
+    },
+    "PS5X360-source-0.5.9.zip": {
+      "bytes": 179105935,
+      "sha256": "7ce53803f13b6255011bf867631c3ac3e34ae09ba69823053e094be2be4270e3"
+    }
+  }
+}

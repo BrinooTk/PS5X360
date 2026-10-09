@@ -15,9 +15,9 @@ An **Xbox 360 emulator for PlayStation 5**, built on Xenia Canary with native Du
 
 **Games already run on the development PS5. Compatibility varies, and development is ongoing.** Expect crashes, visual errors and uneven performance in some titles. There is no promise of full-library compatibility or 60 FPS.
 
-## Latest release: v0.5.7-fix.1
+## Latest release: v0.5.9
 
-Fixes for the Left 4 Dead 2 loading stall and shared thread synchronization, controller-dependent extra player sign-ins, and profile removal with recoverable saves. Includes the features introduced in v0.5.7. [Read the release notes](docs/releases/v0.5.7-fix.1.md). Performance and compatibility vary by game.
+Updated Vulkan cache and scheduling, native multi-disc switching, and evolving smartphone Kinect identification/menu input with optional camera calibration. [Read the release notes](docs/releases/v0.5.9.md). Performance varies; Kinect remains in testing and is not guaranteed to work 100%.
 
 ## What is included
 
@@ -137,3 +137,4 @@ report delivery was verified on the owner's PS5 with firmware 13.60. Keep the
 console FTP service enabled for the directory fallback; other firmware is unverified.
 See [console collector instructions](native/autolog/README.md) for opt-out and
 limits, or [AutoLog setup](docs/AUTOLOG.md) for the optional PC fallback.
+
