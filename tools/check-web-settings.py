@@ -6,6 +6,7 @@ import io
 import json
 import os
 import shutil
+import shlex
 import zipfile
 import subprocess
 import time
@@ -38,11 +39,13 @@ for age, (name, data) in enumerate(files.items()):
 (out / "secret.txt").write_text("outside the folder\n")
 (out / "harness.cpp").write_text(r'''
 #include "xbox360ps5/web_settings.hpp"
+#include "xbox360ps5/i18n.hpp"
 #include <chrono>
 #include <cstdio>
 #include <thread>
 int main(int, char** argv) {
   using namespace xbox360ps5;
+  ui_language = 4;
   if (!StartWebSettings(argv[1])) { std::puts("START FAILED"); return 1; }
   PublishWebState("{\"sample\":" + JsonText("a \"quoted\" text") + "}");
   std::printf("KEY %s\nADDRESS %s\n", WebSettingsKey().c_str(), WebSettingsAddress().c_str());
@@ -55,7 +58,7 @@ int main(int, char** argv) {
   }
 }
 ''')
-subprocess.run(["clang++-18", "-std=c++20", "-O1", "-g", "-fsanitize=address,undefined", "-I" + str(root / "include"),
+subprocess.run(shlex.split(os.environ.get("CXX", "clang++-18")) + ["-std=c++20", "-O1", "-g", "-fsanitize=address,undefined", "-I" + str(root / "include"),
                 str(out / "harness.cpp"), str(root / "platform/ps5/web_settings.cpp"), "-lpthread", "-o", str(out / "harness")],
                check=True)
 server = subprocess.Popen([str(out / "harness"), str(logs)], stdout=subprocess.PIPE, text=True)
@@ -96,6 +99,8 @@ def archive(game):
 try:
     status, page = ask("/", given=None)
     assert status == 200 and "PS5X360" in page and "/api/state" in page, status
+    assert '<html lang="fr">' in page and 'Code affiché sur la TV' in page
+    assert '@PAIRING_PROMPT@' not in page and '@LANGUAGE@' not in page
     assert ask("/api/state", given=None)[0] == 403 and ask("/api/state", given="000000x")[0] == 403
     status, state = ask("/api/state")
     assert status == 200 and json.loads(state) == {"sample": 'a "quoted" text'}, state

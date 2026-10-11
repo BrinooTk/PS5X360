@@ -445,7 +445,7 @@ const char* Settings::ScaleName(int scale) {
   return scale >= 3 ? Tr("3x (2160p, muito pesado)") : scale == 2 ? Tr("2x (1440p, pesado)") : Tr("1x (720p, original)");
 }
 const char* Settings::FilterName(int filter) {
-  return filter == 2 ? "FSR (upscale)" : filter == 1 ? Tr("CAS (nitidez)") : Tr("Simples");
+  return filter == 2 ? Tr("FSR (upscale)") : filter == 1 ? Tr("CAS (nitidez)") : Tr("Simples");
 }
 
 Launcher::Fonts Launcher::LoadFonts(ImGuiIO& io) {
@@ -806,7 +806,7 @@ void Launcher::SelectionChanged() {
     }
   if (!patch_rows_.empty()) {
     char text[64];
-    std::snprintf(text, sizeof(text), Tr("%d de %d patches ligados"), enabled, int(patch_rows_.size()));
+    std::snprintf(text, sizeof(text), Tr(enabled == 1 ? "%d de %d patch ligado" : "%d de %d patches ligados"), enabled, int(patch_rows_.size()));
     patch_summary_ = text;
   }
 }
@@ -1827,7 +1827,7 @@ void Launcher::DrawGameOptions(Canvas& c, float x) {
                                                        : Tr("Vale na hora, também com o jogo aberto (pelo guia).");
   c.Text(when, x + 56, 936, 20, kMuted, 1.0f, 0, 750);
   char own_count[64];
-  std::snprintf(own_count, sizeof(own_count), Tr("%d ajustes próprios deste jogo"), int(overrides_.size()));
+  std::snprintf(own_count, sizeof(own_count), Tr(overrides_.size() == 1 ? "%d ajuste próprio deste jogo" : "%d ajustes próprios deste jogo"), int(overrides_.size()));
   c.Text(own_count, x + 56, 966, 20, overrides_.empty() ? kFaint : kAccent);
   hint = c.Hint('x', Tr("Alterar"), hint, 1004);
   if (game_categories_.size() > 1) hint = c.Hint('t', Tr("Outro assunto"), hint, 1004);
@@ -1949,7 +1949,7 @@ void Launcher::DrawSettingsSheet(Canvas& c) {
       if (option.category == category && settings_.*option.field != option.recommended) ++count;
     if (!count) return std::string(">");
     char text[48];
-    std::snprintf(text, sizeof(text), Tr("%d alteradas  >"), count);
+    std::snprintf(text, sizeof(text), Tr(count == 1 ? "%d alterada  >" : "%d alteradas  >"), count);
     return std::string(text);
   };
   struct Row { const char* label; std::string value; const char* about; };

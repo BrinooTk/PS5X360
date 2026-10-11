@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include "xbox360ps5/web_settings.hpp"
+#include "xbox360ps5/i18n.hpp"
 #include "xbox360ps5/motion_input.hpp"
 #include <algorithm>
 #include <arpa/inet.h>
@@ -32,7 +33,7 @@ unsigned short port = 0;
 // The page. It draws everything from /api/state, so its words come from the
 // title in the interface's language.
 const char kPage[] = R"HTML(<!doctype html>
-<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<html lang="@LANGUAGE@"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>PS5X360</title>
 <style>
 :root{color-scheme:dark}
@@ -62,7 +63,7 @@ h3{font-size:14px;color:#9aa3b2;margin:16px 0 8px;font-weight:600}
 #saved.on{opacity:1}
 </style></head><body>
 <header><h1>PS5X360<small id="version"></small></h1><div id="running"></div></header>
-<main><div id="gate" hidden><div id="gatetext">Code shown on the TV</div><input id="code" maxlength="6" autocapitalize="off" autocomplete="off"><br><button id="enter">OK</button></div>
+<main><div id="gate" hidden><div id="gatetext">@PAIRING_PROMPT@</div><input id="code" maxlength="6" autocapitalize="off" autocomplete="off"><br><button id="enter">OK</button></div>
 <div id="app" hidden><select id="scope"></select><nav id="tabs"></nav><div id="list"></div></div></main>
 <div id="saved"></div>
 <script>
@@ -74,6 +75,7 @@ async function load(){
   sessionStorage.setItem('k',key);$('gate').hidden=true;$('app').hidden=false;render();
 }
 function render(){
+  document.documentElement.lang=state.language||document.documentElement.lang;
   const t=state.text;$('version').textContent=state.version;
   $('running').textContent=state.running?t.running+' '+state.running.name:'';
   const games=state.games||[];if(scope&&!games.some(g=>g.id==scope))scope='';
@@ -111,6 +113,21 @@ $('enter').onclick=()=>{key=$('code').value.trim().toLowerCase();load();};
 load();setInterval(()=>{if(!$('app').hidden&&document.activeElement.tagName!='SELECT'&&tab<state.categories.length)load();},5000);
 </script></body></html>
 )HTML";
+
+std::string SettingsPage() {
+  std::string page = kPage;
+  page.replace(page.find("@LANGUAGE@"), std::strlen("@LANGUAGE@"), UiLanguageTag());
+  // This catalogue entry is plain text, not HTML or user-supplied content.
+  std::string prompt;
+  for (const char c : std::string(Tr("Código exibido na TV"))) {
+    if (c == '&') prompt += "&amp;";
+    else if (c == '<') prompt += "&lt;";
+    else if (c == '>') prompt += "&gt;";
+    else prompt += c;
+  }
+  page.replace(page.find("@PAIRING_PROMPT@"), std::strlen("@PAIRING_PROMPT@"), prompt);
+  return page;
+}
 
 void Send(int client, const char* status, const char* type, const std::string& body, const char* extra = "") {
   char head[320];
@@ -366,7 +383,7 @@ void Answer(int client) {
   const std::string method = request.substr(0, space);
   std::string target = request.substr(space + 1, space2 - space - 1), query;
   if (const size_t mark = target.find('?'); mark != std::string::npos) { query = target.substr(mark + 1); target.resize(mark); }
-  if (target == "/" && method == "GET") { Send(client, "200 OK", "text/html; charset=utf-8", kPage); return; }
+  if (target == "/" && method == "GET") { Send(client, "200 OK", "text/html; charset=utf-8", SettingsPage()); return; }
   if (target == "/favicon.ico") { Send(client, "404 Not Found", "text/plain", ""); return; }
   // Everything else needs the key shown on the television.
   std::string given = Header(request, "X-Key");

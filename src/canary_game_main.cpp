@@ -98,8 +98,8 @@ class FpsOverlay final : public xe::ui::ImGuiDialog {
       auto* draw = ImGui::GetForegroundDrawList();
       const float scale = io.DisplaySize.y / 1080.0f;
       draw->AddRectFilled(ImVec2(1550*scale,100*scale),ImVec2(1900*scale,640*scale),IM_COL32(0,0,0,150),8*scale);
-      draw->AddText(ImVec2(1570*scale,115*scale), IM_COL32(130,240,170,255), pose.tracked ? "Motion: tracking (research)" : "Motion: waiting / body lost");
-      draw->AddText(ImVec2(1570*scale,140*scale), IM_COL32(220,220,220,255), xbox360ps5::motion::guest_skeleton_bound.load() ? "Game skeleton: from this pose" : xbox360ps5::motion::guest_camera_open.load() ? "Guest camera: virtual depth" : "Guest camera: not opened");
+      draw->AddText(ImVec2(1570*scale,115*scale), IM_COL32(130,240,170,255), pose.tracked ? Tr("Motion: tracking (research)") : Tr("Motion: waiting / body lost"));
+      draw->AddText(ImVec2(1570*scale,140*scale), IM_COL32(220,220,220,255), xbox360ps5::motion::guest_skeleton_bound.load() ? Tr("Game skeleton: from this pose") : xbox360ps5::motion::guest_camera_open.load() ? Tr("Guest camera: virtual depth") : Tr("Guest camera: not opened"));
       if (pose.tracked) {
         const auto point = [&](int n) { return ImVec2((1725 + pose.joints[n].x*170)*scale,(405-pose.joints[n].y*170)*scale); };
         const int bones[][2]={{0,1},{1,2},{2,3},{2,4},{4,5},{5,6},{6,7},{2,8},{8,9},{9,10},{10,11},{0,12},{12,13},{13,14},{14,15},{0,16},{16,17},{17,18},{18,19}};
@@ -323,7 +323,7 @@ void ApplyPicture(const xbox360ps5::Settings& settings, xe::ui::Presenter* prese
 std::string WebState(const xbox360ps5::Settings& global, std::vector<std::pair<std::string, std::string>> games,
                      const std::string& running_id, const std::string& running_name) {
   using xbox360ps5::JsonText;
-  std::string json = "{\"version\":" + JsonText(XBOX360PS5_VERSION) + ",\"running\":";
+  std::string json = "{\"version\":" + JsonText(XBOX360PS5_VERSION) + ",\"language\":" + JsonText(xbox360ps5::UiLanguageTag()) + ",\"running\":";
   if (running_name.empty()) json += "null";
   else json += "{\"id\":" + JsonText(running_id) + ",\"name\":" + JsonText(running_name) + "}";
   json += ",\"categories\":[";

@@ -55,7 +55,15 @@ clang++ -std=c++20 -Iinclude tools/check-ui-language.cpp -o check-ui-language
 ./check-ui-language
 ```
 
-This checks system-language regional variants, English fallback and interface translations. Native PS5 system-service calls still require hardware verification.
+This checks system-language regional variants (including French for France and Canada), English fallback, interface translations and formatted messages.
+
+Check the complete translation catalogue as well:
+
+```bash
+python3 tools/check-ui-translations.py
+```
+
+This checks nonempty translations, matching printf arguments, concatenated spacing and the font atlas ranges. The French terminology and contribution notes are in [LOCALIZATION.md](LOCALIZATION.md). Native PS5 system-service calls still require hardware verification.
 
 ## Package a release
 
