@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.6.0
+
+- Frame generation is Swordpdf's ps5-framegen (FSR3 optical flow) with modes Off, Automatic, 2x, 3x and 4x,
+  and it keeps working at uneven frame rates (adaptive pacing, from about 10 FPS to 3 under the display's rate).
+- Add the Updates tab (title updates: install, turn on and off, newest installed on Play, edition check).
+- DLC tab with On/Off/Not installed and the reason for ignored files; waiting DLC installs on Play.
+- Kinect with a phone served by the console itself, no PC relay; body position and reach estimated by the page.
+- Fix games stuck on loading at random (thread suspension), State of Decay (refused network port), I Am Alive
+  (file read completions), Prince of Persia: The Forgotten Sands (sound deadlock patch), Bully (open files).
+- A draw waits for its shader only in the Complete readback mode: fewer hitches with the Fast mode.
+- Controller driver: broader capability answers; a failed vibration no longer disconnects the pad.
+- See `docs/releases/v0.6.0.md` for what was seen on a console and what was not, and for v0.5.8 and v0.5.9
+  see their notes in `docs/releases`.
+
 ## 0.5.7-fix.1
 
 - Resolve the reported Left 4 Dead 2 loading stall on the development PS5.

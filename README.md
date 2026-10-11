@@ -15,9 +15,9 @@ An **Xbox 360 emulator for PlayStation 5**, built on Xenia Canary with native Du
 
 **Games already run on the development PS5. Compatibility varies, and development is ongoing.** Expect crashes, visual errors and uneven performance in some titles. There is no promise of full-library compatibility or 60 FPS.
 
-## Latest release: v0.5.9 Fix 1
+## Latest release: v0.6.0
 
-Corrects the inherited version footer to PS5X360 v0.5.9 while preserving the working code and the v0.5.9 features: Vulkan cache/scheduling, native multi-disc switching and evolving smartphone Kinect input. [Read the correction notes](docs/releases/v0.5.9-fix1.md). Kinect remains in testing and is not guaranteed to work 100%.
+Frame generation that keeps working at uneven frame rates (ps5-framegen by Swordpdf, FSR3 optical flow, modes up to 4x), title updates and DLC from the game sheet, Kinect with a phone and no PC, several games past their loading screens and fewer shader hitches. [Read the release notes](docs/releases/v0.6.0.md), including what was and was not seen on a console.
 
 ## What is included
 
