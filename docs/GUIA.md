@@ -104,7 +104,7 @@ desligados. Para ligar: Triângulo no jogo → escolha o patch → X.
 
 ## Configurações (Quadrado)
 
-- **Idioma**: Automático usa o idioma do PS5. A interface tem português, inglês e espanhol; sem uma tradução disponível, usa inglês. Também é possível escolher manualmente. A seleção informa o idioma ao próximo jogo iniciado, desde que o jogo tenha essa tradução. Preferências antigas de idioma dos jogos são preservadas até uma nova seleção.
+- **Idioma**: Automático usa o idioma do PS5. A interface tem português, inglês, espanhol e francês; sem uma tradução disponível, usa inglês. Também é possível escolher manualmente. A seleção informa o idioma ao próximo jogo iniciado, desde que o jogo tenha essa tradução. Preferências antigas de idioma dos jogos são preservadas até uma nova seleção.
 - **Som**: ligado ou mudo.
 - **Registros detalhados**: grava cada chamada do jogo ao sistema. Deixa o jogo
   mais lento; use só para investigar um problema.

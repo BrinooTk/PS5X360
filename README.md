@@ -24,7 +24,7 @@ Frame generation that keeps working at uneven frame rates (ps5-framegen by Sword
 - A cover-flow game library with folders, ISO images and GOD/STFS packages.
 - Player profiles, saved games and a cover downloader powered by XboxUnity.
 - An in-game guide opened with the touchpad, revealing from the center outward.
-- Noto Sans typography and an interface in **English, Portuguese and Spanish**.
+- Noto Sans typography and an interface in **English, Portuguese, Spanish and French**.
 - Automatic PS5 language detection, with **English as the interface fallback**.
 - Community Xenia Canary patches, matched to the game's executable version and disabled by default.
 - Optional FPS display, CAS sharpening and FSR image upscaling.

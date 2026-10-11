@@ -120,7 +120,7 @@ The applied value is recorded in each game log.
 **Settings → Language** controls the interface and the language reported to the next game launched.
 
 - **Automatic (console):** reads the PS5 system language.
-- Interface translations: **English, Portuguese and Spanish**.
+- Interface translations: **English, Portuguese, Spanish and French**.
 - Unsupported interface languages, or a failed system-language query, fall back to **English**.
 - Manual choices are saved. Existing game-language preferences remain until a new selection is made.
 - Games only show languages that are actually included in that game's version. Choosing a language does not add a translation to the game.

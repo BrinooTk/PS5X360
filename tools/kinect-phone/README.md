@@ -2,6 +2,8 @@
 
 This tool can send 20 estimated joints from a local PC camera to the PS5X360 research receiver. It does not provide a working Kinect device to games.
 
+The page follows the browser’s language for French (`fr`, `fr-FR`, `fr-CA`) and otherwise uses English. The language selector changes only this page, not the console or the games.
+
 ## Run
 
 Enable Settings > System > Settings page for a phone on the console. Enable Controls > Camera motion (research), preferably for the target game only. Start `python tools/kinect-phone/server.py --console 192.168.0.19` on the PC (replace the IP for other consoles). If the settings page uses another port, pass `--console-port 8361` (8360–8367). Open http://localhost:8780. Enter the six-character key displayed on the PS5, click Connect PS5 and Start camera. Keys are kept in relay memory only. The console key changes after restarting the emulator.
