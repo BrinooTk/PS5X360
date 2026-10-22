@@ -5,6 +5,7 @@
 <p align="center">
   <a href="https://github.com/BrinooTk/PS5X360/releases"><strong>Download a release</strong></a> ·
   <a href="docs/INSTALLATION.md">Installation guide</a> ·
+  <a href="docs/GAME-CONTENT.md">DLC, updates and discs</a> ·
   <a href="docs/COMPATIBILITY.md">Compatibility</a> ·
   <a href="https://github.com/BrinooTk/PS5X360/issues">Report an issue</a>
 </p>
@@ -15,21 +16,46 @@ An **Xbox 360 emulator for PlayStation 5**, built on Xenia Canary with native Du
 
 **Games already run on the development PS5. Compatibility varies, and development is ongoing.** Expect crashes, visual errors and uneven performance in some titles. There is no promise of full-library compatibility or 60 FPS.
 
-## Latest release: v0.6.0
+## Latest release: v1.0.0
 
-Frame generation that keeps working at uneven frame rates (ps5-framegen by Swordpdf, FSR3 optical flow, modes up to 4x), title updates and DLC from the game sheet, Kinect with a phone and no PC, several games past their loading screens and fewer shader hitches. [Read the release notes](docs/releases/v0.6.0.md), including what was and was not seen on a console.
+The first 1.0: a new home screen in the manner of the Xbox 360 dashboard, the games' own system
+windows (sign-in, saves, messages) on screen, the newest Xenia Canary core, online play
+(experimental) and System Link. [Read the release notes](docs/releases/v1.0.0.md), including
+what was and was not seen on a console.
+
+### What's new in v1.0.0
+
+- **New home screen.** Channels **Início**, **Configurações** and **Online**, slots that turn
+  away in perspective, and the game played last first, as "Jogar *game*" over the game's own
+  Marketplace picture and icon. Then the game library, the player and the achievements.
+- **Library of covers** with an opening animation; light grey look across the whole emulator,
+  PlayStation button shapes, and a restyled in-game guide that pauses the game, as the Xbox guide.
+- **Games' system windows on screen.** Who is playing, where to save, messages and the keyboard
+  answer to the controller. Bayonetta's title screen takes START again.
+- **Controller fix** for games that wait for "any controller".
+- **Newest Xenia Canary core** (e6cd2e4), per-game core settings from Xenia's compatibility
+  reports, graphics presets for about 220 games, and fixes such as WWE's loading screen.
+- **Online play over the internet** (Xenia netplay, public server) and **System Link** —
+  experimental: the online connection is still being brought up on the PS5.
+- **Your own Xbox 360 dashboard** (`dash.xex` from your console) can be opened from the home.
+
+Known problems: Need for Speed Most Wanted (2012) stops when driving starts (a known Xenia
+crash), Xbox avatars are not drawn, Kinect is experimental.
 
 ## What is included
 
-- A cover-flow game library with folders, ISO images and GOD/STFS packages.
-- Player profiles, saved games and a cover downloader powered by XboxUnity.
-- An in-game guide opened with the touchpad, revealing from the center outward.
-- Noto Sans typography and an interface in **English, Portuguese and Spanish**.
-- Automatic PS5 language detection, with **English as the interface fallback**.
-- Community Xenia Canary patches, matched to the game's executable version and disabled by default.
-- Optional FPS display, CAS sharpening and FSR image upscaling.
-- Per-game log files and configurable game folders,
-  including external locations visible to the application.
+- A home screen and cover library for extracted games (XEX), ISO images and GOD/STFS packages,
+  with folders and filters.
+- **DLC and title updates** installed from the game's sheet or by themselves when you press Play;
+  **games with several discs**. See [DLC, updates and discs](docs/GAME-CONTENT.md).
+- Per-game settings and community Xenia Canary patches, matched to the game's executable version.
+- Player profiles for up to four local players, saved games and achievements with notifications.
+- An in-game guide opened with the touchpad: resume, library over the running game, settings.
+- Frame generation (FSR3, experimental), FPS display, CAS sharpening and FSR upscaling.
+- Kinect with a phone or a USB Kinect (experimental), settings from a phone or computer.
+- Covers from XboxUnity and Microsoft's image server; an interface in **English, Portuguese and
+  Spanish** following the PS5 language.
+- Per-game log files, downloadable as a ZIP.
 
 ## Quick installation
 
@@ -73,17 +99,20 @@ See the [folder configuration guide](docs/INSTALLATION.md#multiple-locations-and
 
 ## Controls
 
-| DualSense button | Library action |
-| --- | --- |
-| D-pad / stick | Choose a game |
-| Cross | Launch |
-| Triangle | Game details and patches |
-| Square | Settings |
-| L1 / R1 | Change library filter |
-| Circle | Close the current panel |
-| Touchpad, during a game | Open the emulator guide |
+| DualSense button | Home | Library |
+| --- | --- | --- |
+| D-pad / stick up and down | Change channel | — |
+| D-pad / stick left and right | Choose a slot | Choose a game |
+| Cross | Open | Open the game's sheet (Play, Patches, Settings, Achievements, DLCs, Updates) |
+| Triangle | — | The game's settings |
+| Square | Settings | Settings |
+| L1 / R1 | — | Change library filter |
+| Circle | — | Back to the home |
+| Touchpad, during a game | Open the emulator guide | |
 
-The guide offers resume, return to the library, Xbox BACK and exit. To use the touchpad as Xbox BACK instead, change **Settings → Touchpad click**; the guide then opens with **OPTIONS + touchpad**.
+The guide offers resume, the library over the running game, settings, Xbox BACK and exit. To use
+the touchpad as Xbox BACK instead, change **Settings → Touchpad click**; the guide then opens with
+**OPTIONS + touchpad**.
 
 ## Compatibility and bug reports
 
@@ -93,11 +122,14 @@ When [reporting a bug](https://github.com/BrinooTk/PS5X360/issues), include the 
 
 ## Development
 
-The active core is Xenia Canary at `b083312b8b18e07e6e410b82104191f126722794`. The PS5 core changes are stored in `patches/canary/xbox360ps5.patch`; the launcher and platform adapters live in this repository.
+The v1.0.0 core is Xenia Canary e6cd2e4 with Xenia Canary netplay (AdrianCassar,
+`netplay_canary_experimental` d2cf527aa). The PS5 changes over it are in the release's
+`PS5X360-source-1.0.0-changes.zip`; earlier core changes are stored in
+`patches/canary/xbox360ps5.patch`; the launcher and platform adapters live in this repository.
 
 [Build notes and source dependencies](docs/BUILD.md) · [Third-party credits](docs/CREDITS.md)
 
-The current release is **v0.5.7-fix.1**. See the [changelog](CHANGELOG.md) and
+The current release is **v1.0.0**. See the [changelog](CHANGELOG.md) and
 [release versioning guide](docs/RELEASING.md) for future updates.
 
 ## Support the projects
@@ -111,7 +143,7 @@ Older M0–M8 milestones and Portuguese research notes are preserved in [the por
 
 ## Credits and licenses
 
-Based on [Xenia Canary](https://github.com/xenia-canary/xenia-canary), with the [PS5_Vulkan](https://github.com/mihawk-99/PS5_Vulkan) RADV work and native runtime/tooling from the projects listed in [Credits](docs/CREDITS.md). Community patches come from [xenia-canary/game-patches](https://github.com/xenia-canary/game-patches); covers use XboxUnity.
+Based on [Xenia Canary](https://github.com/xenia-canary/xenia-canary), with the [PS5_Vulkan](https://github.com/mihawk-99/PS5_Vulkan) RADV work and native runtime/tooling from the projects listed in [Credits](docs/CREDITS.md). Online play comes from [Xenia Canary netplay](https://github.com/AdrianCassar/xenia-canary) by AdrianCassar, with libcurl, wolfSSL and miniupnpc; frame generation from [ps5-framegen](https://github.com/Swordpdf/ps5-framegen) by Swordpdf. Community patches come from [xenia-canary/game-patches](https://github.com/xenia-canary/game-patches); covers use XboxUnity and Microsoft's image server.
 
 Original project code is licensed under MIT. Bundled third-party components keep their own licenses, including BSD, LGPL and GPL components. See [LICENSE](LICENSE), [licenses/](licenses/) and the font's [SIL Open Font License](assets/fonts/OFL.txt).
 
@@ -119,10 +151,11 @@ PS5X360 is an independent community project and is not affiliated with Sony or M
 
 ## Downloads
 
-The [v0.5.7-fix.1 release](https://github.com/BrinooTk/PS5X360/releases/tag/v0.5.7-fix.1)
-offers **PPSA50011.zip** and the optional **AutoLog 1.0.9-preview ELF**.
-Extract the ZIP and copy `PPSA50011` to `/data/homebrew/`. Preserve existing games,
-saves and logs when updating. AutoLog is loaded separately once per console boot;
+The [v1.0.0 release](https://github.com/BrinooTk/PS5X360/releases/tag/v1.0.0)
+offers **PPSA50011.zip** and **PS5X360-source-1.0.0-changes.zip** (the source of what this
+release adds; it links wolfSSL, GPL-3.0). Extract the ZIP and copy `PPSA50011` to
+`/data/homebrew/`. Preserve existing games, saves (`saves/`) and logs when updating. The optional
+**AutoLog 1.0.9-preview ELF** is attached to earlier releases. AutoLog is loaded separately once per console boot;
 it sends diagnostic excerpts to the developer. Read its
 [reporting notice and instructions](native/autolog/README.md) before enabling it.
 The collector's corresponding source and license archive is included under
