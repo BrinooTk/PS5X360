@@ -16,14 +16,27 @@ An **Xbox 360 emulator for PlayStation 5**, built on Xenia Canary with native Du
 
 **Games already run on the development PS5. Compatibility varies, and development is ongoing.** Expect crashes, visual errors and uneven performance in some titles. There is no promise of full-library compatibility or 60 FPS.
 
-## Latest release: v1.0.0
+## Latest release: v1.0.2
 
-The first 1.0: a new home screen in the manner of the Xbox 360 dashboard, the games' own system
-windows (sign-in, saves, messages) on screen, the newest Xenia Canary core, online play
-(experimental) and System Link. [Read the release notes](docs/releases/v1.0.0.md), including
-what was and was not seen on a console.
+Online play now gets past the start on the PS5, every listed language is complete, a dark theme,
+and a Windows app that installs DLC and title updates over the network.
+[Read the release notes](docs/releases/v1.0.2.md), including what was and was not seen on a
+console.
 
-### What's new in v1.0.0
+### What's new in v1.0.2
+
+- **Online play (experimental) gets going on the PS5:** requests to the Xenia server no longer
+  hang for 55 seconds, Call of Duty: Modern Warfare 2 no longer stays on a black screen and
+  searches Xbox LIVE matches, requests have time limits, and router port requests point to the
+  ports the PS5 really uses. Checked: Halo 3 online and MW2 finding matches. Use the game's
+  **Xbox LIVE** menu; System Link only finds games on your home network.
+- **PS5X360 Content Installer** for Windows: drag DLC and title updates onto the window, type
+  your PS5's IP address and press Install. See [tools/content-installer](tools/content-installer/README.md).
+- **Helper 1.3.0** (autoload ELF): updates PS5X360 from this page, in the console's language.
+- **The PPSA50011 folder can be deleted again** (the phone camera folder said "Permission denied").
+- **All 16 languages** have the v1.0 home texts, and a **dark theme** (Settings > Tema).
+
+### v1.0.0
 
 - **New home screen.** Channels **Início**, **Configurações** and **Online**, slots that turn
   away in perspective, and the game played last first, as "Jogar *game*" over the game's own
@@ -151,10 +164,12 @@ PS5X360 is an independent community project and is not affiliated with Sony or M
 
 ## Downloads
 
-The [v1.0.0 release](https://github.com/BrinooTk/PS5X360/releases/tag/v1.0.0)
-offers **PPSA50011.zip** and **PS5X360-source-1.0.0-changes.zip** (the source of what this
-release adds; it links wolfSSL, GPL-3.0). Extract the ZIP and copy `PPSA50011` to
-`/data/homebrew/`. Preserve existing games, saves (`saves/`) and logs when updating. The optional
+The [v1.0.2 release](https://github.com/BrinooTk/PS5X360/releases/tag/v1.0.2)
+offers **PPSA50011.zip** (the emulator), **PS5X360-Helper.elf** (Helper 1.3.0 for the etaHEN
+autoload folder), **PS5X360-Content-Installer.exe** (DLC and title updates from a Windows
+computer) and **PS5X360-source-1.0.2-changes.zip** (the source of what this release adds; it
+links wolfSSL, GPL-3.0). Extract the ZIP and copy `PPSA50011` to `/data/homebrew/` over the old
+one. Preserve existing games, saves (`saves/`) and logs when updating. The optional
 **AutoLog 1.0.9-preview ELF** is attached to earlier releases. AutoLog is loaded separately once per console boot;
 it sends diagnostic excerpts to the developer. Read its
 [reporting notice and instructions](native/autolog/README.md) before enabling it.

@@ -1,6 +1,6 @@
 # DLC, title updates, multi-disc games and more
 
-How to add the extra content Xbox 360 games use, as of **v1.0.0**. Every path below is on the
+How to add the extra content Xbox 360 games use, as of **v1.0.2**. Every path below is on the
 PS5 (copy files over FTP, for example with FileZilla to port 2121). `PPSA50011` means
 `/data/homebrew/PPSA50011`. Close PS5X360 (**Options → Fechar**, or the guide's "Close the
 emulator") before copying files into it.
@@ -22,6 +22,14 @@ on the loading screen:
 **Check or switch them:** on the game's sheet (Cross on the game) open the **DLCs** tab. Each
 package shows as **On**, **Off** or **Not installed**; Cross switches it. A file that was ignored
 says why (not a DLC package, or made for another game).
+
+**From a Windows computer:** `PS5X360-Content-Installer.exe` from the
+[release page](https://github.com/BrinooTk/PS5X360/releases) installs DLC and title updates over
+FTP. Close PS5X360, open the app, type your PS5's IP address (PS5 Settings > Network > Connection
+status), press **Check console**, drag the files or folders onto the window and press
+**Install**. It refuses anything that is not DLC or a title update (with the reason), checks a
+title update's edition against your game, verifies each upload and never deletes or overwrites
+files. See [its guide](../tools/content-installer/README.md).
 
 **Direct way:** copy the files to the folder the games read,
 `PPSA50011/saves/0000000000000000/<TITLE ID>/00000002/`. The title ID is shown on the game's
@@ -76,8 +84,16 @@ Home → **Online** channel:
 - **System Link** — consoles on the same local network.
 
 The choice is kept in `PPSA50011/network.conf` (`mode=offline`, `mode=systemlink` or
-`mode=online`; `server=` selects another Xenia server). Online play is still being brought up on
-the PS5: if a game keeps saying you must sign in to Xbox LIVE, attach the game's log to your report.
+`mode=online`; `server=` selects another Xenia server). To play with people far away, use the
+game's **Xbox LIVE** menu: System Link only finds games on the same home network.
+
+Since v1.0.2, Halo 3 plays online and Call of Duty: Modern Warfare 2 searches and finds Xbox LIVE
+matches through the Xenia server; joining a whole match is not confirmed yet. The PS5 does not let
+programs use ports below 1024, so a game's port 1000 is opened as 11000. If the game's log shows
+`UPnP error code 501`, your router refused to open the ports by itself: forward them by hand,
+UDP, to your PS5's address (MW2: 1000 to 11000, 1001 to 11001, 1013 to 11013; the log's
+`XSocket::Bind` lines show each game's ports). If a game still says you must sign in to Xbox
+LIVE, attach the game's log to your report.
 
 ## Kinect (experimental)
 
