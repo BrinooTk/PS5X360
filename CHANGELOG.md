@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.0.0
+
+- New home screen in the manner of the Xbox 360 dashboard: channels, slots in perspective, the game
+  played last first with its Marketplace art; cover library with an opening animation; light grey
+  look across the emulator and a restyled guide that pauses the game.
+- The games' system windows (who is playing, where to save, messages) shown and answered with the
+  controller; Bayonetta's title screen takes START again. Fix "any controller" keystrokes.
+- Xenia Canary e6cd2e4 core, per-game core settings, graphics presets for about 220 games, WWE loading.
+- Online play through Xenia netplay and System Link (experimental); your own dashboard from the home.
+- See `docs/releases/v1.0.0.md` and `docs/GAME-CONTENT.md` (DLC, title updates, multi-disc games).
+
 ## 0.6.0
 
 - Frame generation is Swordpdf's ps5-framegen (FSR3 optical flow) with modes Off, Automatic, 2x, 3x and 4x,
