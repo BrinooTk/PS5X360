@@ -23,6 +23,7 @@
 #include "xbox360ps5/dualsense_input.hpp"
 #include "xbox360ps5/autotest.hpp"
 #include "xbox360ps5/launcher.hpp"
+#include "xbox360ps5/forward.hpp"
 #include "xbox360ps5/achievement_hook.hpp"
 #include "xbox360ps5/notify.hpp"
 #include "xbox360ps5/web_settings.hpp"
@@ -810,13 +811,14 @@ int main(int argc, char** argv) {
   // A start the launcher asked for, straight into one game: the game has
   // options of its own that are only read as the emulator starts.
   std::filesystem::path once_game;
-  std::string once_title;
+  std::string once_title, once_flags;
   {
     std::ifstream once(storage / "launch-once.txt");
     std::string line;
     if (std::getline(once, line) && !line.empty()) {
       once_game = line;
       std::getline(once, once_title);
+      std::getline(once, once_flags);  // A forwarder's game (forward.hpp OnceFlags), when it was one.
     }
     once.close();
     std::error_code once_error;
@@ -901,14 +903,33 @@ int main(int argc, char** argv) {
   if (log_ready && log_root == storage / "LOGS")
     XELOGW("Installation folder is not writable; desktop log downloader exports sessions to /data/homebrew/PPSA50011/logs");
   std::filesystem::path game;
-  if (argc > 1 && argv[1]) game = argv[1];
-  else {
+  // A home screen forwarder's game (--rom, forward.hpp): found in the game
+  // folders now that the settings are read. Not found, the launcher opens and
+  // says why; game.txt is not read then. Every restart of the title runs
+  // without arguments, so the game starts once.
+  const auto forward = xbox360ps5::forward::Parse(argc, argv);
+  bool forwarded = false, exit_after_game = false;
+  std::string forward_error;
+  if (!forward.rom.empty()) {
+    game = xbox360ps5::forward::Find(forward.rom, global.game_paths, forward_error);
+    forwarded = !game.empty();
+    exit_after_game = forwarded && forward.exit_after_game;
+    XELOGW("Forwarder: --rom {}{}: {}", forward.rom, forward.exit_after_game ? " --exit-after-game" : "",
+           forwarded ? game.string() : forward_error);
+  } else if (argc > 1 && argv[1] && std::string_view(argv[1]).rfind("--", 0) != 0) {
+    game = argv[1];
+  } else {
     std::ifstream input(storage / "game.txt");
     std::string line;
     if (std::getline(input, line)) { if (!line.empty() && line.back() == '\r') line.pop_back(); game = line; }
   }
-  if (game.empty() && !once_game.empty()) game = once_game;
-  if (game.empty()) {
+  if (game.empty() && forward_error.empty() && !once_game.empty()) {
+    game = once_game;
+    // Restarted into its own start options: still the forwarder's game.
+    forwarded = xbox360ps5::forward::OnceForwarded(once_flags);
+    exit_after_game = forwarded && xbox360ps5::forward::OnceExitAfterGame(once_flags);
+  }
+  if (game.empty() && forward_error.empty()) {
     std::ifstream input("/app0/assets/game.txt");
     std::string line;
     if (std::getline(input, line)) { if (!line.empty() && line.back() == '\r') line.pop_back(); game = line; }
@@ -941,6 +962,10 @@ int main(int argc, char** argv) {
   show_web_address();
   if (driver_test_withdrawn)
     launcher.SetMessage(Tr("O teste do driver de vídeo em segunda thread foi desligado: o emulador não abriu com ele."));
+  if (!forward_error.empty()) {
+    Stage("BOOT forwarded game not found; opening the library");
+    launcher.SetMessage(std::string(Tr("Não foi possível iniciar o jogo: ")) + forward_error);
+  }
   // Why the previous run could not start a game, when it left a note.
   {
     std::ifstream notice(storage / "notice.txt");
@@ -1354,7 +1379,8 @@ int main(int argc, char** argv) {
         if (!switched && xbox360ps5::StartOptionsDiffer(settings, started)) {
           // Some are only read as the emulator starts: start again, straight into this game.
           XELOGW("Settings: {} has start options of its own; restarting into it", chosen.name);
-          std::ofstream(storage / "launch-once.txt", std::ios::trunc) << game.string() << "\n" << settings_title << "\n";
+          std::ofstream(storage / "launch-once.txt", std::ios::trunc) << game.string() << "\n" << settings_title << "\n"
+              << (forwarded ? xbox360ps5::forward::OnceFlags(exit_after_game) + "\n" : std::string());
           restart = true;
           break;
         }
@@ -1412,6 +1438,16 @@ int main(int argc, char** argv) {
         launcher.SetLoading("");
         if (dialog) { dialog->Dismiss(); context.Tick(); window.Paint(); }
         if (!status) { launched = true; break; }
+        if (!dialog && forwarded) {
+          // A forwarder's game that did not start: the launcher, from a fresh
+          // process, says why (notice.txt), as after a launch that threw.
+          XELOGE("Forwarded game {} did not start ({:08X}); restarting into the launcher", game.string(), status);
+          char reason[48];
+          std::snprintf(reason, sizeof(reason), "error %08X", unsigned(status));
+          std::ofstream(storage / "notice.txt", std::ios::trunc) << chosen.name << ": " << reason << "\n";
+          restart = true;
+          break;
+        }
         if (!dialog) { result = 5; break; }
         char text[96];
         std::snprintf(text, sizeof(text), Tr("Não foi possível iniciar este jogo (erro %08X)."), unsigned(status));
@@ -1534,7 +1570,12 @@ int main(int argc, char** argv) {
               bool changed = true;
               switch (items[size_t(guide.row)].action) {
                 case GuideAction::resume: guide.open = false; changed = false; break;
-                case GuideAction::shelf: XELOGW("Guide: back to the launcher"); restart = true; changed = false; break;
+                case GuideAction::shelf:
+                  // --exit-after-game: the forwarder's game closes the title instead.
+                  if (exit_after_game) { XELOGW("Guide: back to the launcher, closing (--exit-after-game)"); quit = true; }
+                  else { XELOGW("Guide: back to the launcher"); restart = true; }
+                  changed = false;
+                  break;
                 case GuideAction::quit: quit = true; changed = false; break;
                 case GuideAction::back_button:
                   guide.open = false;
