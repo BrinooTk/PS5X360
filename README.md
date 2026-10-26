@@ -34,7 +34,7 @@ console.
   your PS5's IP address and press Install. See [tools/content-installer](tools/content-installer/README.md).
 - **Helper 1.3.0** (autoload ELF): updates PS5X360 from this page, in the console's language.
 - **The PPSA50011 folder can be deleted again** (the phone camera folder said "Permission denied").
-- **All 16 languages** have the v1.0 home texts, and a **dark theme** (Settings > Tema).
+- **All 17 languages** have the v1.0 home texts, including Swedish, and a **dark theme** (Settings > Tema).
 
 ### v1.0.0
 
@@ -66,8 +66,8 @@ crash), Xbox avatars are not drawn, Kinect is experimental.
 - An in-game guide opened with the touchpad: resume, library over the running game, settings.
 - Frame generation (FSR3, experimental), FPS display, CAS sharpening and FSR upscaling.
 - Kinect with a phone or a USB Kinect (experimental), settings from a phone or computer.
-- Covers from XboxUnity and Microsoft's image server; an interface in **English, Portuguese and
-  Spanish** following the PS5 language.
+- Covers from XboxUnity and Microsoft's image server; an interface in **English, Portuguese,
+  Spanish and Swedish** following the PS5 language.
 - Per-game log files, downloadable as a ZIP.
 
 ## Quick installation

@@ -83,7 +83,7 @@ const char* const kFilters[] = {"Todos", "Recentes", "Pastas", "Imagens ISO", "A
 
 struct Language { int id; const char* name; };
 constexpr Language kLanguages[] = {{0, "Automático (console)"}, {1, "English"}, {9, "Português"}, {5, "Español"}, {4, "Français"},
-                                   {3, "Deutsch"}, {6, "Italiano"}, {2, "Japonês"}};
+                                   {3, "Deutsch"}, {6, "Italiano"}, {2, "Japonês"}, {13, "Svenska"}};
 
 std::string Lower(std::string text) {
   std::transform(text.begin(), text.end(), text.begin(), [](unsigned char c) { return char(std::tolower(c)); });

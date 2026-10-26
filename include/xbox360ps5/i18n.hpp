@@ -3,7 +3,7 @@
 #include <atomic>
 #include <cstring>
 namespace xbox360ps5 {
-// Xbox language IDs. UI translations currently cover English, Portuguese and Spanish.
+// Xbox language IDs. UI translations currently cover English, Portuguese, Spanish and Swedish.
 inline std::atomic<int> ui_language{1};
 inline int ConsoleGameLanguage(int ps5) {
   switch (ps5) {
@@ -13,12 +13,17 @@ inline int ConsoleGameLanguage(int ps5) {
     case 4: return 3;
     case 5: return 6;
     case 7: case 17: return 9;
+    case 13: return 13;
     default: return 1;
   }
 }
-inline int SupportedUiLanguage(int id) { return id == 9 || id == 5 ? id : 1; }
+inline int SupportedUiLanguage(int id) { return id == 9 || id == 5 || id == 13 ? id : 1; }
 inline const char* Tr(const char* key) {
   struct Entry { const char* pt; const char* en; const char* es; };
+  struct SwedishEntry { const char* pt; const char* sv; };
+  static constexpr SwedishEntry swedish_entries[] = {
+#include "i18n_sv.inc"
+  };
   static constexpr Entry entries[] = {
     {"Proporção da imagem", "Picture proportions", "Proporción de la imagen"},
     {"Manter: a imagem do jogo guarda a proporção original, com barras se preciso. Esticar: preenche a tela inteira, deformando jogos que não são 16:9.", "Keep: the game's picture keeps its original proportions, with bars if needed. Stretch: it fills the whole screen, distorting games that are not 16:9.", "Mantener: la imagen del juego conserva su proporción original, con barras si hace falta. Estirar: llena toda la pantalla, deformando los juegos que no son 16:9."},
@@ -371,6 +376,11 @@ inline const char* Tr(const char* key) {
   };
   const int language = ui_language.load(std::memory_order_relaxed);
   if (language == 9) return key;
+  if (language == 13) {
+    for (const auto& entry : swedish_entries) {
+      if (!std::strcmp(entry.pt, key) && entry.sv[0]) return entry.sv;
+    }
+  }
   for (const auto& entry : entries) {
     if (!std::strcmp(entry.pt, key)) return language == 5 ? entry.es : entry.en;
   }
