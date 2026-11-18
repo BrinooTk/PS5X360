@@ -57,10 +57,11 @@ jobs:
 
       - name: Assemble PPSA50011.zip and PPSA50011.ffpkg
         run: |
-          mkdir -p dist/PPSA50011/sce_sys dist/PPSA50011/sce_module dist/PPSA50011/assets/roms dist/PPSA50011/assets/config
+          mkdir -p dist/PPSA50011/sce_sys dist/PPSA50011/sce_module dist/PPSA50011/assets/roms dist/PPSA50011/assets/config dist/PPSA50011/assets/patches
           cp build/canary-game/eboot.bin dist/PPSA50011/eboot.bin
           cp assets/presets.txt dist/PPSA50011/assets/presets.txt
           cp -r assets/config/* dist/PPSA50011/assets/config/ || true
+          cp -r assets/patches/* dist/PPSA50011/assets/patches/ || true
           cp assets/branding/* dist/PPSA50011/sce_sys/
           cp .deps/references/PS5_Vulkan/runtime/libc.prx dist/PPSA50011/sce_module/libc.prx
           printf "1\n" > dist/PPSA50011/readback-auto.off
