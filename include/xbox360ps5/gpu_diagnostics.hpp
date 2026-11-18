@@ -100,7 +100,7 @@ class Scope {
 
 template<class Fn, class... Args>
 auto Call(Kind kind, Fn fn, Args&&... args) {
-  if (!stages_enabled.load(std::memory_order_relaxed)) return fn(std::forward<Args>(args)...);
+  if (!enabled.load(std::memory_order_relaxed) || !stages_enabled.load(std::memory_order_relaxed)) return fn(std::forward<Args>(args)...);
   const auto started = std::chrono::steady_clock::now();
   const auto result = fn(std::forward<Args>(args)...);
   const auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
