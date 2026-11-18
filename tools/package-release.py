@@ -40,6 +40,8 @@ def main():
     patch_files = sorted((APP / "assets/patches").glob("*.patch.toml"))
     for path in patch_files:
         files[f"assets/patches/{path.name}"] = path
+    for path in sorted((ROOT / "assets/patches").glob("*.patch.toml")):
+        files[f"assets/patches/{path.name}"] = path
     revision = ""
     if (PATCHES / ".git").exists():
         revision = subprocess.run(["git", "-C", str(PATCHES), "rev-parse", "HEAD"],

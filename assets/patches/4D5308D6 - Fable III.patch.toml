@@ -1,0 +1,115 @@
+title_name = "Fable III"
+title_id = "4D5308D6" # MS-2262
+hash = "15A2B07FFF0A2754" # default.xex
+
+[[patch]]
+    name = "60 FPS (Unlock Framerate)"
+    desc = "Unlocks framerate cap from 30 FPS to 60 FPS (Disable VSync)."
+    author = "PS5X360"
+    is_enabled = false
+
+    [[patch.be32]]
+        address = 0x822d8e1c
+        value = 0x39000001
+    [[patch.be32]]
+        address = 0x82d4a224
+        value = 0x39600001
+
+[[patch]]
+    name = "Disable MSAA (Eliminate 2xMSAA & EDRAM Predicated Tiling)"
+    desc = "Forces 1x MSAA instead of 2x MSAA so the 1280x720 scene fits in a single 10 MB EDRAM tile, eliminating 2-tile Predicated Tiling and halving scene geometry/draw calls."
+    author = "PS5X360"
+    is_enabled = false
+
+    [[patch.be32]]
+        address = 0x82270e04
+        value = 0x39600000
+
+[[patch]]
+    name = "576p Performance Resolution (1024x576 3D Scene, 720p UI)"
+    desc = "Uses Fable III's internal 3D scene resolution scaler (1024x576 = 36% fewer pixels) with hardware bilinear upscale while keeping 2D HUD and menus at native 1280x720."
+    author = "PS5X360"
+    is_enabled = false
+
+    [[patch.be32]]
+        address = 0x82270dd8
+        value = 0x39400400
+    [[patch.be32]]
+        address = 0x82270ddc
+        value = 0x39600240
+    [[patch.be32]]
+        address = 0x82270de0
+        value = 0x91410060
+    [[patch.be32]]
+        address = 0x82270de4
+        value = 0x91610064
+    [[patch.be32]]
+        address = 0x82270de8
+        value = 0x4800001c
+
+[[patch]]
+    name = "544p Ultra Performance Resolution (960x544 3D Scene, 720p UI)"
+    desc = "Uses Fable III's internal 3D scene resolution scaler (960x544 = 43% fewer pixels) with hardware bilinear upscale while keeping 2D HUD and menus at native 1280x720."
+    author = "PS5X360"
+    is_enabled = false
+
+    [[patch.be32]]
+        address = 0x82270dd8
+        value = 0x394003c0
+    [[patch.be32]]
+        address = 0x82270ddc
+        value = 0x39600220
+    [[patch.be32]]
+        address = 0x82270de0
+        value = 0x91410060
+    [[patch.be32]]
+        address = 0x82270de4
+        value = 0x91610064
+    [[patch.be32]]
+        address = 0x82270de8
+        value = 0x4800001c
+
+[[patch]]
+    name = "Disable Motion Blur & Radial Blur"
+    desc = "Skips RenderMotionBlur (eliminating an unconditional full-screen 1280x720 EDRAM resolve every frame) and disables radial blur in the post-process composite shader."
+    author = "PS5X360"
+    is_enabled = false
+
+    [[patch.be32]]
+        address = 0x82c84a40
+        value = 0x4e800020
+    [[patch.be32]]
+        address = 0x82c5e4b0
+        value = 0x38600000
+    [[patch.be32]]
+        address = 0x82c5e4b4
+        value = 0x4e800020
+    [[patch.be32]]
+        address = 0x82c838d4
+        value = 0x7e2b8b78
+
+[[patch]]
+    name = "Disable Depth of Field (DOF)"
+    desc = "Skips the 4-pass Depth of Field post-processing filter and selects the non-DOF composite shader permutation."
+    author = "PS5X360"
+    is_enabled = false
+
+    [[patch.be32]]
+        address = 0x82c8541c
+        value = 0x3b800000
+    [[patch.be32]]
+        address = 0x82c8389c
+        value = 0x7e2a8b78
+
+[[patch]]
+    name = "Disable Bloom & Glare"
+    desc = "Disables multi-pass downscale/Gaussian Bloom and Glare in CPostProcessManager::UpdateFromCamera."
+    author = "PS5X360"
+    is_enabled = false
+
+    [[patch.be32]]
+        address = 0x82c8575c
+        value = 0x39200000
+    [[patch.be32]]
+        address = 0x82c85764
+        value = 0x39000000
