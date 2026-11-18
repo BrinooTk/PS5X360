@@ -21,11 +21,11 @@ endif()
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${XBOX360PS5_ROOT}/VERSION")
 
 if(CMAKE_CROSSCOMPILING)
-  # Headers Linux has and the console's FreeBSD-derived SDK does not.
+  # headers Linux has and the console's FreeBSD-derived SDK does not.
   include_directories(BEFORE SYSTEM "${XBOX360PS5_ROOT}/platform/ps5/compat")
   # Canary's PS5 branches (Vulkan loader, video output) use the platform's headers.
   include_directories("${XBOX360PS5_ROOT}/include")
-  add_compile_options(-march=znver2 -fno-stack-protector)
+  add_compile_options(-O3 -march=znver2 -mavx2 -mfma -mbmi -mbmi2 -mlzcnt -fno-stack-protector -fno-math-errno -fno-trapping-math)
   # The title's module converter takes weak references only from Mesa: zstd's
   # optional tracing hooks are weak.
   add_compile_definitions(ZSTD_TRACE=0)
@@ -110,5 +110,5 @@ if(CMAKE_CROSSCOMPILING)
   if(XBOX360PS5_EXPERIMENTAL_DIAGNOSTICS)
     target_compile_definitions(xbox360ps5-title-objects PRIVATE XBOX360PS5_EXPERIMENTAL_DIAGNOSTICS=1)
   endif()
-  target_compile_options(xbox360ps5-title-objects PRIVATE -O2 -mavx)
+  target_compile_options(xbox360ps5-title-objects PRIVATE -O3 -march=znver2 -mavx2 -mfma -mbmi -mbmi2 -mlzcnt -fno-math-errno -fno-trapping-math)
 endif()

@@ -161,16 +161,20 @@ bool Apply(uintptr_t base, View& view, size_t first_guest, size_t guest_count) {
     } else {
       while (end <= last && view.host[end] != bits && wanted(end) == bits) ++end;
     }
+    const bool measure_time = xbox360ps5::gpu_diag::stages_enabled.load(std::memory_order_relaxed);
     timespec before{}, after{};
-    clock_gettime(CLOCK_MONOTONIC, &before);
+    if (measure_time) clock_gettime(CLOCK_MONOTONIC, &before);
     const int32_t result = sceKernelMprotect(reinterpret_cast<void*>(base + page * kPage),
                                              (end - page) * kPage, bits);
-    clock_gettime(CLOCK_MONOTONIC, &after);
-    const long long taken = (after.tv_sec - before.tv_sec) * 1000000000ll + (after.tv_nsec - before.tv_nsec);
-    ++xbox360ps5::protect_syscalls;
-    xbox360ps5::protect_nanoseconds += taken;
-    xbox360ps5::protect_pages += end - page;
-    if (bits & 2) { ++xbox360ps5::open_syscalls; xbox360ps5::open_nanoseconds += taken; }
+    if (measure_time) {
+      clock_gettime(CLOCK_MONOTONIC, &after);
+      const long long taken = (after.tv_sec - before.tv_sec) * 1000000000ll + (after.tv_nsec - before.tv_nsec);
+      xbox360ps5::protect_nanoseconds.fetch_add(taken, std::memory_order_relaxed);
+      if (bits & 2) xbox360ps5::open_nanoseconds.fetch_add(taken, std::memory_order_relaxed);
+    }
+    xbox360ps5::protect_syscalls.fetch_add(1, std::memory_order_relaxed);
+    xbox360ps5::protect_pages.fetch_add(end - page, std::memory_order_relaxed);
+    if (bits & 2) xbox360ps5::open_syscalls.fetch_add(1, std::memory_order_relaxed);
     if (result) { Note("protect", base + page * kPage, (end - page) * kPage, result); good = false; }
     else std::fill(view.host.begin() + page, view.host.begin() + end, bits);
     page = end;

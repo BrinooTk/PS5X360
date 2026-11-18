@@ -57,8 +57,8 @@ struct Settings {
   int decal_bias = 0;           // Polygon offset of decals through shader depth.
   int mulsc = 0;                // Shader multiply rounds toward zero (Volition's engine).
   // Performance.
-  int fast_locks = 0;           // The core's mutexes spin before they block (new in v0.5.6).
-  int memory_boost = 0;         // v0.5.6's shared-memory, protection and cache changes.
+  int fast_locks = 1;           // The core's mutexes spin before they block (new in v0.5.6).
+  int memory_boost = 1;         // v0.5.6's shared-memory, protection and cache changes.
   int dynamic_buffers = 1;      // Rewritten vertex data compared by content instead of watched.
   int memory_window = 0;        // What a guest write invalidates: 0 16 KiB, 1 64 KiB, 2 256 KiB.
   int occlusion = 0;            // 0 fast, 1 fake, 2 fast-alt, 3 strict.
@@ -71,7 +71,7 @@ struct Settings {
   int threaded_driver = 0;      // The driver records commands on a worker thread (a test).
   int pipeline_threads = 0;     // Threads that compile pipelines: 0 automatic, then 2, 4, 6.
   int no_promotion = 0;         // The recompiler's context promotion is off.
-  int fast_dot = 0;             // Less exact dot products.
+  int fast_dot = 1;             // Less exact dot products.
   int zero_page = 0;            // Guest address zero can be read and written.
   // Sound.
   int volume = 3;               // 25%, 50%, 75%, 100%.

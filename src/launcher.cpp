@@ -196,10 +196,10 @@ const std::vector<Option>& Options() {
        "Marcas no chão e nas paredes (sangue, faixas, sombras) que piscam em alguns jogos. Ligado, o deslocamento dessas marcas é calculado no shader.", off_on},
       {"mulsc", &S::mulsc, 0, W::launch, 0, true, "Arredondamento de geometria",
        "Uma conta dos shaders arredonda para zero. Corrige geometria deformada em jogos da Volition (Saints Row, Red Faction) e talvez outros. Deixe desligado nos demais.", off_on},
-      {"fast_locks", &S::fast_locks, 1, W::start, 0, true, "Travas rápidas",
+      {"fast_locks", &S::fast_locks, 1, W::start, 1, true, "Travas rápidas",
        "As travas internas do emulador giram um instante antes de dormir (novidade da 0.5.6). No GTA IV rendeu bem mais quadros por segundo. Se um jogo que funcionava parou de abrir ou trava, deixe desligado: é o comportamento da 0.5.5.",
        off_on},
-      {"memory_boost", &S::memory_boost, 1, W::start, 0, true, "Memória de vídeo otimizada",
+      {"memory_boost", &S::memory_boost, 1, W::start, 1, true, "Memória de vídeo otimizada",
        "Menos cópias e menos avisos de escrita entre o processador e o vídeo (novidade da 0.5.6). Ajuda jogos pesados. Se um jogo que funcionava parou de abrir ou mostra defeitos, deixe desligado: é o comportamento da 0.5.5. As duas opções seguintes só valem com esta ligada.",
        off_on},
       {"dynamic_buffers", &S::dynamic_buffers, 1, W::live, 1, true, "Otimizar buffers dinâmicos",
@@ -229,7 +229,7 @@ const std::vector<Option>& Options() {
       {"pipeline_threads", &S::pipeline_threads, 1, W::start, 0, true, "Threads de preparo de shaders",
        "Quantas threads preparam os efeitos em segundo plano. Automático usa a maior parte dos núcleos: prepara mais rápido, mas disputa o processador com o jogo. Menos threads podem dar um jogo mais estável enquanto os efeitos são preparados.",
        {"Automático", "2", "4", "6"}},
-      {"fast_dot", &S::fast_dot, 1, W::launch, 0, true, "Produto escalar rápido (teste)",
+      {"fast_dot", &S::fast_dot, 1, W::launch, 1, true, "Produto escalar rápido (teste)",
        "Uma conta muito usada pelos jogos é feita de um jeito mais leve e menos exato. Pode dar alguns quadros a mais; se a física ou a geometria ficarem estranhas, desligue.", off_on},
       {"no_promotion", &S::no_promotion, 1, W::launch, 0, true, "Recompilador conservador",
        "Desliga uma otimização do recompilador (context promotion). Alguns jogos de esporte só funcionam certo assim. Deixa o jogo mais lento; use só se ele travar ou se comportar errado.", off_on},
@@ -310,6 +310,8 @@ GameOverrides GamePreset(const std::string& title_id) {
   // a second without the two, 26 to 40 with them (v0.5.6-experimental.11/12).
   static const std::pair<const char*, GameOverrides> built_in[] = {
       {"545407F2", {{"fast_locks", 1}, {"memory_boost", 1}}},
+      {"4D5308D6", {{"fast_locks", 1}, {"memory_boost", 1}, {"dynamic_buffers", 1}, {"memory_window", 0}, {"occlusion", 1}, {"readback", 0}, {"fast_dot", 1}}},
+      {"4D5307F1", {{"fast_locks", 1}, {"memory_boost", 1}, {"dynamic_buffers", 1}, {"clear_pages", 1}, {"readback", 1}, {"fast_dot", 1}}},
       // Left 4 Dead 2: 546 draws refused in two minutes for one released page
       // (v0.5.7-experimental.7, development console).
       // and its text is drawn by the GPU and read back by the game: without

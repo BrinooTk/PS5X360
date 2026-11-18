@@ -1,0 +1,1297 @@
+# Title-specific compatibility settings. Explicit user overrides take priority.
+# These recommendations do not claim console gameplay validation.
+# PES 2013 / Winning Eleven 2013: players require image readback.
+# https://github.com/xenia-canary/game-compatibility/issues/447
+# Upstream evidence; PS5 verification is still pending.
+[4B4E084C]
+readback=1
+video_clock=0
+
+# Left 4 Dead GOTY: current console log resolves GPU-generated glyph data
+# with CPU readback disabled; the related L4D2 font path uses full readback.
+# Targeted correctness candidate, not a confirmed fix or a global setting.
+[45410830]
+readback=2
+
+# State of Decay: readable guest zero page, per-title only.
+# Explicit per-game overrides retain priority. Requires process restart.
+# https://github.com/xenia-project/game-compatibility/issues/899
+[584111E8]
+zero_page=1
+
+# I Am Alive: the game reads back a chain of small resolves (512 KiB down to
+# 4 KiB) to work out the scene brightness; without readback the picture turns
+# white. Fast readback fixed it but the brightness still jumped at times
+# (a late/stale result), so the complete readback is used.
+# https://github.com/xenia-canary/game-compatibility/issues/356
+[58410B3A]
+readback=2
+
+# Prince of Persia: The Forgotten Sands: scenery flickers in gameplay; the
+# Anvil engine culls by occlusion queries (upstream report 177 also notes the
+# sun glowing through walls). Accurate occlusion queries; slower.
+[5553083E]
+occlusion=3
+
+# Forza Horizon: white light / blur flashes in gameplay (GitHub #71, #78 and
+# the Brino's Place forum thread, 0.5.9-fix1 and 0.6.0); a tester reported
+# on 2026-10-17 that fast image readback removes the flicker. PS5 report, not
+# yet checked by the developer.
+[4D5309C9]
+readback=1
+
+# ---- Generated from Xenia Canary compatibility reports (tools/make_compat_assets.py) ----
+# PC findings; PS5 verification pending. A choice made in the game's settings wins.
+
+# Quake 4 - https://github.com/xenia-canary/game-compatibility/issues/857 (labels: gpu-readback)
+[415607D2]
+readback=1
+
+# Quake 4 (Germany) - https://github.com/xenia-canary/game-compatibility/issues/858 (labels: gpu-readback)
+[415607D7]
+readback=1
+
+# Call of Duty 3 - https://github.com/xenia-canary/game-compatibility/issues/27 (labels: gpu-readback)
+[415607E1]
+readback=1
+
+# Spider-Man 3 - https://github.com/xenia-canary/game-compatibility/issues/203 (labels: gpu-readback)
+[415607E2]
+readback=1
+
+# Singularity - https://github.com/xenia-canary/game-compatibility/issues/453 (labels: requires_render_target_rov_fsi)
+[415607EF]
+accurate_targets=1
+
+# Hot Wheels: Beat That! - https://github.com/xenia-canary/game-compatibility/issues/266 (labels: gpu-readback)
+[41560801]
+readback=1
+
+# Madagascar Escape 2 Africa - https://github.com/xenia-canary/game-compatibility/issues/775 (labels: gpu-readback)
+[4156081D]
+readback=2
+
+# James Bond 007 Blood Stone - https://github.com/xenia-canary/game-compatibility/issues/587 (labels: gpu-readback)
+[4156081F]
+readback=1
+
+# Transformers Revenge Of The Fallen - https://github.com/xenia-canary/game-compatibility/issues/610 (labels: gpu-readback)
+[41560834]
+readback=2
+
+# Blur - https://github.com/xenia-canary/game-compatibility/issues/549 (labels: gpu-readback)
+[41560845]
+readback=1
+
+# Call of Duty: Black Ops - https://github.com/xenia-canary/game-compatibility/issues/98
+[41560855]
+readback=1
+zero_page=1
+
+# Bakugan Battle Brawlers - https://github.com/xenia-canary/game-compatibility/issues/320 (labels: gpu-readback)
+[41560857]
+readback=1
+
+# Spider Man: Edge Of Time - https://github.com/xenia-canary/game-compatibility/issues/664 (labels: requires_render_target_rov_fsi)
+[415608B2]
+accurate_targets=1
+
+# The Amazing Spider-Man - https://github.com/xenia-canary/game-compatibility/issues/662 (labels: requires_render_target_rov_fsi)
+[415608B5]
+accurate_targets=1
+readback=2
+
+# Cabela's Survival: Shadows of Katmai - https://github.com/xenia-canary/game-compatibility/issues/1215 (labels: gpu-readback)
+[415608BE]
+readback=1
+
+# NASCAR The Game: Inside Line - https://github.com/xenia-canary/game-compatibility/issues/302 (labels: gpu-readback)
+[415608D2]
+readback=1
+
+# The Walking Dead: Survival Instinct - https://github.com/xenia-canary/game-compatibility/issues/487 (labels: requires_render_target_rov_fsi)
+[415608E1]
+accurate_targets=1
+
+# Cabela's African Adventures - https://github.com/xenia-canary/game-compatibility/issues/557 (labels: gpu-readback)
+[415608FA]
+readback=1
+
+# The Amazing Spider-Man 2 - https://github.com/xenia-canary/game-compatibility/issues/661 (labels: requires_render_target_rov_fsi)
+[41560905]
+accurate_targets=1
+
+# Call of Duty: Advanced Warfare - https://github.com/xenia-canary/game-compatibility/issues/322 (labels: gpu-readback)
+[41560914]
+readback=1
+
+# Gundam: Operation Troy - https://github.com/xenia-canary/game-compatibility/issues/53 (labels: requires_render_target_rov_fsi)
+[424107D6]
+accurate_targets=1
+
+# Elder Scrolls IV: Oblivion - https://github.com/xenia-canary/game-compatibility/issues/1112 (labels: gpu-readback)
+[425307D1]
+readback=1
+
+# Fallout 3 - https://github.com/xenia-canary/game-compatibility/issues/839
+[425307D5]
+readback=2
+
+# Brink - https://github.com/xenia-canary/game-compatibility/issues/1154 (labels: gpu-readback, requires_render_target_rov_fsi)
+[425307D9]
+accurate_targets=1
+readback=1
+
+# Fallout: New Vegas - https://github.com/xenia-canary/game-compatibility/issues/850 (labels: gpu-readback)
+[425307E0]
+readback=1
+
+# Elder Scrolls V: Skyrim - https://github.com/xenia-canary/game-compatibility/issues/1100 (labels: gpu-readback)
+[425307E6]
+readback=1
+
+# RAGE - https://github.com/xenia-canary/game-compatibility/issues/163 (labels: gpu-readback)
+[425307EC]
+clear_pages=1
+readback=1
+
+# DOOM 3 BFG Edition - https://github.com/xenia-canary/game-compatibility/issues/8 (labels: requires_render_target_rov_fsi)
+[425307F1]
+accurate_targets=1
+
+# Wolfenstein: The New Order - https://github.com/xenia-canary/game-compatibility/issues/824 (labels: gpu-readback)
+[425307F5]
+readback=1
+
+# Toy Story 3 - https://github.com/xenia-canary/game-compatibility/issues/781 (labels: gpu-readback)
+[425607E5]
+readback=2
+
+# Split/Second - https://github.com/xenia-canary/game-compatibility/issues/192 (labels: requires_render_target_rov_fsi)
+[425607E7]
+accurate_targets=1
+
+# Cars 2 - https://github.com/xenia-canary/game-compatibility/issues/178
+[425607FE]
+readback=2
+
+# Dead Rising - https://github.com/xenia-canary/game-compatibility/issues/755 (labels: gpu-readback, requires_render_target_rov_fsi)
+[434307D2]
+accurate_targets=1
+readback=2
+
+# Resident Evil 5 - https://github.com/xenia-canary/game-compatibility/issues/337 (labels: gpu-readback)
+[434307D4]
+readback=1
+
+# Resident Evil 4 - https://github.com/xenia-canary/game-compatibility/issues/237 (labels: requires_render_target_rov_fsi)
+[4343081C]
+accurate_targets=1
+zero_page=1
+
+# Resident Evil: ORC (Operation Raccoon City) - https://github.com/xenia-canary/game-compatibility/issues/638 (labels: gpu-readback)
+[4343081D]
+readback=1
+
+# Devil May Cry HD Collection - https://github.com/xenia-canary/game-compatibility/issues/146 (labels: requires_clear_memory_page_state_true)
+[4343081E]
+clear_pages=1
+
+# LMA Manager 2007 - https://github.com/xenia-canary/game-compatibility/issues/914 (labels: gpu-readback)
+[434D07D2]
+readback=1
+
+# Race Driver: GRID - https://github.com/xenia-canary/game-compatibility/issues/373 (labels: gpu-readback)
+[434D07FF]
+readback=1
+
+# Fuel - https://github.com/xenia-canary/game-compatibility/issues/825 (labels: gpu-readback)
+[434D080D]
+readback=1
+
+# DiRT 2 - https://github.com/xenia-canary/game-compatibility/issues/326 (labels: gpu-readback)
+[434D0819]
+readback=2
+
+# DiRT 3 - https://github.com/xenia-canary/game-compatibility/issues/382 (labels: gpu-readback)
+[434D083D]
+readback=2
+
+# F1 2011 - https://github.com/xenia-canary/game-compatibility/issues/1067 (labels: requires_render_target_rov_fsi)
+[434D0842]
+accurate_targets=1
+
+# GRID 2 - https://github.com/xenia-canary/game-compatibility/issues/374 (labels: gpu-readback)
+[434D0844]
+readback=2
+
+# F1 2013 - https://github.com/xenia-canary/game-compatibility/issues/1069 (labels: gpu-readback, requires_render_target_rov_fsi)
+[434D084F]
+accurate_targets=1
+readback=2
+
+# F1 2014 - https://github.com/xenia-canary/game-compatibility/issues/1070 (labels: gpu-readback, requires_render_target_rov_fsi)
+[434D0852]
+accurate_targets=1
+readback=2
+
+# Minecraft Story Mode - https://github.com/xenia-canary/game-compatibility/issues/199
+[443607D9]
+zero_page=1
+
+# Onechanbara: Bikini Samurai Squad (vorteX) - https://github.com/xenia-canary/game-compatibility/issues/620 (labels: gpu-async-compile-issues)
+[445007EA]
+async_shaders=0
+
+# Crash Time 4 - https://github.com/xenia-canary/game-compatibility/issues/831 (labels: gpu-async-compile-issues)
+[445407D9]
+async_shaders=0
+
+# Tiger Woods PGA Tour06 - https://github.com/xenia-canary/game-compatibility/issues/649 (labels: gpu-readback)
+[454107D6]
+readback=1
+
+# FIFA 06: Road to FIFA World Cup - https://github.com/xenia-canary/game-compatibility/issues/127 (labels: gpu-readback)
+[454107D7]
+readback=1
+
+# Need for Speed Most Wanted (2005) - https://github.com/xenia-canary/game-compatibility/issues/28 (labels: gpu-readback)
+[454107D9]
+readback=1
+
+# 2006 FIFA World Cup - https://github.com/xenia-canary/game-compatibility/issues/260 (labels: gpu-readback)
+[454107E6]
+readback=1
+
+# Superman Returns - https://github.com/xenia-canary/game-compatibility/issues/119 (labels: gpu-async-compile-issues)
+[454107ED]
+async_shaders=0
+
+# Def Jam Icon - https://github.com/xenia-canary/game-compatibility/issues/956 (labels: gpu-readback)
+[454107EE]
+readback=2
+
+# NCAA March Madness 07 - https://github.com/xenia-canary/game-compatibility/issues/317
+[454107F2]
+clear_pages=1
+
+# Army of Two - https://github.com/xenia-canary/game-compatibility/issues/543 (labels: gpu-readback)
+[454107F8]
+readback=1
+
+# Battlefield: Bad Company - https://github.com/xenia-canary/game-compatibility/issues/188 (labels: gpu-readback, requires_render_target_rov_fsi)
+[454107F9]
+accurate_targets=1
+readback=1
+
+# The Orange Box - https://github.com/xenia-canary/game-compatibility/issues/235 (labels: gpu-readback)
+[4541080F]
+readback=2
+
+# Madden NFL 08 - https://github.com/xenia-canary/game-compatibility/issues/284 (labels: gpu-async-compile-issues)
+[4541081D]
+async_shaders=0
+
+# FIFA 08 - https://github.com/xenia-canary/game-compatibility/issues/261 (labels: gpu-readback, requires_render_target_rov_fsi)
+[4541081F]
+accurate_targets=1
+readback=2
+
+# NHL 08 - https://github.com/xenia-canary/game-compatibility/issues/291 (labels: gpu-readback)
+[45410820]
+readback=2
+
+# Tiger Woods PGA Tour 08 - https://github.com/xenia-canary/game-compatibility/issues/81 (labels: gpu-readback, requires_render_target_rov_fsi)
+[45410821]
+accurate_targets=1
+readback=1
+
+# Rock Band - https://github.com/xenia-canary/game-compatibility/issues/1031 (labels: gpu-readback)
+[45410829]
+readback=1
+
+# UEFA Euro 2008 - https://github.com/xenia-canary/game-compatibility/issues/262 (labels: gpu-readback)
+[4541083F]
+readback=1
+
+# NASCAR 09 - https://github.com/xenia-canary/game-compatibility/issues/439 (labels: gpu-readback)
+[45410845]
+readback=1
+
+# The Lord of the Rings: Conquest - https://github.com/xenia-canary/game-compatibility/issues/1091 (labels: gpu-readback)
+[45410852]
+readback=1
+
+# FIFA 09 - https://github.com/xenia-canary/game-compatibility/issues/281 (labels: gpu-readback)
+[4541085B]
+no_promotion=1
+readback=2
+
+# Tiger Woods PGA Tour 09 - https://github.com/xenia-canary/game-compatibility/issues/360 (labels: gpu-readback)
+[45410870]
+readback=1
+
+# NHL 09 - https://github.com/xenia-canary/game-compatibility/issues/292 (labels: gpu-readback)
+[45410872]
+readback=2
+
+# The Saboteur - https://github.com/xenia-canary/game-compatibility/issues/423 (labels: gpu-readback)
+[4541088F]
+readback=1
+
+# EA SPORTS Grand Slam Tennis 2 - https://github.com/xenia-canary/game-compatibility/issues/1012
+[45410891]
+no_promotion=1
+zero_page=1
+
+# Battlefield: Bad Company 2 - https://github.com/xenia-canary/game-compatibility/issues/369 (labels: gpu-readback, requires_render_target_rov_fsi)
+[454108A8]
+accurate_targets=1
+readback=2
+
+# Need for Speed Shift - https://github.com/xenia-canary/game-compatibility/issues/573 (labels: gpu-readback)
+[454108B4]
+readback=1
+
+# NHL 10 - https://github.com/xenia-canary/game-compatibility/issues/293 (labels: gpu-readback)
+[454108BA]
+readback=2
+
+# FIFA 10 - https://github.com/xenia-canary/game-compatibility/issues/280 (labels: gpu-readback)
+[454108BC]
+no_promotion=1
+readback=2
+
+# Dragon Age: Origins - https://github.com/xenia-canary/game-compatibility/issues/89
+[454108C0]
+clear_pages=1
+
+# NBA LIVE 10 - https://github.com/xenia-canary/game-compatibility/issues/287
+[454108C1]
+no_promotion=1
+
+# Brütal Legend - https://github.com/xenia-canary/game-compatibility/issues/186 (labels: gpu-readback)
+[454108C5]
+readback=1
+
+# Madden NFL 10 - https://github.com/xenia-canary/game-compatibility/issues/289 (labels: gpu-readback)
+[454108C6]
+readback=1
+
+# Mass Effect 2 - https://github.com/xenia-canary/game-compatibility/issues/265 (labels: requires_render_target_rov_fsi)
+[454108CE]
+accurate_targets=1
+
+# Left 4 Dead 2 - https://github.com/xenia-canary/game-compatibility/issues/179 (labels: gpu-readback)
+[454108D4]
+readback=1
+
+# G.I Joe: The Rise of Cobra - https://github.com/xenia-canary/game-compatibility/issues/1025 (labels: requires_render_target_rov_fsi)
+[454108D9]
+accurate_targets=1
+
+# 2010 FIFA World Cup South Africa - https://github.com/xenia-canary/game-compatibility/issues/434 (labels: gpu-readback)
+[454108E4]
+no_promotion=1
+readback=1
+
+# FIFA 11 - https://github.com/xenia-canary/game-compatibility/issues/285 (labels: gpu-readback)
+[454108F3]
+no_promotion=1
+readback=1
+
+# Medal of Honor - https://github.com/xenia-canary/game-compatibility/issues/367 (labels: requires_render_target_rov_fsi)
+[454108F7]
+accurate_targets=1
+
+# EA SPORTS - MMA - https://github.com/xenia-canary/game-compatibility/issues/821 (labels: gpu-readback)
+[454108FC]
+readback=1
+
+# NHL 11 - https://github.com/xenia-canary/game-compatibility/issues/295 (labels: gpu-readback)
+[454108FD]
+readback=2
+
+# Madden NFL 11 - https://github.com/xenia-canary/game-compatibility/issues/294 (labels: gpu-readback)
+[454108FE]
+no_promotion=1
+readback=1
+
+# Portal 2 - https://github.com/xenia-canary/game-compatibility/issues/141 (labels: gpu-readback)
+[45410912]
+readback=2
+
+# Fight Night Champion - https://github.com/xenia-canary/game-compatibility/issues/209 (labels: gpu-readback)
+[45410915]
+readback=1
+
+# Shift 2: Unleashed - https://github.com/xenia-canary/game-compatibility/issues/593 (labels: gpu-readback, requires_render_target_rov_fsi)
+[45410934]
+accurate_targets=1
+readback=1
+
+# Madden NFL 12 - https://github.com/xenia-canary/game-compatibility/issues/558 (labels: gpu-readback)
+[45410937]
+readback=2
+
+# Kingdoms of Amalur Reckoning - https://github.com/xenia-canary/game-compatibility/issues/1036 (labels: requires_render_target_rov_fsi)
+[4541093E]
+accurate_targets=1
+
+# Mass Effect 3 - https://github.com/xenia-canary/game-compatibility/issues/498 (labels: requires_render_target_rov_fsi)
+[4541095D]
+accurate_targets=1
+
+# Need For Speed Most Wanted (2012) - https://github.com/xenia-canary/game-compatibility/issues/1054 (labels: gpu-readback)
+[45410961]
+readback=2
+
+# The Sims 3: Pets - https://github.com/xenia-canary/game-compatibility/issues/135 (labels: gpu-readback)
+[45410962]
+readback=2
+
+# NHL 12 - https://github.com/xenia-canary/game-compatibility/issues/351 (labels: gpu-readback)
+[45410964]
+no_promotion=1
+readback=2
+
+# FIFA 12 - https://github.com/xenia-canary/game-compatibility/issues/346 (labels: gpu-readback)
+[45410967]
+no_promotion=1
+readback=1
+
+# SSX™ - https://github.com/xenia-canary/game-compatibility/issues/386 (labels: gpu-readback, requires_protect_zero_false)
+[4541096D]
+readback=1
+zero_page=1
+
+# Fuse - https://github.com/xenia-canary/game-compatibility/issues/853 (labels: gpu-readback)
+[4541096E]
+readback=1
+
+# FIFA Street - https://github.com/xenia-canary/game-compatibility/issues/436 (labels: gpu-readback)
+[4541097B]
+no_promotion=1
+readback=1
+
+# Madden NFL 13 - https://github.com/xenia-canary/game-compatibility/issues/1225 (labels: gpu-readback)
+[4541098B]
+readback=1
+
+# Crysis 3 - https://github.com/xenia-canary/game-compatibility/issues/748 (labels: gpu-readback)
+[4541098E]
+readback=1
+
+# FIFA 13 - https://github.com/xenia-canary/game-compatibility/issues/347 (labels: gpu-readback)
+[45410998]
+no_promotion=1
+readback=1
+
+# NHL 13 - https://github.com/xenia-canary/game-compatibility/issues/1188 (labels: gpu-readback)
+[4541099B]
+readback=2
+
+# Tiger Woods PGA Tour 14: Masters Historic Edition - https://github.com/xenia-canary/game-compatibility/issues/364
+[454109A9]
+clear_pages=1
+
+# NHL 14 - https://github.com/xenia-canary/game-compatibility/issues/779 (labels: gpu-readback)
+[454109BE]
+no_promotion=1
+readback=1
+
+# Madden NFL 25 - https://github.com/xenia-canary/game-compatibility/issues/1226 (labels: gpu-readback)
+[454109C1]
+readback=1
+
+# FIFA 14 - https://github.com/xenia-canary/game-compatibility/issues/348 (labels: gpu-readback)
+[454109C3]
+no_promotion=1
+readback=1
+zero_page=1
+
+# 2014 FIFA World Cup Brazil - https://github.com/xenia-canary/game-compatibility/issues/435 (labels: gpu-readback)
+[454109D4]
+no_promotion=1
+readback=1
+
+# Madden NFL 15 - https://github.com/xenia-canary/game-compatibility/issues/1227 (labels: gpu-readback)
+[454109D9]
+readback=1
+
+# FIFA 15 - https://github.com/xenia-canary/game-compatibility/issues/403 (labels: gpu-readback)
+[454109DB]
+no_promotion=1
+readback=1
+
+# NHL 15 - https://github.com/xenia-canary/game-compatibility/issues/1189 (labels: gpu-readback)
+[454109DC]
+readback=2
+
+# Madden NFL 16 - https://github.com/xenia-canary/game-compatibility/issues/1228 (labels: gpu-readback)
+[454109EB]
+readback=1
+
+# NHL: Legacy Edition - https://github.com/xenia-canary/game-compatibility/issues/187
+[454109EC]
+no_promotion=1
+readback=2
+
+# FIFA 16 - https://github.com/xenia-canary/game-compatibility/issues/404 (labels: gpu-readback)
+[454109EE]
+no_promotion=1
+readback=1
+
+# Madden NFL 17 - https://github.com/xenia-canary/game-compatibility/issues/1229 (labels: gpu-readback)
+[454109F2]
+readback=1
+
+# FIFA 17 - https://github.com/xenia-canary/game-compatibility/issues/405 (labels: gpu-readback)
+[454109F4]
+no_promotion=1
+readback=1
+
+# FIFA 18 - https://github.com/xenia-canary/game-compatibility/issues/153 (labels: gpu-readback)
+[454109F8]
+no_promotion=1
+readback=1
+
+# FIFA 19 - https://github.com/xenia-canary/game-compatibility/issues/148 (labels: gpu-readback)
+[454109F9]
+no_promotion=1
+readback=1
+
+# Test Drive: Ferrari Racing Legends - https://github.com/xenia-canary/game-compatibility/issues/1143 (labels: requires_render_target_rov_fsi)
+[455607DB]
+accurate_targets=1
+
+# Divinity II The Dragon Knight Saga - https://github.com/xenia-canary/game-compatibility/issues/47 (labels: requires_render_target_rov_fsi)
+[464507D6]
+accurate_targets=1
+
+# Bound by Flame - https://github.com/xenia-canary/game-compatibility/issues/568 (labels: gpu-readback)
+[464507DD]
+readback=1
+
+# Backbreaker - https://github.com/xenia-canary/game-compatibility/issues/394 (labels: gpu-readback)
+[464F07DA]
+readback=1
+
+# Sniper Elite V2 - https://github.com/xenia-canary/game-compatibility/issues/861 (labels: requires_render_target_rov_fsi)
+[464F07E8]
+accurate_targets=1
+
+# Blackwater - https://github.com/xenia-canary/game-compatibility/issues/682 (labels: requires_protect_zero_false)
+[464F07F2]
+zero_page=1
+
+# Sniper Elite 3: Ultimate Edition - https://github.com/xenia-canary/game-compatibility/issues/484 (labels: requires_render_target_rov_fsi)
+[464F0803]
+accurate_targets=1
+
+# Armored Core: For Answer - https://github.com/xenia-canary/game-compatibility/issues/1042 (labels: gpu-readback)
+[465307DA]
+readback=2
+
+# Dark Souls II - https://github.com/xenia-canary/game-compatibility/issues/1135 (labels: gpu-readback, requires_render_target_rov_fsi)
+[465307E4]
+accurate_targets=1
+readback=1
+
+# Bass Pro Shops - The Strike - https://github.com/xenia-canary/game-compatibility/issues/271 (labels: requires_protect_zero_false)
+[474907D1]
+zero_page=1
+
+# The Chronicles Of Riddick Assault On Dark Athena - https://github.com/xenia-canary/game-compatibility/issues/1046
+[494707EE]
+readback=1
+
+# PES 2017 - https://github.com/xenia-canary/game-compatibility/issues/462 (labels: gpu-readback)
+[4A3007D1]
+readback=1
+
+# PES 2018 - https://github.com/xenia-canary/game-compatibility/issues/463 (labels: gpu-readback)
+[4A3007D3]
+readback=1
+
+# Sacred 2: Fallen Angel - https://github.com/xenia-canary/game-compatibility/issues/868 (labels: requires_protect_zero_false)
+[4B4D07D1]
+zero_page=1
+
+# Risen 2: Dark Waters - https://github.com/xenia-canary/game-compatibility/issues/488 (labels: requires_render_target_rov_fsi)
+[4B4D07E6]
+accurate_targets=1
+
+# Saints Row IV - https://github.com/xenia-canary/game-compatibility/issues/757 (labels: gpu-readback, requires_render_target_rov_fsi, requires_protect_zero_false)
+[4B4D07F6]
+accurate_targets=1
+readback=1
+zero_page=1
+
+# Risen 3: Titan Lords - https://github.com/xenia-canary/game-compatibility/issues/309 (labels: gpu-readback)
+[4B4D07FD]
+readback=1
+
+# Rumble Roses XX - https://github.com/xenia-canary/game-compatibility/issues/648 (labels: gpu-readback, gpu-async-compile-issues)
+[4B4E07D1]
+async_shaders=0
+readback=1
+
+# PES 2008: Pro Evolution Soccer - https://github.com/xenia-canary/game-compatibility/issues/269 (labels: gpu-readback)
+[4B4E07E6]
+readback=1
+
+# PES 2009 - https://github.com/xenia-canary/game-compatibility/issues/443 (labels: gpu-readback)
+[4B4E07F0]
+readback=1
+
+# PES 2010 - https://github.com/xenia-canary/game-compatibility/issues/444 (labels: gpu-readback)
+[4B4E0801]
+readback=1
+
+# PES 2011 - https://github.com/xenia-canary/game-compatibility/issues/445 (labels: gpu-readback)
+[4B4E081D]
+readback=1
+
+# NeverDead - https://github.com/xenia-canary/game-compatibility/issues/486 (labels: requires_render_target_rov_fsi)
+[4B4E081F]
+accurate_targets=1
+
+# Def Jam: Rapstar - https://github.com/xenia-canary/game-compatibility/issues/957 (labels: gpu-readback)
+[4B4E0820]
+readback=1
+
+# PES 2012 - https://github.com/xenia-canary/game-compatibility/issues/446 (labels: gpu-readback)
+[4B4E0837]
+readback=1
+
+# Blades of Time - https://github.com/xenia-canary/game-compatibility/issues/603 (labels: gpu-readback)
+[4B4E0838]
+readback=1
+
+# Metal Gear Solid HD Collection - https://github.com/xenia-canary/game-compatibility/issues/205 (labels: gpu-readback)
+[4B4E0840]
+readback=1
+
+# PES 2014 - https://github.com/xenia-canary/game-compatibility/issues/448 (labels: gpu-readback)
+[4B4E0856]
+readback=1
+
+# Metal Gear Solid V: Ground Zeroes - https://github.com/xenia-canary/game-compatibility/issues/531 (labels: gpu-readback)
+[4B4E085C]
+readback=1
+
+# PES 2015 - https://github.com/xenia-canary/game-compatibility/issues/460 (labels: gpu-readback)
+[4B4E085F]
+readback=1
+
+# PES 2016 - https://github.com/xenia-canary/game-compatibility/issues/461 (labels: gpu-readback)
+[4B4E0861]
+readback=1
+
+# Fist of the North Star: Ken's Rage - https://github.com/xenia-canary/game-compatibility/issues/634 (labels: gpu-readback)
+[4B4F07FE]
+readback=1
+
+# Tropico 5 - https://github.com/xenia-canary/game-compatibility/issues/452 (labels: gpu-readback)
+[4B5907EA]
+readback=1
+
+# Fracture - https://github.com/xenia-canary/game-compatibility/issues/542 (labels: requires_render_target_rov_fsi)
+[4C4107D4]
+accurate_targets=1
+
+# Thrillville: OTR - https://github.com/xenia-canary/game-compatibility/issues/995 (labels: gpu-readback)
+[4C4107D6]
+readback=2
+
+# Star Wars: The Force Unleashed II - https://github.com/xenia-canary/game-compatibility/issues/574 (labels: gpu-readback, requires_render_target_rov_fsi, requires_scribble_heap)
+[4C4107F2]
+accurate_targets=1
+readback=1
+
+# LEGO Star Wars III - The Clone Wars - https://github.com/xenia-canary/game-compatibility/issues/236 (labels: gpu-readback)
+[4C4107F3]
+readback=1
+
+# Superstars® V8 NC - https://github.com/xenia-canary/game-compatibility/issues/1230
+[4C5307D8]
+readback=1
+
+# WRC 2 - https://github.com/xenia-canary/game-compatibility/issues/835 (labels: gpu-readback)
+[4C5307EB]
+readback=1
+
+# SBK Generations - https://github.com/xenia-canary/game-compatibility/issues/1234 (labels: gpu-readback)
+[4C5307F1]
+readback=1
+
+# WRC 3: FIA World Rally Championship - https://github.com/xenia-canary/game-compatibility/issues/833 (labels: gpu-readback)
+[4C5307F3]
+readback=1
+
+# N3: Ninety-Nine Nights - https://github.com/xenia-canary/game-compatibility/issues/611 (labels: requires_clear_memory_page_state_true)
+[4D5307DB]
+clear_pages=1
+
+# Crackdown - https://github.com/xenia-canary/game-compatibility/issues/102 (labels: gpu-readback)
+[4D5307DC]
+readback=2
+zero_page=1
+
+# Blue Dragon - https://github.com/xenia-canary/game-compatibility/issues/6 (labels: requires_render_target_rov_fsi, requires_clear_memory_page_state_true)
+[4D5307DF]
+accurate_targets=1
+clear_pages=1
+
+# Halo 3 - https://github.com/xenia-canary/game-compatibility/issues/214 (labels: gpu-readback, requires_render_target_rov_fsi)
+[4D5307E6]
+accurate_targets=1
+readback=1
+
+# Fable 2 - https://github.com/xenia-canary/game-compatibility/issues/74
+[4D5307F1]
+clear_pages=1
+readback=1
+fast_locks=1
+memory_boost=1
+dynamic_buffers=1
+fast_dot=1
+
+# Lost Odyssey - https://github.com/xenia-canary/game-compatibility/issues/4
+[4D5307FA]
+zero_page=1
+
+# Alan Wake - https://github.com/xenia-canary/game-compatibility/issues/538 (labels: gpu-readback)
+[4D530805]
+readback=1
+
+# Forza Motorsport 3 - https://github.com/xenia-canary/game-compatibility/issues/409 (labels: gpu-readback)
+[4D53084D]
+readback=2
+
+# Halo Reach - https://github.com/xenia-canary/game-compatibility/issues/981 (labels: gpu-readback, gpu-async-compile-issues)
+[4D53085B]
+async_shaders=0
+readback=1
+
+# Halo 3: ODST - https://github.com/xenia-canary/game-compatibility/issues/215 (labels: gpu-readback, requires_render_target_rov_fsi)
+[4D530877]
+accurate_targets=1
+readback=2
+
+# Fable III - https://github.com/xenia-canary/game-compatibility/issues/112
+# PS5 optimization: disable heavy FSI path (use host FBO render targets), enable
+# fast_locks, memory_boost, dynamic_buffers, 16 KiB invalidation window, fake
+# occlusion queries, and fast dot product.
+[4D5308D6]
+accurate_targets=0
+fast_locks=1
+memory_boost=1
+dynamic_buffers=1
+memory_window=0
+occlusion=1
+readback=0
+fast_dot=1
+
+# Forza Motorsport 4 - https://github.com/xenia-canary/game-compatibility/issues/75 (labels: gpu-readback)
+[4D530910]
+readback=1
+
+# Halo 4 - https://github.com/xenia-canary/game-compatibility/issues/216 (labels: gpu-readback)
+[4D530919]
+no_promotion=1
+readback=1
+
+# Halo: Combat Evolved Anniversary - https://github.com/xenia-canary/game-compatibility/issues/552
+[4D5309B1]
+readback=2
+
+# Gears of War: Judgment - https://github.com/xenia-canary/game-compatibility/issues/45 (labels: gpu-readback)
+[4D530A26]
+readback=1
+
+# Forza Horizon 2 - https://github.com/xenia-canary/game-compatibility/issues/111
+[4D530AA4]
+readback=2
+
+# Ridge Racer 6 - https://github.com/xenia-canary/game-compatibility/issues/156
+[4E4D07D3]
+clear_pages=1
+
+# Soulcalibur IV - https://github.com/xenia-canary/game-compatibility/issues/467 (labels: gpu-readback)
+[4E4D07E0]
+readback=1
+
+# Eternal Sonata - https://github.com/xenia-canary/game-compatibility/issues/433 (labels: gpu-readback, requires_clear_memory_page_state_true)
+[4E4D07E4]
+clear_pages=1
+readback=1
+
+# アイドルマスター ライブフォーユー！(THE IDOLM@STER Live For You!) - https://github.com/xenia-canary/game-compatibility/issues/54 (labels: gpu-readback)
+[4E4D07EA]
+readback=1
+
+# Inversion - https://github.com/xenia-canary/game-compatibility/issues/220 (labels: gpu-readback)
+[4E4D0801]
+readback=1
+
+# Dark Souls - https://github.com/xenia-canary/game-compatibility/issues/597 (labels: gpu-readback)
+[4E4D083A]
+readback=1
+
+# Soulcalibur V - https://github.com/xenia-canary/game-compatibility/issues/469 (labels: gpu-readback)
+[4E4D083D]
+readback=2
+
+# Tekken Tag Tournament 2 - https://github.com/xenia-canary/game-compatibility/issues/749 (labels: gpu-readback)
+[4E4D0859]
+readback=2
+
+# NASCAR '15 - https://github.com/xenia-canary/game-compatibility/issues/560 (labels: gpu-readback)
+[4F4807D1]
+readback=1
+
+# PDC World Championship Darts - https://github.com/xenia-canary/game-compatibility/issues/1237 (labels: requires_render_target_rov_fsi)
+[4F5807D1]
+accurate_targets=1
+
+# MXGP - https://github.com/xenia-canary/game-compatibility/issues/155 (labels: gpu-readback)
+[513107D4]
+readback=1
+
+# Ride - https://github.com/xenia-canary/game-compatibility/issues/1202 (labels: gpu-readback)
+[513107D8]
+readback=2
+
+# Crash Time 3 - https://github.com/xenia-canary/game-compatibility/issues/832 (labels: gpu-async-compile-issues)
+[524C07D9]
+async_shaders=0
+
+# Conflict: Denied Ops - https://github.com/xenia-canary/game-compatibility/issues/1064 (labels: gpu-readback)
+[534307D3]
+readback=1
+
+# Bionicle Heroes - https://github.com/xenia-canary/game-compatibility/issues/572 (labels: gpu-readback)
+[534307E2]
+readback=1
+
+# Just Cause 2 - https://github.com/xenia-canary/game-compatibility/issues/989
+[534307E7]
+readback=2
+
+# Tomb Raider: Underworld - https://github.com/xenia-canary/game-compatibility/issues/418 (labels: requires_render_target_rov_fsi)
+[534307EC]
+accurate_targets=1
+zero_page=1
+
+# Batman: Arkham Asylum - https://github.com/xenia-canary/game-compatibility/issues/304 (labels: gpu-async-compile-issues)
+[534307F6]
+async_shaders=0
+
+# Kane & Lynch 2: Dog Days - https://github.com/xenia-canary/game-compatibility/issues/385 (labels: gpu-readback)
+[534307F8]
+readback=1
+
+# Chromehounds - https://github.com/xenia-canary/game-compatibility/issues/693 (labels: gpu-readback)
+[534507D4]
+readback=1
+
+# Iron Man - https://github.com/xenia-canary/game-compatibility/issues/766 (labels: gpu-readback)
+[534507F2]
+readback=1
+
+# Sonic Unleashed - https://github.com/xenia-canary/game-compatibility/issues/130 (labels: requires_render_target_rov_fsi)
+[53450812]
+accurate_targets=1
+clear_pages=1
+
+# Virtua Tennis 2009 - https://github.com/xenia-canary/game-compatibility/issues/1130 (labels: gpu-readback)
+[53450814]
+readback=1
+
+# Aliens vs Predator - https://github.com/xenia-canary/game-compatibility/issues/660 (labels: requires_render_target_rov_fsi)
+[5345082A]
+accurate_targets=1
+
+# Vanquish - https://github.com/xenia-canary/game-compatibility/issues/855 (labels: gpu-readback)
+[53450841]
+readback=1
+
+# Virtual-On Force - https://github.com/xenia-canary/game-compatibility/issues/227 (labels: requires_render_target_rov_fsi)
+[5345084C]
+accurate_targets=1
+
+# SONIC FREE RIDERS - https://github.com/xenia-canary/game-compatibility/issues/972 (labels: requires_protect_zero_false)
+[5345084D]
+zero_page=1
+
+# Sonic & All-Stars Racing Transformed - https://github.com/xenia-canary/game-compatibility/issues/82 (labels: requires_render_target_rov_fsi)
+[5345085D]
+accurate_targets=1
+
+# Alien: Isolation - https://github.com/xenia-canary/game-compatibility/issues/263 (labels: gpu-readback)
+[5345085E]
+readback=1
+
+# Project Sylpheed - https://github.com/xenia-canary/game-compatibility/issues/928 (labels: requires_protect_zero_false)
+[535107D4]
+zero_page=1
+
+# NIER - https://github.com/xenia-canary/game-compatibility/issues/58 (labels: gpu-readback)
+[535107E8]
+readback=1
+
+# Thief - https://github.com/xenia-canary/game-compatibility/issues/791 (labels: requires_render_target_rov_fsi)
+[53510803]
+accurate_targets=1
+
+# Hitman: Absolution - https://github.com/xenia-canary/game-compatibility/issues/389 (labels: gpu-readback)
+[53510804]
+readback=1
+
+# Sleeping Dogs - https://github.com/xenia-canary/game-compatibility/issues/758 (labels: gpu-readback)
+[53510811]
+readback=1
+
+# Murdered: Soul Suspect - https://github.com/xenia-canary/game-compatibility/issues/580 (labels: requires_render_target_rov_fsi)
+[5351081E]
+accurate_targets=1
+
+# Rise of the Tomb Raider - https://github.com/xenia-canary/game-compatibility/issues/174 (labels: gpu-readback)
+[53510823]
+readback=1
+
+# DEAD OR ALIVE 4 - https://github.com/xenia-canary/game-compatibility/issues/207
+[544307D1]
+clear_pages=1
+zero_page=1
+
+# Dead or Alive Xtreme Beach Volleyball 2 - https://github.com/xenia-canary/game-compatibility/issues/619 (labels: requires_clear_memory_page_state_true)
+[544307D2]
+clear_pages=1
+
+# Saints Row - https://github.com/xenia-canary/game-compatibility/issues/20 (labels: requires_protect_zero_false)
+[545107D1]
+zero_page=1
+
+# Disney Pixar Cars - https://github.com/xenia-canary/game-compatibility/issues/1235 (labels: gpu-readback)
+[545107EA]
+readback=2
+
+# Saints Row 2 - https://github.com/xenia-canary/game-compatibility/issues/242 (labels: requires_protect_zero_false)
+[545107FC]
+zero_page=1
+
+# Warhammer 40,000: Space Marine - https://github.com/xenia-canary/game-compatibility/issues/247 (labels: requires_render_target_rov_fsi)
+[5451082C]
+accurate_targets=1
+
+# Cars Race O Rama - https://github.com/xenia-canary/game-compatibility/issues/224 (labels: gpu-readback)
+[54510848]
+readback=1
+
+# Red Faction Armageddon - https://github.com/xenia-canary/game-compatibility/issues/631 (labels: gpu-readback)
+[5451085F]
+readback=1
+
+# Saints Row: The Third - https://github.com/xenia-canary/game-compatibility/issues/161 (labels: gpu-readback, requires_render_target_rov_fsi, requires_protect_zero_false)
+[5451086D]
+accurate_targets=1
+readback=1
+zero_page=1
+
+# MX vs ATV Alive - https://github.com/xenia-canary/game-compatibility/issues/596 (labels: gpu-readback)
+[5451087B]
+readback=1
+
+# WWE 13 - https://github.com/xenia-canary/game-compatibility/issues/51
+[545108B4]
+readback=1
+
+# Bioshock - https://github.com/xenia-canary/game-compatibility/issues/65 (labels: gpu-readback)
+[545407D8]
+readback=1
+
+# The Bureau: XCOM Declassified - https://github.com/xenia-canary/game-compatibility/issues/565 (labels: gpu-readback)
+[545407DD]
+readback=1
+
+# NBA 2K6 - https://github.com/xenia-canary/game-compatibility/issues/532
+[545407E2]
+readback=1
+
+# Civilization Revolution - https://github.com/xenia-canary/game-compatibility/issues/569 (labels: requires_protect_zero_false)
+[545407E5]
+zero_page=1
+
+# Mafia II - https://github.com/xenia-canary/game-compatibility/issues/151
+[545407E6]
+readback=2
+
+# NBA 2K7 - https://github.com/xenia-canary/game-compatibility/issues/939 (labels: gpu-readback)
+[545407EF]
+readback=1
+
+# Midnight Club: Los Angeles - https://github.com/xenia-canary/game-compatibility/issues/145 (labels: gpu-readback)
+[545407F8]
+readback=1
+
+# NHL 2K8 - https://github.com/xenia-canary/game-compatibility/issues/109 (labels: gpu-readback)
+[54540809]
+readback=1
+
+# Bully Scholarship Edition - https://github.com/xenia-canary/game-compatibility/issues/19 (labels: gpu-async-compile-issues)
+[5454081A]
+async_shaders=0
+
+# Max Payne 3 - https://github.com/xenia-canary/game-compatibility/issues/42 (labels: gpu-readback)
+[5454086B]
+readback=1
+
+# Borderlands 2 - https://github.com/xenia-canary/game-compatibility/issues/646 (labels: gpu-readback, requires_render_target_rov_fsi)
+[5454087C]
+accurate_targets=1
+readback=1
+
+# Grand Theft Auto V - https://github.com/xenia-canary/game-compatibility/issues/1140 (labels: gpu-readback)
+[545408A7]
+readback=1
+
+# WWE 2K14 - https://github.com/xenia-canary/game-compatibility/issues/32
+[545408B2]
+readback=1
+
+# Far Cry: Instincts Predator - https://github.com/xenia-canary/game-compatibility/issues/406 (labels: gpu-readback)
+[555307DC]
+readback=2
+
+# Brothers in Arms: HH - https://github.com/xenia-canary/game-compatibility/issues/525 (labels: requires_render_target_rov_fsi)
+[555307EA]
+accurate_targets=1
+
+# Beowulf - https://github.com/xenia-canary/game-compatibility/issues/598
+[55530801]
+clear_pages=1
+
+# Dark Messiah: Might and Magic Elements - https://github.com/xenia-canary/game-compatibility/issues/222 (labels: gpu-readback)
+[55530804]
+readback=2
+
+# Tom Clancy’s Splinter Cell: Conviction - https://github.com/xenia-canary/game-compatibility/issues/196 (labels: gpu-readback, requires_render_target_rov_fsi)
+[5553080B]
+accurate_targets=1
+readback=1
+
+# Tom Clancy's Ghost Recon: Future Soldier - https://github.com/xenia-canary/game-compatibility/issues/466 (labels: requires_render_target_rov_fsi)
+[55530833]
+accurate_targets=1
+
+# James Cameron’s Avatar: The Game - https://github.com/xenia-canary/game-compatibility/issues/1134 (labels: gpu-readback)
+[5553083C]
+clear_pages=1
+readback=1
+
+# Far Cry 3 - https://github.com/xenia-canary/game-compatibility/issues/785 (labels: gpu-readback)
+[5553088C]
+readback=1
+
+# Tom Clancy's Splinter Cell: Blacklist - https://github.com/xenia-canary/game-compatibility/issues/103 (labels: gpu-readback)
+[555308B6]
+clear_pages=1
+readback=1
+
+# Assassin's Creed IV: Black Flag - https://github.com/xenia-canary/game-compatibility/issues/966 (labels: gpu-readback)
+[555308C2]
+readback=2
+
+# Far Cry 4 - https://github.com/xenia-canary/game-compatibility/issues/254 (labels: gpu-readback)
+[555308CA]
+readback=1
+
+# Assassin's Creed Rogue - https://github.com/xenia-canary/game-compatibility/issues/964 (labels: gpu-readback)
+[555308CE]
+readback=2
+
+# Far Cry 3: Blood Dragon (Disc) - https://github.com/xenia-canary/game-compatibility/issues/787 (labels: gpu-readback)
+[555308CF]
+readback=1
+
+# WRC 4: FIA World Rally Championship - https://github.com/xenia-canary/game-compatibility/issues/834 (labels: gpu-readback)
+[573607DD]
+readback=1
+
+# WRC 5 - https://github.com/xenia-canary/game-compatibility/issues/150 (labels: requires_render_target_rov_fsi)
+[573607E2]
+accurate_targets=1
+
+# LEGO Harry Potter Years 1-4 - https://github.com/xenia-canary/game-compatibility/issues/1022 (labels: gpu-readback)
+[575207E6]
+readback=1
+
+# Batman: Arkham City - https://github.com/xenia-canary/game-compatibility/issues/761 (labels: gpu-async-compile-issues)
+[57520802]
+async_shaders=0
+
+# LEGO Batman 2 DC Super Heroes - https://github.com/xenia-canary/game-compatibility/issues/1040 (labels: gpu-readback)
+[57520817]
+readback=1
+
+# The Witcher 2: Assassins of Kings - Enhanced Edition - https://github.com/xenia-canary/game-compatibility/issues/1161 (labels: gpu-readback)
+[57520824]
+readback=1
+
+# Batman: Arkham Origins - https://github.com/xenia-canary/game-compatibility/issues/762 (labels: gpu-readback, gpu-async-compile-issues)
+[57520828]
+async_shaders=0
+readback=1
+
+# Shadow of Mordor - https://github.com/xenia-canary/game-compatibility/issues/299 (labels: gpu-readback)
+[5752082C]
+readback=1
+
+# LEGO Marvel Super Heroes - https://github.com/xenia-canary/game-compatibility/issues/1166 (labels: gpu-readback)
+[57520835]
+readback=1
+
+# The LEGO Movie Video Game - https://github.com/xenia-canary/game-compatibility/issues/974 (labels: gpu-readback)
+[57520841]
+readback=1
+
+# LEGO Marvel Avengers - https://github.com/xenia-canary/game-compatibility/issues/1141 (labels: gpu-readback)
+[5752084F]
+readback=1
+
+# RoboBlitz - https://github.com/xenia-canary/game-compatibility/issues/440 (labels: gpu-readback)
+[584107E5]
+readback=1
+
+# Chessmaster Live - https://github.com/xenia-canary/game-compatibility/issues/679
+[58410866]
+readback=1
+
+# Shadow Complex - https://github.com/xenia-canary/game-compatibility/issues/1181 (labels: gpu-readback)
+[584108F6]
+readback=1
+
+# Call of Duty Classic - https://github.com/xenia-canary/game-compatibility/issues/490
+[58410957]
+zero_page=1
+
+# Trials HD - https://github.com/xenia-canary/game-compatibility/issues/253 (labels: gpu-readback)
+[5841095A]
+readback=1
+
+# Portal: Still Alive - https://github.com/xenia-canary/game-compatibility/issues/142 (labels: gpu-readback)
+[58410960]
+readback=1
+
+# Battlefield 1943 - https://github.com/xenia-canary/game-compatibility/issues/1098 (labels: requires_render_target_rov_fsi)
+[5841097E]
+accurate_targets=1
+
+# Panzer General: Allied Assault - https://github.com/xenia-canary/game-compatibility/issues/725 (labels: gpu-readback)
+[584109B4]
+readback=1
+
+# NBA 2K10: Draft Combine - https://github.com/xenia-canary/game-compatibility/issues/1122 (labels: gpu-readback)
+[584109D8]
+readback=1
+
+# Earthworm Jim HD - https://github.com/xenia-canary/game-compatibility/issues/545 (labels: requires_clear_memory_page_state_true)
+[584109E2]
+clear_pages=1
+
+# Lara Croft and the Guardian of Light - https://github.com/xenia-canary/game-compatibility/issues/417 (labels: requires_render_target_rov_fsi)
+[58410A59]
+accurate_targets=1
+
+# Trials Evolution - https://github.com/xenia-canary/game-compatibility/issues/37 (labels: gpu-readback)
+[58410AAD]
+readback=1
+
+# Beyond Good & Evil HD - https://github.com/xenia-canary/game-compatibility/issues/813 (labels: gpu-readback)
+[58410AFA]
+readback=1
+
+# Backbreaker Vengeance - https://github.com/xenia-canary/game-compatibility/issues/395 (labels: gpu-readback)
+[58410B39]
+readback=1
+
+# Battle: Los Angeles - https://github.com/xenia-canary/game-compatibility/issues/788 (labels: gpu-readback, requires_protect_zero_false)
+[58410B42]
+readback=1
+zero_page=1
+
+# Warhammer 40,000: Kill Team - https://github.com/xenia-canary/game-compatibility/issues/341 (labels: requires_render_target_rov_fsi)
+[58410B52]
+accurate_targets=1
+no_promotion=1
+
+# Alan Wake's American Nightmare - https://github.com/xenia-canary/game-compatibility/issues/353 (labels: gpu-readback)
+[58411233]
+readback=1
+
+# Rayman 3 HD - https://github.com/xenia-canary/game-compatibility/issues/652 (labels: gpu-readback)
+[5841123F]
+readback=1
+
+# The Expendables 2 Videogame - https://github.com/xenia-canary/game-compatibility/issues/430 (labels: gpu-readback)
+[5841124B]
+readback=1
+
+# Counter-Strike: GO - https://github.com/xenia-canary/game-compatibility/issues/212 (labels: gpu-readback)
+[5841125A]
+readback=1
+
+# Narco Terror - https://github.com/xenia-canary/game-compatibility/issues/343 (labels: gpu-readback)
+[58411293]
+readback=1
+
+# Magrunner: Dark Pulse - https://github.com/xenia-canary/game-compatibility/issues/355 (labels: gpu-readback)
+[584113BC]
+readback=1
+
+# Far Cry 3: Blood Dragon (XBLA) - https://github.com/xenia-canary/game-compatibility/issues/786 (labels: gpu-readback)
+[584113BF]
+readback=1
+
+# 電脳戦機バーチャロン - https://github.com/xenia-canary/game-compatibility/issues/865 (labels: gpu-readback)
+[584113C5]
+readback=1
+
+# Trials Fusion - https://github.com/xenia-canary/game-compatibility/issues/1038 (labels: gpu-readback)
+[58411401]
+readback=2
+
+# Contrast - https://github.com/xenia-canary/game-compatibility/issues/797 (labels: requires_render_target_rov_fsi)
+[5841141A]
+accurate_targets=1
+
+# Max: The Curse of Brotherhood - https://github.com/xenia-canary/game-compatibility/issues/918 (labels: gpu-readback)
+[5841145E]
+readback=1
+
+# Two Worlds II - https://github.com/xenia-canary/game-compatibility/issues/252 (labels: gpu-readback)
+[5A4507DA]
+readback=1
+
+# Justice League Arcade - https://github.com/xenia-canary/game-compatibility/issues/1117 (labels: requires_render_target_rov_fsi)
+[DEADBEEF]
+accurate_targets=1
+
+# ---- End of the generated block ----
+
+# Call of Duty: Modern Warfare 3 / Modern Warfare 2 (2026-10-15, PS5 tests): coloured noise and wrong textures.
+# Fixed on the console with memexport readback on (the game writes data with the GPU that must reach game
+# memory) and fast resolve readback; the conservative recompiler and a larger texture cache (assets/config)
+# helped a little before that.
+[415608CB]
+no_promotion=1
+memexport=1
+readback=1
+
+[41560817]
+no_promotion=1
+memexport=1
+readback=1

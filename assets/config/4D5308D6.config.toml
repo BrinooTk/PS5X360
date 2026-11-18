@@ -1,0 +1,16 @@
+# 4D5308D6 - Fable III (PS5 Performance Preset)
+# Uses host render targets (fbo) instead of heavy Fragment Shader Interlock (fsi),
+# disables resolve readback stalls, uses fake occlusion queries and fast dot product.
+
+[CPU]
+use_fast_dot_product = true
+
+[GPU]
+render_target_path_vulkan = "fbo"
+readback_resolve = "none"
+readback_memexport = false
+occlusion_query = "fake"
+async_shader_compilation = true
+texture_cache_memory_limit_soft = 1536
+texture_cache_memory_limit_hard = 2048
+texture_cache_memory_limit_soft_lifetime = 600

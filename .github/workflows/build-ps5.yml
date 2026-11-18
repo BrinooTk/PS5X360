@@ -1,0 +1,79 @@
+name: Build PS5 Package (PPSA50011)
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-ps5:
+    name: Build PS5 Native Title & FFPKG
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout PS5X360
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential clang-18 lld-18 llvm-18 cmake ninja-build \
+            python3 python3-pip python3-venv python3-mako python3-yaml \
+            meson pkg-config git curl unzip jq
+
+      - name: Setup .NET 8 for UFS2Tool (.ffpkg)
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Fetch PS5_Vulkan, PS5_Mesa, and PS5_PayloadSDK references
+        run: |
+          mkdir -p .deps/references
+          git clone https://github.com/mihawk-99/PS5_Vulkan.git .deps/references/PS5_Vulkan
+          git -C .deps/references/PS5_Vulkan checkout 3f3ee69607013b345d2baa6d6a37c86745649a08
+          git clone https://github.com/mihawk-99/PS5_Mesa.git .deps/references/PS5_Mesa
+          git -C .deps/references/PS5_Mesa checkout 0b2d6d1a61d9bbf89cf8beb88a696144f67c61f8
+          git clone https://github.com/mihawk-99/PS5_PayloadSDK.git .deps/references/PS5_PayloadSDK
+          git -C .deps/references/PS5_PayloadSDK checkout 95c08f27386fc698f6bbe21dde3030140a41d10b
+
+      - name: Prepare Xenia Canary Core & Apply PS5 Optimizations
+        run: |
+          python3 tools/prepare_canary.py
+
+      - name: Build RADV Platform & Payload SDK
+        run: |
+          mkdir -p build
+          bash tools/build-radv-platform.sh
+
+      - name: Build PS5 Title Executable (eboot.bin)
+        run: |
+          sed -i 's|python3 build/native-runtime-stage/tools/verify-image.py|# skip internal stage script|' tools/build-canary-game.sh
+          PS5_PAYLOAD_SDK="$(pwd)/.deps/references/PS5_Vulkan/.deps/native/ps5-payload-sdk" \
+            bash tools/build-canary-game.sh
+
+      - name: Assemble PPSA50011.zip and PPSA50011.ffpkg
+        run: |
+          mkdir -p dist/PPSA50011/sce_sys dist/PPSA50011/sce_module dist/PPSA50011/assets/roms dist/PPSA50011/assets/config
+          cp build/canary-game/eboot.bin dist/PPSA50011/eboot.bin
+          cp assets/presets.txt dist/PPSA50011/assets/presets.txt
+          cp -r assets/config/* dist/PPSA50011/assets/config/ || true
+          cp assets/branding/* dist/PPSA50011/sce_sys/
+          cp .deps/references/PS5_Vulkan/runtime/libc.prx dist/PPSA50011/sce_module/libc.prx
+          printf "1\n" > dist/PPSA50011/readback-auto.off
+          ufs2tool=$(bash .deps/references/PS5_Vulkan/tools/setup-packaging-dependencies.sh ffpkg)
+          "$ufs2tool" makefs -S 4096 -b 20% -t ffs \
+            -o version=2,bsize=32768,fsize=4096,minfree=0,softupdates=0,optimization=space \
+            dist/PPSA50011.ffpkg dist/PPSA50011
+          (cd dist && zip -r PPSA50011.zip PPSA50011)
+
+      - name: Upload PS5 Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: PS5X360-PPSA50011-Packages
+          path: |
+            dist/PPSA50011.zip
+            dist/PPSA50011.ffpkg

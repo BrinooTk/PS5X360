@@ -26,9 +26,10 @@ namespace {
 constexpr unsigned long long kTitleCpus = 0x1fffull;  // CPUs 0 to 12.
 constexpr unsigned long long kGpuCore = 0xcull;       // CPUs 2 and 3: one core.
 constexpr unsigned long long kGpuCpu = 0x4ull;        // CPU 2.
-// Off: experimental.10 measured no difference with it on (24 to 26 frames a
-// second at five switches in one scene).
-std::atomic<bool> dedicated{false};
+// Dedicated core for the GPU command thread on Zen 2 CCX0 (CPU 2, reserving
+// sibling hardware thread CPU 3) to prevent shader compilation workers and
+// guest threads from preempting GPU command submission.
+std::atomic<bool> dedicated{true};
 std::atomic<pthread_t> gpu_thread{nullptr};
 std::atomic<unsigned> placed{0}, refused{0};
 pthread_t Of(void* thread) { return thread ? static_cast<pthread_t>(thread) : pthread_self(); }
