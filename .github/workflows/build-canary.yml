@@ -30,7 +30,6 @@ jobs:
             tar \
             glslang-tools \
             spirv-tools \
-            spirv-tools-dev \
             spirv-headers \
             llvm-18 \
             llvm-18-dev \
