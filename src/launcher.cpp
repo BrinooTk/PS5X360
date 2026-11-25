@@ -613,6 +613,8 @@ void Launcher::Scan() {
   // found again by its path: the old positions mean nothing in the new list.
   const GameEntry* shown = Selected();
   const std::string keep = shown ? shown->path.string() : std::string();
+  const bool do_rescan = force_rescan_;
+  force_rescan_ = false;
   view_.clear();
   games_.clear();
   textures_.clear();
@@ -758,7 +760,36 @@ void Launcher::Scan() {
     }
   };
 
+  std::string roots_sig;
+  for (const auto& p : settings_.game_paths) roots_sig += p + "|";
+  const fs::path scan_cache = kStorage / "library/smb_scan_cache.tsv";
+  bool loaded_from_cache = false;
+  if (!do_rescan) {
+    std::ifstream in(scan_cache);
+    std::string header;
+    if (std::getline(in, header) && header == roots_sig) {
+      std::string line;
+      while (std::getline(in, line)) {
+        if (line.empty()) continue;
+        std::vector<std::string> cols;
+        size_t start = 0;
+        while (true) {
+          const size_t tab = line.find('\t', start);
+          if (tab == std::string::npos) { cols.push_back(line.substr(start)); break; }
+          cols.push_back(line.substr(start, tab - start));
+          start = tab + 1;
+        }
+        if (cols.size() >= 6) {
+          GameEntry g{cols[0], fs::path(cols[1]), cols[2], cols[3], cols[4], cols[5]};
+          add(std::move(g), {});
+        }
+      }
+      loaded_from_cache = !games_.empty();
+    }
+  }
+
   for (const auto& configured : settings_.game_paths) {
+    if (loaded_from_cache) break;
     if (IsSmbPath(configured)) {
       const auto identity = NormalizeGamePath(configured);
       if (identity.empty() || !seen_roots.insert(identity).second) continue;
@@ -794,11 +825,29 @@ void Launcher::Scan() {
   scroll_ = float(selected_);
   SelectionChanged();
   if (mode_ == Mode::settings && settings_tab_ == 1) RefreshPerGame();
+  if (!loaded_from_cache && !games_.empty()) {
+    std::error_code dir_ec;
+    fs::create_directories(scan_cache.parent_path(), dir_ec);
+    std::ofstream out(scan_cache, std::ios::trunc);
+    if (out) {
+      out << roots_sig << "\n";
+      auto clean = [](std::string s) {
+        for (char& ch : s) if (ch == '\t' || ch == '\n' || ch == '\r') ch = ' ';
+        return s;
+      };
+      for (const auto& g : games_) {
+        out << clean(g.name) << '\t' << clean(g.path.generic_string()) << '\t'
+            << clean(g.kind) << '\t' << clean(g.folder) << '\t'
+            << clean(g.title_id) << '\t' << clean(g.size) << '\n';
+      }
+    }
+  }
   watch_.Known(settings_.game_paths, LibrarySignature(settings_.game_paths));
-  XELOGW("LAUNCHER found {} games", games_.size());
+  XELOGW("LAUNCHER found {} games{}", games_.size(), loaded_from_cache ? " (from cache)" : "");
 }
 
 void Launcher::RefreshLibrary(bool automatic) {
+  force_rescan_ = true;
   std::set<std::string> before;
   for (const auto& game : games_) before.insert(game.path.string());
   Scan();
@@ -1221,6 +1270,7 @@ void Launcher::Press(Key key) {
         if (WriteGamePaths(kStorage / "game_paths.txt", changed)) {
           settings_.game_paths = std::move(changed);
           path_row_ = std::max(0, std::min(path_row_, int(settings_.game_paths.size()) - 1));
+          force_rescan_ = true;
           Scan();
         } else path_error_ = Tr("Não foi possível salvar as pastas.");
       }
@@ -1243,7 +1293,7 @@ void Launcher::Press(Key key) {
         auto changed = settings_.game_paths;
         if (std::find(changed.begin(), changed.end(), path) == changed.end()) changed.push_back(path);
         if (WriteGamePaths(kStorage / "game_paths.txt", changed)) {
-          settings_.game_paths = std::move(changed); path_error_.clear(); mode_ = Mode::paths; Scan();
+          settings_.game_paths = std::move(changed); path_error_.clear(); mode_ = Mode::paths; force_rescan_ = true; Scan();
         } else path_error_ = Tr("Não foi possível salvar as pastas.");
       }
       break;
@@ -1356,7 +1406,7 @@ void Launcher::Press(Key key) {
             if (smb_edit_index_ >= 0 && smb_edit_index_ < int(changed.size())) changed[size_t(smb_edit_index_)] = url;
             else if (std::find(changed.begin(), changed.end(), url) == changed.end()) changed.push_back(url);
             if (WriteGamePaths(kStorage / "game_paths.txt", changed)) {
-              settings_.game_paths = std::move(changed); path_error_.clear(); mode_ = Mode::paths; Scan();
+              settings_.game_paths = std::move(changed); path_error_.clear(); mode_ = Mode::paths; force_rescan_ = true; Scan();
             } else smb_status_ = "Connected, but failed to save game_paths.txt.";
           }
         }

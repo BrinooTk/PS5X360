@@ -301,7 +301,7 @@ private:
   std::vector<std::filesystem::path> browser_folders_;
   std::string path_error_;
   int smb_field_ = 0, smb_key_row_ = 0, smb_key_col_ = 0, smb_edit_index_ = -1;
-  bool smb_upper_ = false;
+  bool smb_upper_ = false, force_rescan_ = false;
   std::string smb_host_, smb_share_, smb_user_, smb_pass_, smb_status_;
 };
 class LauncherDialog final : public xe::ui::ImGuiDialog {
