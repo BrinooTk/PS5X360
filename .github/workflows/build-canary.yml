@@ -1,0 +1,130 @@
+name: Build PS5X360 Canary (PPSA50011)
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build-ps5-canary:
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout PS5X360
+        uses: actions/checkout@v4
+
+      - name: Install host build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            cmake \
+            ninja-build \
+            meson \
+            pkg-config \
+            git \
+            curl \
+            wget \
+            unzip \
+            tar \
+            glslang-tools \
+            spirv-tools \
+            spirv-tools-dev \
+            spirv-headers \
+            llvm-18 \
+            llvm-18-dev \
+            clang-18 \
+            libclang-18-dev \
+            libclc-18-dev \
+            libllvmspirvlib-18-dev \
+            python3 \
+            python3-mako \
+            python3-yaml \
+            python3-markupsafe \
+            zlib1g-dev \
+            libexpat1-dev
+
+      - name: Fetch external repositories
+        run: |
+          mkdir -p .deps/references
+
+          git clone --branch canary_experimental --depth 1 --recursive \
+            https://github.com .deps/xenia-canary
+
+          git clone --branch libsmb2-6.2 --depth 1 \
+            https://github.com .deps/libsmb2
+
+          git clone --recursive \
+            https://github.com .deps/references/PS5_Vulkan
+          git clone --recursive \
+            https://github.com .deps/references/PS5_PayloadSDK
+          git clone --recursive \
+            https://github.com .deps/references/PS5_Mesa
+
+      - name: Cache PS5 Payload SDK, RADV archive, and libc.prx
+        id: cache-ps5-native
+        uses: actions/cache@v4
+        with:
+          path: |
+            .deps/references/PS5_Vulkan/.deps/native
+            .deps/references/PS5_Vulkan/runtime/libc.prx
+          key: ps5-native-${{ runner.os }}-${{ hashFiles('patches/xenia-canary-ps5.patch', 'patches/libsmb2-ps5.patch', 'canary/CMakeLists.txt') }}
+          restore-keys: |
+            ps5-native-${{ runner.os }}-
+
+      - name: Build PS5 Payload SDK, RADV release archive, and libc.prx
+        if: steps.cache-ps5-native.outputs.cache-hit != 'true'
+        run: |
+          cd .deps/references/PS5_Vulkan
+          make deps
+          export PS5_PAYLOAD_SDK="$PWD/.deps/native/ps5-payload-sdk"
+          bash tools/build-radv.sh release
+          make runtime/libc.prx
+
+      - name: Apply xenia-canary and libsmb2 PS5 patches
+        run: |
+          if [ -s patches/xenia-canary-ps5.patch ]; then
+            git -C .deps/xenia-canary apply --whitespace=nowarn "$GITHUB_WORKSPACE/patches/xenia-canary-ps5.patch"
+          fi
+          if [ -s patches/libsmb2-ps5.patch ]; then
+            git -C .deps/libsmb2 apply --whitespace=nowarn "$GITHUB_WORKSPACE/patches/libsmb2-ps5.patch"
+          fi
+          if ! grep -q 'lib/usha.c' canary/CMakeLists.txt; then
+            sed -i 's|"${LIBSMB2_SOURCE}/lib/unicode.c")|"${LIBSMB2_SOURCE}/lib/unicode.c"\n  "${LIBSMB2_SOURCE}/lib/usha.c")|' canary/CMakeLists.txt
+          fi
+
+      - name: Build PS5X360 Canary (eboot.bin)
+        env:
+          PS5_PAYLOAD_SDK: ${{ github.workspace }}/.deps/references/PS5_Vulkan/.deps/native/ps5-payload-sdk
+        run: |
+          mkdir -p build/native-runtime-stage/tools
+          cat << 'INNER_EOF' > build/native-runtime-stage/tools/verify-image.py
+          #!/usr/bin/env python3
+          import pathlib, sys
+          for arg in sys.argv[1:]:
+              p = pathlib.Path(arg)
+              if not p.is_file() or p.read_bytes()[:4] != b"\x7fELF":
+                  raise SystemExit(f"Invalid ELF: {p}")
+          INNER_EOF
+          chmod +x build/native-runtime-stage/tools/verify-image.py
+
+          bash tools/build-canary-game.sh
+
+      - name: Assemble dist/PPSA50011 title directory
+        run: |
+          mkdir -p build/native-runtime-stage/dist/PPSA50010/sce_sys
+          cp .deps/references/PS5_Vulkan/sce_sys/param.json build/native-runtime-stage/dist/PPSA50010/sce_sys/param.json
+
+          mkdir -p dist/PPSA50011/sce_module dist/PPSA50011/sce_sys dist/PPSA50011/assets/roms
+          cp build/canary-game/eboot.bin dist/PPSA50011/eboot.bin
+          cp .deps/references/PS5_Vulkan/runtime/libc.prx dist/PPSA50011/sce_module/libc.prx
+
+          python3 tools/package-game.py --folder
+          ls -laR dist/PPSA50011
+
+      - name: Upload PPSA50011 build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: PS5X360-PPSA50011
+          path: dist/PPSA50011/
