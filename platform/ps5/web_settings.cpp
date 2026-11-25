@@ -106,7 +106,7 @@ async function pathsPage(){
     '<button id="addpath" style="background:#35d07f;color:#06130c;border-color:#35d07f;font-weight:600">Add</button></div></div>'+
     '<h3>Paths</h3>'+(r.paths.map((p,i)=>
     '<div class="option"><div class="top"><span style="word-break:break-all">'+esc(p)+'</span>'+
-    '<button data-delpath="'+i+'" style="background:#8a2f43;border-color:#8a2f43">Remover</button></div></div>').join('')||'<p>Nenhuma pasta.</p>');
+    '<button data-delpath="'+i+'" style="background:#8a2f43;border-color:#8a2f43">Remove</button></div></div>').join('')||'<p>No Paths.</p>');
   $('addpath').onclick=async()=>{
     const v=$('newpath').value.trim();if(!v)return;
     const res=await api('/api/paths',{method:'POST',headers:{'X-Key':key,'Content-Type':'application/x-www-form-urlencoded'},body:'action=add&path='+encodeURIComponent(v)});
