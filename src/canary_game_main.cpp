@@ -63,7 +63,6 @@ DECLARE_path(log_file);
 DECLARE_bool(vsync);
 DECLARE_int32(log_level);
 DECLARE_bool(headless);
-DECLARE_int32(license_mask);
 // The launcher's language setting. Canary declares this variable in its kernel
 // without defining it (the language comes from the signed-in profile there).
 DECLARE_bool(mute);
@@ -1395,7 +1394,6 @@ int main(int argc, char** argv) {
             xe::kernel::XCONFIG_USER_CATEGORY_ENTRIES::XCONFIG_USER_LANGUAGE, &game_language);
         XELOGI("Language: interface {}, game {}, console {}", xbox360ps5::ui_language.load(),
                settings.GameLanguage(), settings.console_language);
-		cvars::license_mask = settings.xbla_full_license ? 1 : 0;
         try {
           xbox360ps5::motion::SetEnabled(settings.motion_phone != 0);
           status = emulator.LaunchPath(game);

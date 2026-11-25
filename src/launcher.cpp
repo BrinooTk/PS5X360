@@ -33,7 +33,6 @@ DECLARE_bool(log_to_stdout);
 DECLARE_int32(draw_resolution_scale_x);
 DECLARE_int32(draw_resolution_scale_y);
 DECLARE_bool(gpu_allow_invalid_fetch_constants);
-DECLARE_int32(license_mask);
 DECLARE_int32(anisotropic_override);
 DECLARE_string(occlusion_query);
 DECLARE_string(readback_resolve);
@@ -378,7 +377,6 @@ void Settings::Load() {
     if (key == "language") language = value;
     else if (key == "interface_language") interface_language = value;
     else if (key == "logging_policy") logging_policy = value;
-	else if (key == "xbla_full_license") xbla_full_license = value != 0;
     // resolution_scale: not read. Scaled rendering takes the PS5's memory away
     // from the game's threads (every game crashed at its first frame).
     else if (const Option* option = FindOption(key))
@@ -394,8 +392,7 @@ void Settings::Load() {
 void Settings::Save() const {
   std::ofstream output(kStorage / "settings.txt", std::ios::trunc);
   output << "language=" << language << "\ninterface_language=" << interface_language
-         << "\nlogging_policy=1\nresolution_scale=" << resolution_scale
-         << "\nxbla_full_license=" << int(xbla_full_license) << "\n";
+         << "\nlogging_policy=1\nresolution_scale=" << resolution_scale << "\n";
   for (const auto& option : Options()) output << option.key << "=" << this->*option.field << "\n";
 }
 void Settings::Apply() const {
@@ -403,7 +400,6 @@ void Settings::Apply() const {
   ui_language.store(SupportedUiLanguage(interface_language ? interface_language : console_language));
   cvars::user_language = GameLanguage();
   cvars::mute = mute != 0;
-  cvars::license_mask = xbla_full_license ? 1 : 0;
   cvars::draw_resolution_scale_x = cvars::draw_resolution_scale_y = resolution_scale;
   // Normal gameplay records warnings/errors plus explicit session metadata.
   // Do not duplicate every line into the platform stdout transport, and do
@@ -1184,7 +1180,7 @@ void Launcher::Press(Key key) {
         if (key == Key::circle || key == Key::square) CloseSettings();
         break;
       }
-      const int rows = 14;
+      const int rows = 13;
       if (key == Key::up) settings_row_ = (settings_row_ + rows - 1) % rows;
       if (key == Key::down) settings_row_ = (settings_row_ + 1) % rows;
       if (key == Key::left || key == Key::right || key == Key::cross) {
@@ -1220,8 +1216,7 @@ void Launcher::Press(Key key) {
           settings_.Apply();
           restored_ = true;
         }
-        else if ((settings_row_ == 12 || settings_row_ == 13) && key == Key::cross) { settings_.Save(); restart_ = true; }
-        if (settings_row_ >= 1 && settings_row_ < 9) settings_changed_ = true;
+        else if (settings_row_ == 12 && key == Key::cross) { settings_.Save(); restart_ = true; }
       }
       if (key == Key::up || key == Key::down) { restored_ = false; scan_result_.clear(); }
       if (key == Key::circle || key == Key::square) CloseSettings();
@@ -2180,9 +2175,8 @@ void Launcher::DrawSettingsSheet(Canvas& c) {
       {Tr("Atualizar lista de jogos"), scan_result_, Tr("Procura de novo os jogos, as capas e os patches nas pastas. Um jogo copiado para o console também aparece sozinho, alguns segundos depois do fim da cópia.")},
       {Tr("Saves"), "", Tr("Veja os dados por jogo e o local de armazenamento. Perfis e conquistas são preservados junto com os saves.")},
       {Tr("Restaurar o recomendado"), restored_ ? Tr("Feito") : "", Tr("Volta todas as opções de Vídeo, Desempenho, Áudio, Controles e Sistema para o valor recomendado. Os ajustes próprios de cada jogo não mudam.")},
-      {Tr("Reiniciar o emulador"), "", Tr("Fecha e abre o emulador de novo.")},
-	  {Tr("Licença completa XBLA"), settings_.xbla_full_license ? Tr("Ligado") : Tr("Desligado"), Tr("Inicia jogos do Xbox Live Arcade no modo jogo completo (license_mask = 1) em vez do modo de demonstração/trial.")}};
-  for (int n = 0; n < 14; ++n) {
+      {Tr("Reiniciar o emulador"), "", Tr("Fecha e abre o emulador de novo.")}};
+  for (int n = 0; n < 13; ++n) {
     const float y = 122 + n * 42.0f;
     const bool focused = n == settings_row_;
     c.Fill(x + 40, y, 780, 40, focused ? kSurfaceHigh : kSurface, focused ? 1.0f : 0.6f, 10);
@@ -2192,7 +2186,7 @@ void Launcher::DrawSettingsSheet(Canvas& c) {
   }
   c.Wrapped(rows[settings_row_].about, x + 56, 684, 20, kBody, 750);
   const std::string covers = covers_.Status();
-  if (settings_row_ == 8 && !covers.empty()) c.Text(covers, x + 56, 770, 20, kAccent, 1.0f, 0, 750);
+  if (settings_row_ == 7 && !covers.empty()) c.Text(covers, x + 56, 770, 20, kAccent, 1.0f, 0, 750);
   c.Fill(x + 40, 808, 780, 1, kWhite, 0.10f);
   if (web_qr_.size) {
     // The settings page: its QR code on a white card, the address and the key beside it.
