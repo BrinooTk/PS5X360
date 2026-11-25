@@ -73,6 +73,8 @@ h3{font-size:14px;color:#9aa3b2;margin:16px 0 8px;font-weight:600}
 <script>
 let key=new URLSearchParams(location.search).get('k')||sessionStorage.getItem('k')||'',state=null,tab=0,scope='';
 const $=id=>document.getElementById(id);
+function esc(s){return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+function toast(){$('saved').textContent=state.text.saved;$('saved').classList.add('on');setTimeout(()=>$('saved').classList.remove('on'),1200);}
 async function api(path,options){const r=await fetch(path,Object.assign({headers:{'X-Key':key}},options||{}));if(r.status==403)throw new Error('key');return r.json();}
 async function load(){
   try{state=await api('/api/state');}catch(e){$('app').hidden=true;$('gate').hidden=false;return;}
@@ -84,7 +86,7 @@ function render(){
   const games=state.games||[];if(scope&&!games.some(g=>g.id==scope))scope='';
   $('scope').innerHTML='<option value="">'+t.all+'</option>'+games.map(g=>'<option value="'+g.id+'">'+esc(g.name)+' ['+g.id+']</option>').join('');
   $('scope').value=scope;
-  const names=state.categories.concat(['SMB / Pastas',t.logs]);
+  const names=state.categories.concat(['SMB / Paths',t.logs]);
   $('tabs').innerHTML=names.map((n,i)=>'<button class="'+(i==tab?'on':'')+'" data-tab="'+i+'">'+esc(n)+'</button>').join('');
   if(tab==state.categories.length){pathsPage();return;}
   if(tab==state.categories.length+1){logs();return;}
@@ -99,10 +101,10 @@ function render(){
 }
 async function pathsPage(){
   const r=await api('/api/paths');
-  $('list').innerHTML='<div class="option"><b>Adicionar SMB ou Pasta</b><p>Ex: smb://usuario:senha@192.168.1.10/Xbox360 ou /mnt/usb0/xbox360</p>'+
+  $('list').innerHTML='<div class="option"><b>Add SMB</b><p>Ex: smb://user:pass@192.168.1.10/Xbox360 ou /mnt/usb0/xbox360</p>'+
     '<div style="display:flex;gap:8px;margin-top:10px"><input id="newpath" style="flex:1" placeholder="smb://user:pass@192.168.1.10/share">'+
-    '<button id="addpath" style="background:#35d07f;color:#06130c;border-color:#35d07f;font-weight:600">Adicionar</button></div></div>'+
-    '<h3>Pastas configuradas</h3>'+(r.paths.map((p,i)=>
+    '<button id="addpath" style="background:#35d07f;color:#06130c;border-color:#35d07f;font-weight:600">Add</button></div></div>'+
+    '<h3>Current Paths</h3>'+(r.paths.map((p,i)=>
     '<div class="option"><div class="top"><span style="word-break:break-all">'+esc(p)+'</span>'+
     '<button data-delpath="'+i+'" style="background:#8a2f43;border-color:#8a2f43">Remover</button></div></div>').join('')||'<p>Nenhuma pasta.</p>');
   $('addpath').onclick=async()=>{
@@ -116,9 +118,24 @@ async function pathsPage(){
     toast();pathsPage();
   });
 }
-function toast(){$('saved').textContent=state.text.saved;$('saved').classList.add('on');setTimeout(()=>$('saved').classList.remove('on'),1200);}
+async function logs(){
+  const t=state.text,r=await api('/api/logs'),size=b=>b>=1048576?(b/1048576).toFixed(1)+' MB':Math.ceil(b/1024)+' KB';
+  const zip=(game,cls,name,count,bytes)=>'<a class="'+cls+'" href="/logs.zip?k='+key+'&game='+game+'" download>'+esc(name)+'<span>'+count+' · '+size(bytes)+'</span></a>';
+  $('list').innerHTML='<div class="zip">'+zip('all','all',t.zipAll,r.count,r.size)+'<h3>'+esc(t.zipGame)+'</h3>'+
+    r.games.map(g=>zip(g.id,'',g.name,g.count,g.size)).join('')+'</div><h3>'+esc(t.files)+'</h3><div class="logs">'+
+    r.files.map(l=>'<a href="/logs/'+encodeURIComponent(l.name)+'?k='+key+'" download>'+esc(l.name)+'<span>'+size(l.size)+'</span></a>').join('')+'</div>';
+}
+$('tabs').onclick=e=>{if(e.target.dataset.tab!==undefined){tab=+e.target.dataset.tab;render();}};
+$('scope').onchange=e=>{scope=e.target.value;render();};
+$('list').onchange=async e=>{
+  const k=e.target.dataset.key;if(!k)return;
+  await api('/api/set',{method:'POST',headers:{'X-Key':key,'Content-Type':'application/x-www-form-urlencoded'},body:'scope='+scope+'&key='+k+'&value='+e.target.value});
+  toast();setTimeout(load,500);
+};
+$('enter').onclick=()=>{key=$('code').value.trim().toLowerCase();load();};
 load();setInterval(()=>{if(!$('app').hidden&&document.activeElement.tagName!='SELECT'&&tab<state.categories.length)load();},5000);
-</script></body></html>
+</script>
+</body></html>
 )HTML";
 
 void Send(int client, const char* status, const char* type, const std::string& body, const char* extra = "") {
