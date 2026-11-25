@@ -45,6 +45,7 @@ struct Settings {
   int resolution_scale = 1;   // Games render at 1, 2 or 3 times their resolution. Read when the title starts.
   int image_filter = 0;       // How a game's picture is stretched to the screen: 0 plain, 1 CAS, 2 FSR.
   int touchpad_menu = 1;  // The touchpad click opens the emulator's guide (else it is the Back button).
+  bool xbla_full_license = true; // Starts XBLA titles with license_mask = 1 (Full mode) instead of Trial.
   // Picture.
   int sharpness = 1;            // Of CAS and FSR: 0 soft, 1 as designed, 2 strong.
   int dither = 0;

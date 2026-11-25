@@ -1,0 +1,103 @@
+diff --git a/include/config.h b/include/config.h
+new file mode 100644
+index 0000000..bacad4b
+--- /dev/null
++++ b/include/config.h
+@@ -0,0 +1,27 @@
++#pragma once
++#include <stddef.h>
++#include <stdlib.h>
++#include <netdb.h>
++#define HAVE_STDDEF_H 1
++#define HAVE_STDLIB_H 1
++#define HAVE_NETDB_H 1
++#define HAVE_LINGER 1
++#define HAVE_SOCKADDR_STORAGE 1
++#define HAVE_SOCKADDR_IN6 1
++#define HAVE_NETINET_IN_H 1
++#define HAVE_NETINET_TCP_H 1
++#define HAVE_ARPA_INET_H 1
++#define HAVE_SYS_SOCKET_H 1
++#define HAVE_SYS_UIO_H 1
++#define HAVE_UNISTD_H 1
++#define HAVE_FCNTL_H 1
++#define HAVE_POLL_H 1
++#define HAVE_TIME_H 1
++#define HAVE_SYS_TIME_H 1
++#define HAVE_STDINT_H 1
++#define HAVE_STRING_H 1
++#define HAVE_STRINGS_H 1
++#include <netinet/in.h>
++#ifndef SOL_TCP
++#define SOL_TCP IPPROTO_TCP
++#endif
+diff --git a/lib/socket.c b/lib/socket.c
+index 8d2f381..3dbd30a 100644
+--- a/lib/socket.c
++++ b/lib/socket.c
+@@ -147,7 +147,12 @@ smb2_close_connecting_fds(struct smb2_context *smb2)
+         smb2->connecting_fds_count = 0;
+ 
+         if (smb2->addrinfos != NULL) {
+-                freeaddrinfo(smb2->addrinfos);
++                if (smb2->addrinfos->ai_flags == 0x7f7f7f7f) {
++                        free(smb2->addrinfos->ai_addr);
++                        free(smb2->addrinfos);
++                } else {
++                        freeaddrinfo(smb2->addrinfos);
++                }
+                 smb2->addrinfos = NULL;
+         }
+         smb2->next_addrinfo = NULL;
+@@ -1205,6 +1210,51 @@ smb2_connect_async(struct smb2_context *smb2, const char *server,
+ 
+         /* is it a hostname ? */
+         err = getaddrinfo(host, port, NULL, &smb2->addrinfos);
++        if (err != 0) {
++                struct in_addr in4;
++                struct in6_addr in6;
++                uint16_t port_num = (uint16_t)strtol(port, NULL, 10);
++                if (port_num == 0) port_num = 445;
++                if (inet_pton(AF_INET, host, &in4) == 1) {
++                        struct addrinfo *ai_custom = calloc(1, sizeof(struct addrinfo));
++                        struct sockaddr_in *sa4 = calloc(1, sizeof(struct sockaddr_in));
++                        if (ai_custom && sa4) {
++                                sa4->sin_family = AF_INET;
++                                sa4->sin_port = htons(port_num);
++                                sa4->sin_addr = in4;
++                                ai_custom->ai_flags = 0x7f7f7f7f;
++                                ai_custom->ai_family = AF_INET;
++                                ai_custom->ai_socktype = SOCK_STREAM;
++                                ai_custom->ai_protocol = IPPROTO_TCP;
++                                ai_custom->ai_addrlen = sizeof(struct sockaddr_in);
++                                ai_custom->ai_addr = (struct sockaddr *)sa4;
++                                smb2->addrinfos = ai_custom;
++                                err = 0;
++                        } else {
++                                free(sa4);
++                                free(ai_custom);
++                        }
++                } else if (inet_pton(AF_INET6, host, &in6) == 1) {
++                        struct addrinfo *ai_custom = calloc(1, sizeof(struct addrinfo));
++                        struct sockaddr_in6 *sa6 = calloc(1, sizeof(struct sockaddr_in6));
++                        if (ai_custom && sa6) {
++                                sa6->sin6_family = AF_INET6;
++                                sa6->sin6_port = htons(port_num);
++                                sa6->sin6_addr = in6;
++                                ai_custom->ai_flags = 0x7f7f7f7f;
++                                ai_custom->ai_family = AF_INET6;
++                                ai_custom->ai_socktype = SOCK_STREAM;
++                                ai_custom->ai_protocol = IPPROTO_TCP;
++                                ai_custom->ai_addrlen = sizeof(struct sockaddr_in6);
++                                ai_custom->ai_addr = (struct sockaddr *)sa6;
++                                smb2->addrinfos = ai_custom;
++                                err = 0;
++                        } else {
++                                free(sa6);
++                                free(ai_custom);
++                        }
++                }
++        }
+         if (err != 0) {
+                 free(addr);
+ #if defined(_WINDOWS) || defined(_XBOX)
