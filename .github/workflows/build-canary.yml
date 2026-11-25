@@ -55,11 +55,11 @@ jobs:
             https://github.com .deps/libsmb2
 
           git clone --recursive \
-            https://github.com .deps/references/PS5_Vulkan
+            https://github.com/mihawk-99/PS5_Vulkan .deps/references/PS5_Vulkan
           git clone --recursive \
-            https://github.com .deps/references/PS5_PayloadSDK
+            https://github.com/mihawk-99/PS5_PayloadSDK .deps/references/PS5_PayloadSDK
           git clone --recursive \
-            https://github.com .deps/references/PS5_Mesa
+            https://github.com/mihawk-99/PS5_Mesa .deps/references/PS5_Mesa
 
       - name: Cache PS5 Payload SDK, RADV archive, and libc.prx
         id: cache-ps5-native
