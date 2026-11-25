@@ -1193,6 +1193,22 @@ void Launcher::Press(Key key) {
       const int rows = int(settings_.game_paths.size());
       if (key == Key::up && rows) path_row_ = (path_row_ + rows - 1) % rows;
       if (key == Key::down && rows) path_row_ = (path_row_ + 1) % rows;
+      if (key == Key::r1 || (key == Key::cross && rows && IsSmbPath(settings_.game_paths[size_t(path_row_)]))) {
+        smb_field_ = 0; smb_key_row_ = 0; smb_key_col_ = 0; smb_upper_ = false; smb_status_.clear();
+        smb_host_.clear(); smb_share_.clear(); smb_user_.clear(); smb_pass_.clear();
+        smb_edit_index_ = (key == Key::cross && rows) ? path_row_ : -1;
+        if (smb_edit_index_ >= 0) {
+          SmbUrl parsed;
+          if (ParseSmbUrl(settings_.game_paths[size_t(smb_edit_index_)], parsed)) {
+            smb_host_ = parsed.host;
+            smb_share_ = parsed.share + (parsed.path.empty() ? "" : "/" + parsed.path);
+            smb_user_ = parsed.username;
+            smb_pass_ = parsed.password;
+          }
+        }
+        mode_ = Mode::smb;
+        break;
+      }
       if (key == Key::square || key == Key::cross) {
         browser_path_ = key == Key::cross && rows ? fs::path(settings_.game_paths[size_t(path_row_)]) : fs::path("/mnt");
         std::error_code error;
@@ -1301,6 +1317,53 @@ void Launcher::Press(Key key) {
       if (key == Key::circle) mode_ = Mode::profiles;
       break;
     }
+    case Mode::smb: {
+      static constexpr const char* kLower = "1234567890.qwertyuiop/asdfghjkl-_zxcvbnm!@#$%&*+=?~:   ";
+      static constexpr const char* kUpper = "1234567890.QWERTYUIOP/ASDFGHJKL-_ZXCVBNM!@#$%&*+=?~:   ";
+      constexpr int kCols = 11, kRows = 5;
+      std::string* active = smb_field_ == 0 ? &smb_host_ : smb_field_ == 1 ? &smb_share_ : smb_field_ == 2 ? &smb_user_ : &smb_pass_;
+      if (key == Key::l1) smb_upper_ = !smb_upper_;
+      if (key == Key::r1) smb_field_ = (smb_field_ + 1) % 4;
+      if (key == Key::left) smb_key_col_ = (smb_key_col_ + kCols - 1) % kCols;
+      if (key == Key::right) smb_key_col_ = (smb_key_col_ + 1) % kCols;
+      if (key == Key::up) { if (smb_key_row_ > 0) --smb_key_row_; else smb_field_ = (smb_field_ + 3) % 4; }
+      if (key == Key::down) { if (smb_key_row_ < kRows - 1) ++smb_key_row_; else { smb_key_row_ = 0; smb_field_ = (smb_field_ + 1) % 4; } }
+      if (key == Key::cross && active->size() < 96) {
+        active->push_back((smb_upper_ ? kUpper : kLower)[smb_key_row_ * kCols + smb_key_col_]);
+        smb_status_.clear();
+      }
+      if (key == Key::square && !active->empty()) { active->pop_back(); smb_status_.clear(); }
+      if (key == Key::triangle) {
+        auto trim = [](std::string s) {
+          while (!s.empty() && s.front() == ' ') s.erase(s.begin());
+          while (!s.empty() && s.back() == ' ') s.pop_back();
+          return s;
+        };
+        std::string host = trim(smb_host_), share = trim(smb_share_), user = trim(smb_user_), pass = smb_pass_;
+        while (!share.empty() && share.front() == '/') share.erase(share.begin());
+        while (!share.empty() && share.back() == '/') share.pop_back();
+        if (host.empty() || share.empty()) {
+          smb_status_ = "Enter both Host/IP and Share/Folder.";
+        } else {
+          std::string url = "smb://";
+          if (!user.empty()) { url += user; if (!pass.empty()) url += ":" + pass; url += "@"; }
+          url += host + "/" + share;
+          uint64_t sz = 0; bool is_dir = false; std::vector<SmbDirEntry> entries;
+          if (!SmbStat(url, sz, is_dir) || !is_dir || !SmbListDirectory(url, entries)) {
+            smb_status_ = "Connection failed. Check IP, share name, and credentials.";
+          } else {
+            auto changed = settings_.game_paths;
+            if (smb_edit_index_ >= 0 && smb_edit_index_ < int(changed.size())) changed[size_t(smb_edit_index_)] = url;
+            else if (std::find(changed.begin(), changed.end(), url) == changed.end()) changed.push_back(url);
+            if (WriteGamePaths(kStorage / "game_paths.txt", changed)) {
+              settings_.game_paths = std::move(changed); path_error_.clear(); mode_ = Mode::paths; Scan();
+            } else smb_status_ = "Connected, but failed to save game_paths.txt.";
+          }
+        }
+      }
+      if (key == Key::circle) mode_ = Mode::paths;
+      break;
+    }
   }
 }
 
@@ -1383,6 +1446,13 @@ struct Launcher::Canvas {
       // OPTIONS, as printed on the controller: three short lines.
       for (float row : {-1.0f, 0.0f, 1.0f})
         list->AddLine(ImVec2(centre.x - g, centre.y + row * 4.5f * scale), ImVec2(centre.x + g, centre.y + row * 4.5f * scale), ink, 2 * scale);
+    } else if (button == 'r' || button == 'l') {
+      // Shoulder button badge (R1 / L1).
+      list->AddRectFilled(At(x - 2, y + 3), At(x + 34, y + 25), Color(kSurfaceHigh, 1.0f), 7 * scale);
+      list->AddRect(At(x - 2, y + 3), At(x + 34, y + 25), Color(kMuted, 0.9f), 7 * scale, 0, 1.5f * scale);
+      Text(button == 'r' ? "R1" : "L1", x + 16, y + 5, 16, kText, 1.0f, 1);
+      Text(label, x + 44, y + 2, 20, kMuted);
+      return x + 44 + Width(label, 20) + 32;
     } else {
       // The directional buttons: a pair of arrows, sideways ('h') or up and down.
       const float a = 3.5f * scale, b = 8 * scale, w = 4.5f * scale;
@@ -1487,6 +1557,7 @@ void Launcher::Draw(ImGuiIO& io) {
     else if (mode_ == Mode::saves) DrawSavesSheet(c);
     else if (mode_ == Mode::paths) DrawPaths(c);
     else if (mode_ == Mode::folders) DrawFolders(c);
+    else if (mode_ == Mode::smb) DrawSmbSheet(c);
     else if (mode_ == Mode::profiles) DrawProfilesSheet(c);
     else if (mode_ == Mode::name) DrawNameSheet(c);
     else DrawGameSheet(c);
@@ -2197,7 +2268,6 @@ void Launcher::DrawPaths(Canvas& c) {
     const bool focused = n == path_row_;
     c.Fill(x + 40, y, 780, 58, focused ? kSurfaceHigh : kSurface, 1, 8);
     if (focused) c.Edge(x + 40, y, 780, 58, kAccent, 0.9f, 8);
-    c.Text(settings_.game_paths[size_t(n)], x + 56, y + 5, 20, kText, 1, 0, 744);
     std::error_code error;
     const std::string& raw_path = settings_.game_paths[size_t(n)];
     std::string shown_path = raw_path;
@@ -2222,9 +2292,58 @@ void Launcher::DrawPaths(Canvas& c) {
   if (!count) c.Text(Tr("Nenhuma pasta configurada."), x + 56, 240, 24, kMuted);
   if (!path_error_.empty()) c.Wrapped(path_error_, x + 56, 868, 20, kWarning, 750);
   c.Wrapped(Tr("Remover um local não apaga os jogos. Logs: /download0/xbox360ps5/LOGS"), x + 56, 920, 20, kMuted, 750);
-  float hint = c.Hint('s', Tr("Adicionar"), x + 56, 1004);
+  float hint = c.Hint('s', Tr("Adicionar"), x + 44, 1004);
+  hint = c.Hint('r', "Add SMB", hint, 1004);
   hint = c.Hint('t', Tr("Remover"), hint, 1004);
   c.Hint('o', Tr("Voltar"), hint, 1004);
+}
+void Launcher::DrawSmbSheet(Canvas& c) {
+  const float x = 1920 - 860 * sheet_;
+  c.Fill(x, 0, 860, 1080, kSheet, 0.98f);
+  c.Fill(x, 0, 3, 1080, kAccent, 0.9f);
+  c.Text(smb_edit_index_ >= 0 ? "Edit SMB Share" : "Add SMB Share", x + 56, 56, 36, kText);
+  c.Text("Connect to a Windows/Samba folder over your local network.", x + 56, 104, 20, kBody);
+
+  const std::array<const char*, 4> labels = {"Host / IP", "Share / Folder", "Username (optional)", "Password (optional)"};
+  const std::array<std::string, 4> values = {smb_host_, smb_share_, smb_user_, smb_field_ == 3 ? smb_pass_ : std::string(smb_pass_.size(), '*')};
+  const std::array<const char*, 4> placeholders = {"192.168.1.100", "Games/Xbox360", "guest", "(none)"};
+
+  for (int i = 0; i < 4; ++i) {
+    const float y = 156.f + i * 86.f;
+    const bool focused = (i == smb_field_);
+    c.Fill(x + 48, y, 764, 74, focused ? kSurfaceHigh : kSurface, 1.0f, 10);
+    if (focused) c.Edge(x + 48, y, 764, 74, kAccent, 0.95f, 10, 2.0f);
+    c.Text(labels[i], x + 66, y + 8, 18, focused ? kAccent : kMuted);
+    const std::string shown = values[i].empty() ? std::string(placeholders[i]) : (values[i] + (focused ? "_" : ""));
+    c.Text(shown, x + 66, y + 34, 22, values[i].empty() ? kMuted : kText, 1, 0, 720);
+  }
+
+  static constexpr const char* kLower = "1234567890.qwertyuiop/asdfghjkl-_zxcvbnm!@#$%&*+=?~:   ";
+  static constexpr const char* kUpper = "1234567890.QWERTYUIOP/ASDFGHJKL-_ZXCVBNM!@#$%&*+=?~:   ";
+  constexpr int kCols = 11, kRows = 5;
+  const char* grid = smb_upper_ ? kUpper : kLower;
+
+  c.Text(smb_upper_ ? "Keyboard: UPPERCASE (L1 lowercase, R1 next field)" : "Keyboard: lowercase (L1 UPPERCASE, R1 next field)", x + 56, 514, 18, kMuted);
+
+  for (int r = 0; r < kRows; ++r) {
+    for (int col = 0; col < kCols; ++col) {
+      const float bx = x + 48.f + col * 69.5f, by = 548.f + r * 62.f;
+      const bool sel = (r == smb_key_row_ && col == smb_key_col_);
+      c.Fill(bx, by, 62, 54, sel ? kAccent : kSurface, 1.0f, 8);
+      const char ch = grid[r * kCols + col];
+      c.Text((r == 4 && col >= 8) ? "SPC" : std::string(1, ch), bx + 31, by + 15, 20, sel ? 0x0B1218 : kText, 1, 1);
+    }
+  }
+
+  if (!smb_status_.empty()) c.Wrapped(smb_status_, x + 56, 876, 20, kWarning, 750);
+
+  float hint = c.Hint('x', "Type", x + 56, 954);
+  hint = c.Hint('s', "Delete", hint, 954);
+  hint = c.Hint('l', "Shift", hint, 954);
+  c.Hint('r', "Next Field", hint, 954);
+
+  float hint2 = c.Hint('t', "Test & Save", x + 56, 1004);
+  c.Hint('o', "Cancel", hint2, 1004);
 }
 void Launcher::DrawFolders(Canvas& c) {
   const float x = 1920 - 860 * sheet_;

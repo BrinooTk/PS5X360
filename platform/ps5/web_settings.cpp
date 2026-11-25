@@ -101,10 +101,10 @@ function render(){
 }
 async function pathsPage(){
   const r=await api('/api/paths');
-  $('list').innerHTML='<div class="option"><b>Add SMB</b><p>Ex: smb://user:pass@192.168.1.10/Xbox360 ou /mnt/usb0/xbox360</p>'+
+  $('list').innerHTML='<div class="option"><b>Add Path</b><p>Ex: smb://user:pass@192.168.1.10/Xbox360 or /mnt/usb0/xbox360</p>'+
     '<div style="display:flex;gap:8px;margin-top:10px"><input id="newpath" style="flex:1" placeholder="smb://user:pass@192.168.1.10/share">'+
     '<button id="addpath" style="background:#35d07f;color:#06130c;border-color:#35d07f;font-weight:600">Add</button></div></div>'+
-    '<h3>Current Paths</h3>'+(r.paths.map((p,i)=>
+    '<h3>Paths</h3>'+(r.paths.map((p,i)=>
     '<div class="option"><div class="top"><span style="word-break:break-all">'+esc(p)+'</span>'+
     '<button data-delpath="'+i+'" style="background:#8a2f43;border-color:#8a2f43">Remover</button></div></div>').join('')||'<p>Nenhuma pasta.</p>');
   $('addpath').onclick=async()=>{
