@@ -3,6 +3,7 @@
 #include "xbox360ps5/build_version.hpp"
 #include "xbox360ps5/cover_geometry.hpp"
 #include "xbox360ps5/launcher.hpp"
+#include "xbox360ps5/smb_client.hpp"
 #include "xbox360ps5/canary_audio.hpp"
 #include "xbox360ps5/gpu_diagnostics.hpp"
 #include "xenia/base/cvar.h"
@@ -129,11 +130,17 @@ uint32_t BE32(const uint8_t* p) { return uint32_t(p[0]) << 24 | uint32_t(p[1]) <
 // carries the display name, the title id and a thumbnail.
 struct Package { std::string name, title_id; std::vector<uint8_t> thumbnail; bool game = false; };
 bool ReadPackage(const fs::path& path, Package& package) {
-  std::FILE* file = std::fopen(path.c_str(), "rb");
-  if (!file) return false;
   std::vector<uint8_t> header(0x971A);
-  const size_t got = std::fread(header.data(), 1, header.size(), file);
-  std::fclose(file);
+  size_t got = 0;
+  const std::string path_str = path.generic_string();
+  if (IsSmbPath(path_str)) {
+    if (!SmbReadAt(path_str, 0, header.data(), header.size(), &got)) return false;
+  } else {
+    std::FILE* file = std::fopen(path.c_str(), "rb");
+    if (!file) return false;
+    got = std::fread(header.data(), 1, header.size(), file);
+    std::fclose(file);
+  }
   if (got < 0x1800) return false;
   if (std::memcmp(header.data(), "LIVE", 4) && std::memcmp(header.data(), "PIRS", 4) &&
       std::memcmp(header.data(), "CON ", 4)) return false;
@@ -543,7 +550,11 @@ uint64_t LibrarySignature(const std::vector<std::string>& roots) {
       }
     }
   };
-  for (const auto& configured : roots) {
+    for (const auto& configured : roots) {
+	if (IsSmbPath(configured)) {
+	  mix(configured, 1);
+	  continue;
+	}
     const fs::path root(configured);
     std::error_code error;
     const auto identity = NormalizeGamePath(root.generic_string());
@@ -552,6 +563,7 @@ uint64_t LibrarySignature(const std::vector<std::string>& roots) {
     mix(identity, visible ? 1 : 0);
     if (visible) look(root, 0, root);
   }
+  
   return hash;
 }
 
@@ -601,6 +613,8 @@ void Launcher::Scan() {
   // found again by its path: the old positions mean nothing in the new list.
   const GameEntry* shown = Selected();
   const std::string keep = shown ? shown->path.string() : std::string();
+  const bool do_rescan = force_rescan_;
+  force_rescan_ = false;
   view_.clear();
   games_.clear();
   textures_.clear();
@@ -680,7 +694,112 @@ void Launcher::Scan() {
       }
     }
   };
+    const auto smb_folder_name = [](std::string_view url) {
+    const size_t slash = url.find_last_of('/');
+    return slash != std::string_view::npos ? std::string(url.substr(slash + 1)) : std::string(url);
+  };
+  const auto file_extension = [](std::string_view name) {
+    const size_t dot = name.find_last_of('.');
+    return dot != std::string_view::npos ? Lower(std::string(name.substr(dot))) : std::string();
+  };
+  const auto file_stem = [](std::string_view name) {
+    const size_t dot = name.find_last_of('.');
+    return dot != std::string_view::npos ? std::string(name.substr(0, dot)) : std::string(name);
+  };
+
+  const std::function<void(const std::string&, int, const std::string&)> scan_smb =
+      [&](const std::string& dir_url, int depth, const std::string& root_url) {
+    std::vector<SmbDirEntry> entries;
+    if (!SmbListDirectory(dir_url, entries)) {
+      XELOGW("LAUNCHER SMB failed to list {}", dir_url);
+      return;
+    }
+    XELOGI("LAUNCHER SMB directory {} entries {}", dir_url, entries.size());
+
+    // Extracted game folder: default.xex, or a single .xex inside the directory.
+    std::string executable_url;
+    int executables = 0;
+    for (const auto& entry : entries) {
+      if (entry.is_directory || file_extension(entry.name) != ".xex") continue;
+      ++executables;
+      if (Lower(entry.name) == "default.xex") {
+        executable_url = JoinSmbUrl(dir_url, entry.name);
+        executables = 1;
+        break;
+      }
+      executable_url = JoinSmbUrl(dir_url, entry.name);
+    }
+    if (executables == 1) {
+      const std::string folder = smb_folder_name(dir_url);
+      const std::string name = dir_url == root_url ? Tr("Jogo em ") + folder : folder;
+      add({name, fs::path(executable_url), "XEX", dir_url}, {});
+      if (dir_url != root_url) return;  // Nothing below a game is another game.
+    }
+
+    for (const auto& entry : entries) {
+      const std::string child_url = JoinSmbUrl(dir_url, entry.name);
+      const std::string ext = file_extension(entry.name);
+      if (entry.is_directory) {
+        // Skip GOD *.data folders (Data0000, Data0001, ...) sitting beside the header file.
+        if (depth < 6 && ext != ".data") {
+          scan_smb(child_url, depth + 1, root_url);
+        }
+      } else if (ext == ".iso") {
+        GameEntry game{file_stem(entry.name), fs::path(child_url), "ISO", dir_url};
+        game.size = SizeText(entry.size);
+        add(std::move(game), {});
+      } else if (ext.empty() || ext == ".xbla" || ext == ".god") {
+        Package package;
+        if (!ReadPackage(fs::path(child_url), package) || !package.game) continue;
+        GameEntry game{package.name.empty() ? entry.name : package.name,
+                       fs::path(child_url), "GOD/STFS", dir_url};
+        game.title_id = package.title_id;
+        game.size = SizeText(entry.size);
+        add(std::move(game), package.thumbnail);
+      }
+    }
+  };
+
+  std::string roots_sig;
+  for (const auto& p : settings_.game_paths) roots_sig += p + "|";
+  const fs::path scan_cache = kStorage / "library/smb_scan_cache.tsv";
+  bool loaded_from_cache = false;
+  if (!do_rescan) {
+    std::ifstream in(scan_cache);
+    std::string header;
+    if (std::getline(in, header) && header == roots_sig) {
+      std::string line;
+      while (std::getline(in, line)) {
+        if (line.empty()) continue;
+        std::vector<std::string> cols;
+        size_t start = 0;
+        while (true) {
+          const size_t tab = line.find('\t', start);
+          if (tab == std::string::npos) { cols.push_back(line.substr(start)); break; }
+          cols.push_back(line.substr(start, tab - start));
+          start = tab + 1;
+        }
+        if (cols.size() >= 6) {
+          GameEntry g{cols[0], fs::path(cols[1]), cols[2], cols[3], cols[4], cols[5]};
+          add(std::move(g), {});
+        }
+      }
+      loaded_from_cache = !games_.empty();
+    }
+  }
+
   for (const auto& configured : settings_.game_paths) {
+    if (loaded_from_cache) break;
+    if (IsSmbPath(configured)) {
+      const auto identity = NormalizeGamePath(configured);
+      if (identity.empty() || !seen_roots.insert(identity).second) continue;
+      uint64_t sz = 0;
+      bool is_dir = false;
+      const bool visible = SmbStat(identity, sz, is_dir) && is_dir;
+      XELOGI("LAUNCHER SMB root {} {}", identity, visible ? "visible" : "not visible");
+      if (visible) scan_smb(identity, 0, identity);
+      continue;
+    }
     const fs::path root(configured);
     std::error_code error;
     const auto identity = NormalizeGamePath(root.generic_string());
@@ -706,11 +825,29 @@ void Launcher::Scan() {
   scroll_ = float(selected_);
   SelectionChanged();
   if (mode_ == Mode::settings && settings_tab_ == 1) RefreshPerGame();
+  if (!loaded_from_cache && !games_.empty()) {
+    std::error_code dir_ec;
+    fs::create_directories(scan_cache.parent_path(), dir_ec);
+    std::ofstream out(scan_cache, std::ios::trunc);
+    if (out) {
+      out << roots_sig << "\n";
+      auto clean = [](std::string s) {
+        for (char& ch : s) if (ch == '\t' || ch == '\n' || ch == '\r') ch = ' ';
+        return s;
+      };
+      for (const auto& g : games_) {
+        out << clean(g.name) << '\t' << clean(g.path.generic_string()) << '\t'
+            << clean(g.kind) << '\t' << clean(g.folder) << '\t'
+            << clean(g.title_id) << '\t' << clean(g.size) << '\n';
+      }
+    }
+  }
   watch_.Known(settings_.game_paths, LibrarySignature(settings_.game_paths));
-  XELOGW("LAUNCHER found {} games", games_.size());
+  XELOGW("LAUNCHER found {} games{}", games_.size(), loaded_from_cache ? " (from cache)" : "");
 }
 
 void Launcher::RefreshLibrary(bool automatic) {
+  force_rescan_ = true;
   std::set<std::string> before;
   for (const auto& game : games_) before.insert(game.path.string());
   Scan();
@@ -1105,6 +1242,22 @@ void Launcher::Press(Key key) {
       const int rows = int(settings_.game_paths.size());
       if (key == Key::up && rows) path_row_ = (path_row_ + rows - 1) % rows;
       if (key == Key::down && rows) path_row_ = (path_row_ + 1) % rows;
+      if (key == Key::r1 || (key == Key::cross && rows && IsSmbPath(settings_.game_paths[size_t(path_row_)]))) {
+        smb_field_ = 0; smb_key_row_ = 0; smb_key_col_ = 0; smb_upper_ = false; smb_status_.clear();
+        smb_host_.clear(); smb_share_.clear(); smb_user_.clear(); smb_pass_.clear();
+        smb_edit_index_ = (key == Key::cross && rows) ? path_row_ : -1;
+        if (smb_edit_index_ >= 0) {
+          SmbUrl parsed;
+          if (ParseSmbUrl(settings_.game_paths[size_t(smb_edit_index_)], parsed)) {
+            smb_host_ = parsed.host;
+            smb_share_ = parsed.share + (parsed.path.empty() ? "" : "/" + parsed.path);
+            smb_user_ = parsed.username;
+            smb_pass_ = parsed.password;
+          }
+        }
+        mode_ = Mode::smb;
+        break;
+      }
       if (key == Key::square || key == Key::cross) {
         browser_path_ = key == Key::cross && rows ? fs::path(settings_.game_paths[size_t(path_row_)]) : fs::path("/mnt");
         std::error_code error;
@@ -1117,6 +1270,7 @@ void Launcher::Press(Key key) {
         if (WriteGamePaths(kStorage / "game_paths.txt", changed)) {
           settings_.game_paths = std::move(changed);
           path_row_ = std::max(0, std::min(path_row_, int(settings_.game_paths.size()) - 1));
+          force_rescan_ = true;
           Scan();
         } else path_error_ = Tr("Não foi possível salvar as pastas.");
       }
@@ -1139,7 +1293,7 @@ void Launcher::Press(Key key) {
         auto changed = settings_.game_paths;
         if (std::find(changed.begin(), changed.end(), path) == changed.end()) changed.push_back(path);
         if (WriteGamePaths(kStorage / "game_paths.txt", changed)) {
-          settings_.game_paths = std::move(changed); path_error_.clear(); mode_ = Mode::paths; Scan();
+          settings_.game_paths = std::move(changed); path_error_.clear(); mode_ = Mode::paths; force_rescan_ = true; Scan();
         } else path_error_ = Tr("Não foi possível salvar as pastas.");
       }
       break;
@@ -1211,6 +1365,53 @@ void Launcher::Press(Key key) {
         } else name_error_ = Tr("Não foi possível criar este perfil.");
       }
       if (key == Key::circle) mode_ = Mode::profiles;
+      break;
+    }
+    case Mode::smb: {
+      static constexpr const char* kLower = "1234567890.qwertyuiop/asdfghjkl-_zxcvbnm!@#$%&*+=?~:   ";
+      static constexpr const char* kUpper = "1234567890.QWERTYUIOP/ASDFGHJKL-_ZXCVBNM!@#$%&*+=?~:   ";
+      constexpr int kCols = 11, kRows = 5;
+      std::string* active = smb_field_ == 0 ? &smb_host_ : smb_field_ == 1 ? &smb_share_ : smb_field_ == 2 ? &smb_user_ : &smb_pass_;
+      if (key == Key::l1) smb_upper_ = !smb_upper_;
+      if (key == Key::r1) smb_field_ = (smb_field_ + 1) % 4;
+      if (key == Key::left) smb_key_col_ = (smb_key_col_ + kCols - 1) % kCols;
+      if (key == Key::right) smb_key_col_ = (smb_key_col_ + 1) % kCols;
+      if (key == Key::up) { if (smb_key_row_ > 0) --smb_key_row_; else smb_field_ = (smb_field_ + 3) % 4; }
+      if (key == Key::down) { if (smb_key_row_ < kRows - 1) ++smb_key_row_; else { smb_key_row_ = 0; smb_field_ = (smb_field_ + 1) % 4; } }
+      if (key == Key::cross && active->size() < 96) {
+        active->push_back((smb_upper_ ? kUpper : kLower)[smb_key_row_ * kCols + smb_key_col_]);
+        smb_status_.clear();
+      }
+      if (key == Key::square && !active->empty()) { active->pop_back(); smb_status_.clear(); }
+      if (key == Key::triangle) {
+        auto trim = [](std::string s) {
+          while (!s.empty() && s.front() == ' ') s.erase(s.begin());
+          while (!s.empty() && s.back() == ' ') s.pop_back();
+          return s;
+        };
+        std::string host = trim(smb_host_), share = trim(smb_share_), user = trim(smb_user_), pass = smb_pass_;
+        while (!share.empty() && share.front() == '/') share.erase(share.begin());
+        while (!share.empty() && share.back() == '/') share.pop_back();
+        if (host.empty() || share.empty()) {
+          smb_status_ = "Enter both Host/IP and Share/Folder.";
+        } else {
+          std::string url = "smb://";
+          if (!user.empty()) { url += user; if (!pass.empty()) url += ":" + pass; url += "@"; }
+          url += host + "/" + share;
+          uint64_t sz = 0; bool is_dir = false; std::vector<SmbDirEntry> entries;
+          if (!SmbStat(url, sz, is_dir) || !is_dir || !SmbListDirectory(url, entries)) {
+            smb_status_ = "Connection failed. Check IP, share name, and credentials.";
+          } else {
+            auto changed = settings_.game_paths;
+            if (smb_edit_index_ >= 0 && smb_edit_index_ < int(changed.size())) changed[size_t(smb_edit_index_)] = url;
+            else if (std::find(changed.begin(), changed.end(), url) == changed.end()) changed.push_back(url);
+            if (WriteGamePaths(kStorage / "game_paths.txt", changed)) {
+              settings_.game_paths = std::move(changed); path_error_.clear(); mode_ = Mode::paths; force_rescan_ = true; Scan();
+            } else smb_status_ = "Connected, but failed to save game_paths.txt.";
+          }
+        }
+      }
+      if (key == Key::circle) mode_ = Mode::paths;
       break;
     }
   }
@@ -1295,6 +1496,13 @@ struct Launcher::Canvas {
       // OPTIONS, as printed on the controller: three short lines.
       for (float row : {-1.0f, 0.0f, 1.0f})
         list->AddLine(ImVec2(centre.x - g, centre.y + row * 4.5f * scale), ImVec2(centre.x + g, centre.y + row * 4.5f * scale), ink, 2 * scale);
+    } else if (button == 'r' || button == 'l') {
+      // Shoulder button badge (R1 / L1).
+      list->AddRectFilled(At(x - 2, y + 3), At(x + 34, y + 25), Color(kSurfaceHigh, 1.0f), 7 * scale);
+      list->AddRect(At(x - 2, y + 3), At(x + 34, y + 25), Color(kMuted, 0.9f), 7 * scale, 0, 1.5f * scale);
+      Text(button == 'r' ? "R1" : "L1", x + 16, y + 5, 16, kText, 1.0f, 1);
+      Text(label, x + 44, y + 2, 20, kMuted);
+      return x + 44 + Width(label, 20) + 32;
     } else {
       // The directional buttons: a pair of arrows, sideways ('h') or up and down.
       const float a = 3.5f * scale, b = 8 * scale, w = 4.5f * scale;
@@ -1399,6 +1607,7 @@ void Launcher::Draw(ImGuiIO& io) {
     else if (mode_ == Mode::saves) DrawSavesSheet(c);
     else if (mode_ == Mode::paths) DrawPaths(c);
     else if (mode_ == Mode::folders) DrawFolders(c);
+    else if (mode_ == Mode::smb) DrawSmbSheet(c);
     else if (mode_ == Mode::profiles) DrawProfilesSheet(c);
     else if (mode_ == Mode::name) DrawNameSheet(c);
     else DrawGameSheet(c);
@@ -2109,17 +2318,82 @@ void Launcher::DrawPaths(Canvas& c) {
     const bool focused = n == path_row_;
     c.Fill(x + 40, y, 780, 58, focused ? kSurfaceHigh : kSurface, 1, 8);
     if (focused) c.Edge(x + 40, y, 780, 58, kAccent, 0.9f, 8);
-    c.Text(settings_.game_paths[size_t(n)], x + 56, y + 5, 20, kText, 1, 0, 744);
     std::error_code error;
-    const bool visible = fs::is_directory(settings_.game_paths[size_t(n)], error);
+    const std::string& raw_path = settings_.game_paths[size_t(n)];
+    std::string shown_path = raw_path;
+    bool visible = false;
+    if (IsSmbPath(raw_path)) {
+      // Mask password in "smb://user:pass@host/share" -> "smb://user:***@host/share"
+      const size_t at = shown_path.find('@');
+      const size_t colon = shown_path.find(':', 6);
+      if (at != std::string::npos && colon != std::string::npos && colon < at) {
+        shown_path.replace(colon + 1, at - colon - 1, "***");
+      }
+      uint64_t sz = 0;
+      bool is_dir = false;
+      visible = SmbStat(raw_path, sz, is_dir) && is_dir;
+    } else {
+      std::error_code error;
+      visible = fs::is_directory(raw_path, error);
+    }
+    c.Text(shown_path, x + 56, y + 5, 20, kText, 1, 0, 744);
     c.Text(visible ? Tr("Disponível") : Tr("Desconectada ou indisponível"), x + 56, y + 31, 20, visible ? kAccent : kMuted);
   }
   if (!count) c.Text(Tr("Nenhuma pasta configurada."), x + 56, 240, 24, kMuted);
   if (!path_error_.empty()) c.Wrapped(path_error_, x + 56, 868, 20, kWarning, 750);
   c.Wrapped(Tr("Remover um local não apaga os jogos. Logs: /download0/xbox360ps5/LOGS"), x + 56, 920, 20, kMuted, 750);
-  float hint = c.Hint('s', Tr("Adicionar"), x + 56, 1004);
+  float hint = c.Hint('s', Tr("Adicionar"), x + 44, 1004);
+  hint = c.Hint('r', "Add SMB", hint, 1004);
   hint = c.Hint('t', Tr("Remover"), hint, 1004);
   c.Hint('o', Tr("Voltar"), hint, 1004);
+}
+void Launcher::DrawSmbSheet(Canvas& c) {
+  const float x = 1920 - 860 * sheet_;
+  c.Fill(x, 0, 860, 1080, kSheet, 0.98f);
+  c.Fill(x, 0, 3, 1080, kAccent, 0.9f);
+  c.Text(smb_edit_index_ >= 0 ? "Edit SMB Share" : "Add SMB Share", x + 56, 56, 36, kText);
+  c.Text("Connect to a Windows/Samba folder over your local network.", x + 56, 104, 20, kBody);
+
+  const std::array<const char*, 4> labels = {"Host / IP", "Share / Folder", "Username (optional)", "Password (optional)"};
+  const std::array<std::string, 4> values = {smb_host_, smb_share_, smb_user_, smb_field_ == 3 ? smb_pass_ : std::string(smb_pass_.size(), '*')};
+  const std::array<const char*, 4> placeholders = {"192.168.1.100", "Games/Xbox360", "guest", "(none)"};
+
+  for (int i = 0; i < 4; ++i) {
+    const float y = 156.f + i * 86.f;
+    const bool focused = (i == smb_field_);
+    c.Fill(x + 48, y, 764, 74, focused ? kSurfaceHigh : kSurface, 1.0f, 10);
+    if (focused) c.Edge(x + 48, y, 764, 74, kAccent, 0.95f, 10, 2.0f);
+    c.Text(labels[i], x + 66, y + 8, 18, focused ? kAccent : kMuted);
+    const std::string shown = values[i].empty() ? std::string(placeholders[i]) : (values[i] + (focused ? "_" : ""));
+    c.Text(shown, x + 66, y + 34, 22, values[i].empty() ? kMuted : kText, 1, 0, 720);
+  }
+
+  static constexpr const char* kLower = "1234567890.qwertyuiop/asdfghjkl-_zxcvbnm!@#$%&*+=?~:   ";
+  static constexpr const char* kUpper = "1234567890.QWERTYUIOP/ASDFGHJKL-_ZXCVBNM!@#$%&*+=?~:   ";
+  constexpr int kCols = 11, kRows = 5;
+  const char* grid = smb_upper_ ? kUpper : kLower;
+
+  c.Text(smb_upper_ ? "Keyboard: UPPERCASE (L1 lowercase, R1 next field)" : "Keyboard: lowercase (L1 UPPERCASE, R1 next field)", x + 56, 514, 18, kMuted);
+
+  for (int r = 0; r < kRows; ++r) {
+    for (int col = 0; col < kCols; ++col) {
+      const float bx = x + 48.f + col * 69.5f, by = 548.f + r * 62.f;
+      const bool sel = (r == smb_key_row_ && col == smb_key_col_);
+      c.Fill(bx, by, 62, 54, sel ? kAccent : kSurface, 1.0f, 8);
+      const char ch = grid[r * kCols + col];
+      c.Text((r == 4 && col >= 8) ? "SPC" : std::string(1, ch), bx + 31, by + 15, 20, sel ? 0x0B1218 : kText, 1, 1);
+    }
+  }
+
+  if (!smb_status_.empty()) c.Wrapped(smb_status_, x + 56, 876, 20, kWarning, 750);
+
+  float hint = c.Hint('x', "Type", x + 56, 954);
+  hint = c.Hint('s', "Delete", hint, 954);
+  hint = c.Hint('l', "Shift", hint, 954);
+  c.Hint('r', "Next Field", hint, 954);
+
+  float hint2 = c.Hint('t', "Test & Save", x + 56, 1004);
+  c.Hint('o', "Cancel", hint2, 1004);
 }
 void Launcher::DrawFolders(Canvas& c) {
   const float x = 1920 - 860 * sheet_;

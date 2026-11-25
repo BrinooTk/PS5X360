@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 #include "xbox360ps5/web_settings.hpp"
+#include "xbox360ps5/game_paths.hpp"
 #include "xbox360ps5/motion_input.hpp"
+#include "xbox360ps5/smb_client.hpp"
 #include <algorithm>
 #include <arpa/inet.h>
 #include <atomic>
@@ -24,6 +26,9 @@ namespace fs = std::filesystem;
 std::mutex mutex;
 std::string state = "{}";
 std::vector<WebChange> changes;
+std::atomic<bool> paths_changed{false};
+const fs::path kPathsFile = "/download0/xbox360ps5/game_paths.txt";
+
 fs::path log_folder;
 std::string key, address;
 int listener = -1;
@@ -68,6 +73,8 @@ h3{font-size:14px;color:#9aa3b2;margin:16px 0 8px;font-weight:600}
 <script>
 let key=new URLSearchParams(location.search).get('k')||sessionStorage.getItem('k')||'',state=null,tab=0,scope='';
 const $=id=>document.getElementById(id);
+function esc(s){return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+function toast(){$('saved').textContent=state.text.saved;$('saved').classList.add('on');setTimeout(()=>$('saved').classList.remove('on'),1200);}
 async function api(path,options){const r=await fetch(path,Object.assign({headers:{'X-Key':key}},options||{}));if(r.status==403)throw new Error('key');return r.json();}
 async function load(){
   try{state=await api('/api/state');}catch(e){$('app').hidden=true;$('gate').hidden=false;return;}
@@ -79,9 +86,10 @@ function render(){
   const games=state.games||[];if(scope&&!games.some(g=>g.id==scope))scope='';
   $('scope').innerHTML='<option value="">'+t.all+'</option>'+games.map(g=>'<option value="'+g.id+'">'+esc(g.name)+' ['+g.id+']</option>').join('');
   $('scope').value=scope;
-  const names=state.categories.concat([t.logs]);
+  const names=state.categories.concat(['SMB / Paths',t.logs]);
   $('tabs').innerHTML=names.map((n,i)=>'<button class="'+(i==tab?'on':'')+'" data-tab="'+i+'">'+esc(n)+'</button>').join('');
-  if(tab==state.categories.length){logs();return;}
+  if(tab==state.categories.length){pathsPage();return;}
+  if(tab==state.categories.length+1){logs();return;}
   const game=scope?games.find(g=>g.id==scope):null,own=game?(game.own||{}):null,pre=game?(game.preset||{}):{};
   $('list').innerHTML=state.options.filter(o=>o.category==tab&&(!scope||o.perGame)).map(o=>{
     const mine=own&&(o.key in own),value=own?(mine?own[o.key]:-1):o.value;
@@ -91,6 +99,25 @@ function render(){
     return '<div class="option '+cls+'"><div class="top"><b>'+esc(o.label)+'</b><select data-key="'+o.key+'">'+choices+'</select></div><p>'+esc(o.about)+'</p><p class="note">'+t.recommended+' '+esc(o.choices[o.recommended])+' · '+t[o.when]+'</p></div>';
   }).join('')||'<p>'+t.none+'</p>';
 }
+async function pathsPage(){
+  const r=await api('/api/paths');
+  $('list').innerHTML='<div class="option"><b>Add Path</b><p>Ex: smb://user:pass@192.168.1.10/Xbox360 or /mnt/usb0/xbox360</p>'+
+    '<div style="display:flex;gap:8px;margin-top:10px"><input id="newpath" style="flex:1" placeholder="smb://user:pass@192.168.1.10/share">'+
+    '<button id="addpath" style="background:#35d07f;color:#06130c;border-color:#35d07f;font-weight:600">Add</button></div></div>'+
+    '<h3>Paths</h3>'+(r.paths.map((p,i)=>
+    '<div class="option"><div class="top"><span style="word-break:break-all">'+esc(p)+'</span>'+
+    '<button data-delpath="'+i+'" style="background:#8a2f43;border-color:#8a2f43">Remove</button></div></div>').join('')||'<p>No Paths.</p>');
+  $('addpath').onclick=async()=>{
+    const v=$('newpath').value.trim();if(!v)return;
+    const res=await api('/api/paths',{method:'POST',headers:{'X-Key':key,'Content-Type':'application/x-www-form-urlencoded'},body:'action=add&path='+encodeURIComponent(v)});
+    if(res.error){alert(res.error);return;}
+    toast();pathsPage();
+  };
+  document.querySelectorAll('[data-delpath]').forEach(b=>b.onclick=async()=>{
+    await api('/api/paths',{method:'POST',headers:{'X-Key':key,'Content-Type':'application/x-www-form-urlencoded'},body:'action=remove&index='+b.dataset.delpath});
+    toast();pathsPage();
+  });
+}
 async function logs(){
   const t=state.text,r=await api('/api/logs'),size=b=>b>=1048576?(b/1048576).toFixed(1)+' MB':Math.ceil(b/1024)+' KB';
   const zip=(game,cls,name,count,bytes)=>'<a class="'+cls+'" href="/logs.zip?k='+key+'&game='+game+'" download>'+esc(name)+'<span>'+count+' · '+size(bytes)+'</span></a>';
@@ -98,18 +125,17 @@ async function logs(){
     r.games.map(g=>zip(g.id,'',g.name,g.count,g.size)).join('')+'</div><h3>'+esc(t.files)+'</h3><div class="logs">'+
     r.files.map(l=>'<a href="/logs/'+encodeURIComponent(l.name)+'?k='+key+'" download>'+esc(l.name)+'<span>'+size(l.size)+'</span></a>').join('')+'</div>';
 }
-function esc(s){return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
 $('tabs').onclick=e=>{if(e.target.dataset.tab!==undefined){tab=+e.target.dataset.tab;render();}};
 $('scope').onchange=e=>{scope=e.target.value;render();};
 $('list').onchange=async e=>{
   const k=e.target.dataset.key;if(!k)return;
   await api('/api/set',{method:'POST',headers:{'X-Key':key,'Content-Type':'application/x-www-form-urlencoded'},body:'scope='+scope+'&key='+k+'&value='+e.target.value});
-  $('saved').textContent=state.text.saved;$('saved').classList.add('on');setTimeout(()=>$('saved').classList.remove('on'),1200);
-  setTimeout(load,500);
+  toast();setTimeout(load,500);
 };
 $('enter').onclick=()=>{key=$('code').value.trim().toLowerCase();load();};
 load();setInterval(()=>{if(!$('app').hidden&&document.activeElement.tagName!='SELECT'&&tab<state.categories.length)load();},5000);
-</script></body></html>
+</script>
+</body></html>
 )HTML";
 
 void Send(int client, const char* status, const char* type, const std::string& body, const char* extra = "") {
@@ -398,6 +424,49 @@ void Answer(int client) {
     }
     { std::lock_guard<std::mutex> lock(mutex); if (changes.size() < 64) changes.push_back(std::move(change)); }
     Send(client, "200 OK", "application/json", "{\"ok\":true}");
+  } else if (target == "/api/paths" && method == "GET") {
+    std::vector<std::string> paths;
+    if (!ReadGamePaths(kPathsFile, paths)) paths = DefaultGamePaths();
+    std::string json = "{\"paths\":[";
+    for (size_t n = 0; n < paths.size(); ++n) {
+      std::string shown = paths[n];
+      if (IsSmbPath(shown)) {
+        const size_t at = shown.find('@');
+        const size_t colon = shown.find(':', 6);
+        if (at != std::string::npos && colon != std::string::npos && colon < at) {
+          shown.replace(colon + 1, at - colon - 1, "***");
+        }
+      }
+      json += std::string(n ? "," : "") + JsonText(shown);
+    }
+    Send(client, "200 OK", "application/json; charset=utf-8", json + "]}");
+  } else if (target == "/api/paths" && method == "POST") {
+    const std::string action = Parameter(body, "action");
+    std::vector<std::string> paths;
+    if (!ReadGamePaths(kPathsFile, paths)) paths = DefaultGamePaths();
+    if (action == "add") {
+      const std::string normalized = NormalizeGamePath(Unescaped(Parameter(body, "path")));
+      if (normalized.empty()) {
+        Send(client, "400 Bad Request", "application/json", "{\"error\":\"Caminho ou URL smb:// invalido\"}");
+        return;
+      }
+      if (std::find(paths.begin(), paths.end(), normalized) == paths.end()) {
+        paths.push_back(normalized);
+        WriteGamePaths(kPathsFile, paths);
+        paths_changed.store(true);
+      }
+      Send(client, "200 OK", "application/json", "{\"ok\":true}");
+    } else if (action == "remove") {
+      const int idx = std::atoi(Parameter(body, "index").c_str());
+      if (idx >= 0 && idx < int(paths.size())) {
+        paths.erase(paths.begin() + idx);
+        WriteGamePaths(kPathsFile, paths);
+        paths_changed.store(true);
+      }
+      Send(client, "200 OK", "application/json", "{\"ok\":true}");
+    } else {
+      Send(client, "400 Bad Request", "application/json", "{\"error\":\"action\"}");
+    }
   } else if (target == "/api/logs" && method == "GET") {
     struct Entry { std::string name; uintmax_t size; fs::file_time_type time; };
     struct Game { std::string id, name; uintmax_t size; unsigned count; fs::file_time_type time; };
@@ -542,5 +611,8 @@ std::vector<WebChange> TakeWebChanges() {
   std::vector<WebChange> taken;
   taken.swap(changes);
   return taken;
+}
+bool TakeWebPathsChanged() {
+  return paths_changed.exchange(false);
 }
 }

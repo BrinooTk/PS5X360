@@ -5,17 +5,25 @@
 #include <set>
 #include <string>
 #include <vector>
+#include "xbox360ps5/smb_client.hpp"
 namespace xbox360ps5 {
 inline std::string NormalizeGamePath(std::string path) {
   const auto first = path.find_first_not_of(" \t\r\n");
   if (first == std::string::npos) return {};
   path = path.substr(first, path.find_last_not_of(" \t\r\n") - first + 1);
-  if (path.size() > 1024 || path.front() != '/' || path.find_first_of("\\\r\n") != std::string::npos ||
+  if (path.size() > 1024 || path.find_first_of("\\\r\n") != std::string::npos ||
       path.find('\0') != std::string::npos) return {};
+  if (IsSmbPath(path)) {
+    while (path.size() > 6 && path.back() == '/') path.pop_back();
+    SmbUrl parsed;
+    return ParseSmbUrl(path, parsed) ? path : std::string{};
+  }
+  if (path.front() != '/') return {};
   path = std::filesystem::path(path).lexically_normal().generic_string();
   while (path.size() > 1 && path.back() == '/') path.pop_back();
   return path == "/" ? std::string{} : path;
 }
+
 inline std::vector<std::string> DefaultGamePaths() {
   return {"/app0/assets/roms", "/data/xbox360", "/mnt/usb0/xbox360", "/mnt/usb1/xbox360",
           "/mnt/ext0/xbox360", "/mnt/ext1/xbox360"};

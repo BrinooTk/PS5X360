@@ -356,10 +356,10 @@ index ce89b651a..1c003ec3a 100644
    // Close, and optionally truncate file to size
    virtual void Close(uint64_t truncate_size = 0) {}
 diff --git a/src/xenia/base/mapped_memory_posix.cc b/src/xenia/base/mapped_memory_posix.cc
-index db6507564..01d2e2c2d 100644
+index db6507564..42191460d 100644
 --- a/src/xenia/base/mapped_memory_posix.cc
 +++ b/src/xenia/base/mapped_memory_posix.cc
-@@ -13,23 +13,116 @@
+@@ -13,23 +13,117 @@
  #include <sys/mman.h>
  #include <sys/stat.h>
  #include <unistd.h>
@@ -369,6 +369,7 @@ index db6507564..01d2e2c2d 100644
 +#include <limits>
  
  #include "xenia/base/filesystem.h"
++#include "xbox360ps5/smb_client.hpp"
 +#include "xenia/base/logging.h"
  #include "xenia/base/platform.h"
  
@@ -479,7 +480,7 @@ index db6507564..01d2e2c2d 100644
        close(file_descriptor_);
      }
    }
-@@ -48,15 +141,26 @@ class PosixMappedMemory : public MappedMemory {
+@@ -48,15 +142,26 @@ class PosixMappedMemory : public MappedMemory {
  
      struct stat file_stat;
      if (fstat(file_descriptor, &file_stat)) {
@@ -511,7 +512,7 @@ index db6507564..01d2e2c2d 100644
  
      if (!map_length) {
        close(file_descriptor);
-@@ -66,12 +170,14 @@ class PosixMappedMemory : public MappedMemory {
+@@ -66,12 +171,14 @@ class PosixMappedMemory : public MappedMemory {
      void* data =
          mmap(0, map_length, protection, MAP_SHARED, file_descriptor, offset);
      if (data == MAP_FAILED) {
@@ -527,7 +528,7 @@ index db6507564..01d2e2c2d 100644
    }
  
    void Close(uint64_t truncate_size) override {
-@@ -80,10 +186,15 @@ class PosixMappedMemory : public MappedMemory {
+@@ -80,10 +187,15 @@ class PosixMappedMemory : public MappedMemory {
        data_ = nullptr;
      }
      if (file_descriptor_ >= 0) {
@@ -546,7 +547,7 @@ index db6507564..01d2e2c2d 100644
        file_descriptor_ = -1;
      }
    }
-@@ -92,8 +203,23 @@ class PosixMappedMemory : public MappedMemory {
+@@ -92,8 +204,26 @@ class PosixMappedMemory : public MappedMemory {
  
   private:
    int file_descriptor_;
@@ -557,6 +558,9 @@ index db6507564..01d2e2c2d 100644
  
 +std::unique_ptr<MappedMemory> MappedMemory::OpenForReading(
 +    const std::filesystem::path& path) {
++  if (xbox360ps5::IsSmbPath(xe::path_to_utf8(path))) {
++    return xbox360ps5::OpenSmbMappedMemory(xe::path_to_utf8(path));
++  }
 +#if XE_PLATFORM_PS5
 +  return PosixMappedMemory::OpenUnmapped(path);
 +#else
@@ -570,7 +574,7 @@ index db6507564..01d2e2c2d 100644
  std::unique_ptr<MappedMemory> MappedMemory::Open(
      const std::filesystem::path& path, Mode mode, size_t offset,
      size_t length) {
-@@ -108,6 +234,7 @@ std::unique_ptr<MappedMemory> MappedMemory::Open(
+@@ -108,6 +238,7 @@ std::unique_ptr<MappedMemory> MappedMemory::Open(
    }
    int file_descriptor = open(path.c_str(), open_flags);
    if (file_descriptor < 0) {
@@ -933,6 +937,7 @@ index a0cae20e2..8bf4ebbf6 100644
    // Returns the ID of the thread.
    virtual uint32_t system_id() const = 0;
 diff --git a/src/xenia/base/threading_posix.cc b/src/xenia/base/threading_posix.cc
+index 9982f67cf..b8e3509e6 100644
 --- a/src/xenia/base/threading_posix.cc
 +++ b/src/xenia/base/threading_posix.cc
 @@ -34,14 +34,33 @@
@@ -971,7 +976,7 @@ diff --git a/src/xenia/base/threading_posix.cc b/src/xenia/base/threading_posix.
  #endif
  #else
  #define XE_HAS_SIGEV_THREAD_ID 0
-@@ -140,7 +159,7 @@
+@@ -140,7 +159,7 @@ void EnableAffinityConfiguration() {}
  // uint64_t ticks() { return mach_absolute_time(); }
  
  uint32_t current_thread_system_id() {
@@ -980,7 +985,7 @@ diff --git a/src/xenia/base/threading_posix.cc b/src/xenia/base/threading_posix.
  }
  
  void MaybeYield() {
-@@ -271,12 +290,22 @@
+@@ -271,12 +290,22 @@ class PosixConditionBase {
      if (predicate()) {
        executed = true;
      } else {
@@ -1003,7 +1008,7 @@ diff --git a/src/xenia/base/threading_posix.cc b/src/xenia/base/threading_posix.
      }
      if (executed) {
        post_execution();
-@@ -304,7 +333,28 @@
+@@ -304,7 +333,28 @@ class PosixConditionBase {
                          ? std::chrono::steady_clock::time_point::max()
                          : start_time + timeout;
  
@@ -1032,17 +1037,17 @@ diff --git a/src/xenia/base/threading_posix.cc b/src/xenia/base/threading_posix.
        // Check all handles to see if any/all are signaled
        // Use try_lock to avoid deadlocks from lock ordering issues
        size_t first_signaled = std::numeric_limits<size_t>::max();
-@@ -376,23 +426,37 @@
+@@ -376,23 +426,37 @@ class PosixConditionBase {
          } else {
            handles[first_signaled]->post_execution();
          }
 +        unregister(true);
          return std::make_pair(WaitResult::kSuccess, first_signaled);
        }
--
+ 
 -      // Release locks before sleeping
 -      locks.clear();
- 
+-
        // Check timeout
        auto now = std::chrono::steady_clock::now();
        if (now >= end_time) {
@@ -1076,7 +1081,7 @@ diff --git a/src/xenia/base/threading_posix.cc b/src/xenia/base/threading_posix.
      }
    }
  
-@@ -403,6 +467,28 @@
+@@ -403,6 +467,28 @@ class PosixConditionBase {
   protected:
    [[nodiscard]] inline virtual bool signaled() const = 0;
    inline virtual void post_execution() = 0;
@@ -1105,7 +1110,7 @@ diff --git a/src/xenia/base/threading_posix.cc b/src/xenia/base/threading_posix.
    std::condition_variable cond_;
    std::mutex mutex_;
  };
-@@ -422,24 +508,46 @@
+@@ -422,24 +508,46 @@ class PosixCondition<Event> : public PosixConditionBase {
    ~PosixCondition() override = default;
  
    bool Signal() override {
@@ -1140,11 +1145,9 @@ diff --git a/src/xenia/base/threading_posix.cc b/src/xenia/base/threading_posix.
    void post_execution() override {
      if (!manual_reset_) {
        signal_ = false;
--    }
--  }
 +      reserved_ = false;
-+    }
-+  }
+     }
+   }
 +  void begin_wait() override { ++waiters_; }
 +  void end_wait() override {
 +    // Nobody left of those the signal was kept for: anyone may take it.
@@ -1158,7 +1161,7 @@ diff --git a/src/xenia/base/threading_posix.cc b/src/xenia/base/threading_posix.
    bool signal_;
    const bool manual_reset_;
  };
-@@ -463,6 +571,7 @@
+@@ -463,6 +571,7 @@ class PosixCondition<Semaphore> final : public PosixConditionBase {
      }
      count_ += release_count;
      cond_.notify_all();
@@ -1166,7 +1169,7 @@ diff --git a/src/xenia/base/threading_posix.cc b/src/xenia/base/threading_posix.
      return true;
    }
  
-@@ -471,6 +580,7 @@
+@@ -471,6 +580,7 @@ class PosixCondition<Semaphore> final : public PosixConditionBase {
    void post_execution() override {
      count_--;
      cond_.notify_all();
@@ -1174,7 +1177,7 @@ diff --git a/src/xenia/base/threading_posix.cc b/src/xenia/base/threading_posix.
    }
    uint32_t count_;
    const uint32_t maximum_count_;
-@@ -495,6 +605,7 @@
+@@ -495,6 +605,7 @@ class PosixCondition<Mutant> final : public PosixConditionBase {
        // Free to be acquired by another thread
        if (count_ == 0) {
          cond_.notify_all();
@@ -1182,7 +1185,7 @@ diff --git a/src/xenia/base/threading_posix.cc b/src/xenia/base/threading_posix.
        }
        return true;
      }
-@@ -529,6 +640,7 @@
+@@ -529,6 +640,7 @@ class PosixCondition<Timer> final : public PosixConditionBase {
      std::lock_guard lock(mutex_);
      signal_ = true;
      cond_.notify_all();
@@ -1190,7 +1193,7 @@ diff --git a/src/xenia/base/threading_posix.cc b/src/xenia/base/threading_posix.
      return true;
    }
  
-@@ -629,7 +741,14 @@
+@@ -629,7 +741,14 @@ class PosixCondition<Thread> final : public PosixConditionBase {
      if (pthread_attr_init(&attr) != 0) {
        return false;
      }
@@ -1205,7 +1208,7 @@ diff --git a/src/xenia/base/threading_posix.cc b/src/xenia/base/threading_posix.
        pthread_attr_destroy(&attr);
        return false;
      }
-@@ -657,7 +776,7 @@
+@@ -657,7 +776,7 @@ class PosixCondition<Thread> final : public PosixConditionBase {
    /// Thread::GetCurrentThread() on the main thread
    explicit PosixCondition(pthread_t thread)
        : thread_(thread),
@@ -1214,7 +1217,7 @@ diff --git a/src/xenia/base/threading_posix.cc b/src/xenia/base/threading_posix.
          signaled_(false),
          exit_code_(0),
          state_(State::kRunning),
-@@ -742,7 +861,11 @@
+@@ -742,7 +861,11 @@ class PosixCondition<Thread> final : public PosixConditionBase {
    }
  #endif
  
@@ -1226,7 +1229,7 @@ diff --git a/src/xenia/base/threading_posix.cc b/src/xenia/base/threading_posix.
  
    uint64_t affinity_mask() const {
      WaitStarted();
-@@ -770,6 +893,14 @@
+@@ -770,6 +893,14 @@ class PosixCondition<Thread> final : public PosixConditionBase {
    }
  
    void set_affinity_mask(uint64_t mask) const {
@@ -1241,7 +1244,7 @@ diff --git a/src/xenia/base/threading_posix.cc b/src/xenia/base/threading_posix.
      WaitStarted();
      cpu_set_t cpu_set;
      CPU_ZERO(&cpu_set);
-@@ -850,6 +981,10 @@
+@@ -850,6 +981,10 @@ class PosixCondition<Thread> final : public PosixConditionBase {
  #if XE_PLATFORM_ANDROID
      sigqueue(pthread_gettid_np(thread_),
               GetSystemSignal(SignalType::kThreadUserCallback), value);
@@ -1252,7 +1255,7 @@ diff --git a/src/xenia/base/threading_posix.cc b/src/xenia/base/threading_posix.
  #else
      pthread_sigqueue(thread_, GetSystemSignal(SignalType::kThreadUserCallback),
                       value);
-@@ -929,7 +1064,7 @@
+@@ -929,7 +1064,7 @@ class PosixCondition<Thread> final : public PosixConditionBase {
      return result == 0;
    }
  
@@ -1261,7 +1264,7 @@ diff --git a/src/xenia/base/threading_posix.cc b/src/xenia/base/threading_posix.
      bool is_current_thread = pthread_self() == thread_;
      {
        std::unique_lock lock(state_mutex_);
-@@ -941,6 +1076,7 @@
+@@ -941,6 +1076,7 @@ class PosixCondition<Thread> final : public PosixConditionBase {
            // power instead.
            XELOGW("PosixThread::Terminate: thread was already finished");
            lock.unlock();
@@ -1269,7 +1272,7 @@ diff --git a/src/xenia/base/threading_posix.cc b/src/xenia/base/threading_posix.
            pthread_exit(reinterpret_cast<void*>(exit_code));
          }
          return;
-@@ -954,8 +1090,11 @@
+@@ -954,8 +1090,11 @@ class PosixCondition<Thread> final : public PosixConditionBase {
        exit_code_ = exit_code;
        signaled_ = true;
        cond_.notify_all();
@@ -1281,7 +1284,7 @@ diff --git a/src/xenia/base/threading_posix.cc b/src/xenia/base/threading_posix.
        pthread_exit(reinterpret_cast<void*>(exit_code));
      }
  #ifdef XE_PLATFORM_ANDROID
-@@ -1322,13 +1461,33 @@
+@@ -1322,13 +1461,33 @@ class PosixThread final : public PosixConditionHandle<Thread> {
    }
  
    void Terminate(int exit_code) override { handle_.Terminate(exit_code); }
@@ -1315,7 +1318,7 @@ diff --git a/src/xenia/base/threading_posix.cc b/src/xenia/base/threading_posix.
  #if !XE_PLATFORM_ANDROID
    if (pthread_setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS, nullptr) != 0) {
      assert_always();
-@@ -1346,9 +1505,13 @@
+@@ -1346,9 +1505,13 @@ void* PosixCondition<Thread>::ThreadStartRoutine(void* parameter) {
    delete start_data;
  
    current_thread_ = thread;
@@ -1330,7 +1333,7 @@ diff --git a/src/xenia/base/threading_posix.cc b/src/xenia/base/threading_posix.
      thread->handle_.state_ =
          create_suspended ? State::kSuspended : State::kRunning;
      thread->handle_.state_signal_.notify_all();
-@@ -1356,7 +1519,6 @@
+@@ -1356,7 +1519,6 @@ void* PosixCondition<Thread>::ThreadStartRoutine(void* parameter) {
  
    if (create_suspended) {
      std::unique_lock lock(thread->handle_.state_mutex_);
@@ -1338,7 +1341,7 @@ diff --git a/src/xenia/base/threading_posix.cc b/src/xenia/base/threading_posix.
      thread->handle_.state_signal_.wait(
          lock, [thread] { return thread->handle_.suspend_count_ == 0; });
    }
-@@ -1373,6 +1535,7 @@
+@@ -1373,6 +1535,7 @@ void* PosixCondition<Thread>::ThreadStartRoutine(void* parameter) {
      thread->handle_.exit_code_ = 0;
      thread->handle_.signaled_ = true;
      thread->handle_.cond_.notify_all();
@@ -1346,13 +1349,10 @@ diff --git a/src/xenia/base/threading_posix.cc b/src/xenia/base/threading_posix.
    }
  
    current_thread_ = nullptr;
-@@ -1420,6 +1583,19 @@
-     pthread_exit(reinterpret_cast<void*>(exit_code));
-   }
-   // Function must not return
-+  assert_always();
-+}
-+
+@@ -1423,6 +1586,19 @@ void Thread::Exit(int exit_code) {
+   assert_always();
+ }
+ 
 +// Xbox360PS5: XThread owns its native Thread. Releasing the guest self-reference
 +// before Terminate locks the native mutexes can free those mutexes underneath it.
 +void Thread::ExitWithCleanup(int exit_code, std::function<void()> cleanup) {
@@ -1363,10 +1363,13 @@ diff --git a/src/xenia/base/threading_posix.cc b/src/xenia/base/threading_posix.
 +    if (cleanup) cleanup();
 +    pthread_exit(reinterpret_cast<void*>(exit_code));
 +  }
-   assert_always();
- }
- 
-@@ -1443,9 +1619,16 @@
++  assert_always();
++}
++
+ void set_name(const std::string_view name) {
+   pthread_setname_np(pthread_self(), std::string(name).c_str());
+ #if XE_PLATFORM_ANDROID
+@@ -1443,9 +1619,16 @@ static void signal_handler(int signal, siginfo_t* info, void* context) {
        current_thread_->WaitSuspended();
      } break;
      case SignalType::kThreadUserCallback: {
@@ -1558,11 +1561,16 @@ index 0796b5380..2fb69e5fe 100644
  InfoCacheFlags* XexModule::GetInstructionAddressFlags(uint32_t guest_addr) {
    if (guest_addr < low_address_ || guest_addr > high_address_) {
 diff --git a/src/xenia/emulator.cc b/src/xenia/emulator.cc
-index eadd15ccf..770578fab 100644
+index eadd15ccf..434c93f28 100644
 --- a/src/xenia/emulator.cc
 +++ b/src/xenia/emulator.cc
-@@ -11,6 +11,26 @@
+@@ -8,9 +8,30 @@
+  */
  
+ #include <ranges>
+-
++#include "xbox360ps5/smb_client.hpp"
++#include "xbox360ps5/smb_path_device.hpp"
  #include "xenia/emulator.h"
  
 +// Xbox360PS5: small persisted phase markers, independent of verbose logging.
@@ -1588,7 +1596,23 @@ index eadd15ccf..770578fab 100644
  #include "config.h"
  #include "third_party/fmt/include/fmt/format.h"
  #include "third_party/tabulate/single_include/tabulate/tabulate.hpp"
-@@ -447,8 +467,15 @@ void Emulator::SetPersistentEmulatorFlags(uint64_t new_flags) {
+@@ -378,6 +399,15 @@ const std::unique_ptr<vfs::Device> Emulator::CreateVfsDevice(
+     case FileSignatureType::XEX1:
+     case FileSignatureType::XEX2:
+     case FileSignatureType::ELF: {
++      const std::string path_str = xe::path_to_utf8(path);
++      if (xbox360ps5::IsSmbPath(path_str)) {
++        const size_t last_slash = path_str.find_last_of('/');
++        const std::string parent_url =
++            last_slash != std::string::npos ? path_str.substr(0, last_slash)
++                                            : path_str;
++        return std::make_unique<xbox360ps5::SmbPathDevice>(mount_path,
++                                                           parent_url);
++      }
+       auto parent_path = path.parent_path();
+       return std::make_unique<vfs::HostPathDevice>(
+           mount_path, parent_path, !cvars::allow_game_relative_writes);
+@@ -447,8 +477,15 @@ void Emulator::SetPersistentEmulatorFlags(uint64_t new_flags) {
  
  X_STATUS Emulator::MountPath(const std::filesystem::path& path,
                               const std::string_view mount_path) {
@@ -1605,7 +1629,7 @@ index eadd15ccf..770578fab 100644
      XELOGE(
          "Unable to mount the selected file, it is an unsupported format or "
          "corrupted.");
-@@ -456,6 +483,7 @@ X_STATUS Emulator::MountPath(const std::filesystem::path& path,
+@@ -456,6 +493,7 @@ X_STATUS Emulator::MountPath(const std::filesystem::path& path,
    }
  
    const std::string mpath = std::string(device->mount_path());
@@ -1613,11 +1637,66 @@ index eadd15ccf..770578fab 100644
  
    if (!file_system_->RegisterDevice(std::move(device))) {
      XELOGE("Unable to register the input file to {}.", mount_path);
-@@ -475,27 +503,30 @@ X_STATUS Emulator::MountPath(const std::filesystem::path& path,
+@@ -475,27 +513,85 @@ X_STATUS Emulator::MountPath(const std::filesystem::path& path,
  
  Emulator::FileSignatureType Emulator::GetFileSignature(
      const std::filesystem::path& path) {
 -  FILE* file = xe::filesystem::OpenFile(path, "rb");
++		
++  const std::string path_str = xe::path_to_utf8(path);
++  if (xbox360ps5::IsSmbPath(path_str)) {
++    auto smb_mem = xbox360ps5::OpenSmbMappedMemory(path_str);
++    if (!smb_mem || smb_mem->size() < 4) {
++      return FileSignatureType::Unknown;
++    }
++    char file_magic;
++    if (!smb_mem->ReadAt(0, file_magic, sizeof(file_magic))) {
++      return FileSignatureType::Unknown;
++    }
++    fourcc_t magic_value = make_fourcc(file_magic, file_magic,
++                                       file_magic, file_magic);
++    switch (magic_value) {
++      case xe::cpu::kXEX0Signature:
++        return FileSignatureType::XEX0;
++      case xe::cpu::kXEXQSignature:
++        return FileSignatureType::XEXQ;
++      case xe::cpu::kXEXHSignature:
++        return FileSignatureType::XEXH;
++      case xe::cpu::kXEX25Signature:
++        return FileSignatureType::XEX25;
++      case xe::cpu::kXEX1Signature:
++        return FileSignatureType::XEX1;
++      case xe::cpu::kXEX2Signature:
++        return FileSignatureType::XEX2;
++      case xe::vfs::kCONSignature:
++        return FileSignatureType::CON;
++      case xe::vfs::kLIVESignature:
++        return FileSignatureType::LIVE;
++      case xe::vfs::kPIRSSignature:
++        return FileSignatureType::PIRS;
++      case xe::vfs::kXSFSignature:
++        return FileSignatureType::XISO;
++      case xe::cpu::kXBESignature:
++        return FileSignatureType::XBE;
++      case xe::cpu::kElfSignature:
++        return FileSignatureType::ELF;
++      default:
++        break;
++    }
++    static constexpr size_t kGameOffsets[] = {
++        0x00000000, 0x0000FB20, 0x00020600, 0x02080000, 0x0FD90000,
++    };
++    char disc_magic;
++    for (size_t game_offset : kGameOffsets) {
++      if (smb_mem->ReadAt(game_offset + 32 * 2048, disc_magic,
++                          sizeof(disc_magic)) &&
++          std::memcmp(disc_magic, "MICROSOFT*XBOX*MEDIA",
++                      sizeof(disc_magic)) == 0) {
++        return FileSignatureType::XISO;
++      }
++    }
++    return FileSignatureType::Unknown;
++  }		
 +  // Xbox360PS5: close every probe path, including short/unreadable files.
 +  const std::unique_ptr<FILE, decltype(&fclose)> file(
 +      xe::filesystem::OpenFile(path, "rb"), &fclose);
@@ -1650,7 +1729,7 @@ index eadd15ccf..770578fab 100644
    switch (magic_value) {
      case xe::cpu::kXEX0Signature:
        return FileSignatureType::XEX0;
-@@ -531,10 +562,10 @@ Emulator::FileSignatureType Emulator::GetFileSignature(
+@@ -531,10 +627,10 @@ Emulator::FileSignatureType Emulator::GetFileSignature(
      return FileSignatureType::EXE;
    }
  
@@ -1665,7 +1744,7 @@ index eadd15ccf..770578fab 100644
  
    magic_value =
        make_fourcc(file_magic[0], file_magic[1], file_magic[2], file_magic[3]);
-@@ -543,13 +574,10 @@ Emulator::FileSignatureType Emulator::GetFileSignature(
+@@ -543,13 +639,10 @@ Emulator::FileSignatureType Emulator::GetFileSignature(
      return FileSignatureType::ZAR;
    }
  
@@ -1683,7 +1762,7 @@ index eadd15ccf..770578fab 100644
      return FileSignatureType::XISO;
    }
  
-@@ -560,6 +588,8 @@ Emulator::FileSignatureType Emulator::GetFileSignature(
+@@ -560,6 +653,8 @@ Emulator::FileSignatureType Emulator::GetFileSignature(
  X_STATUS Emulator::LaunchPath(const std::filesystem::path& path) {
    X_STATUS mount_result = X_STATUS_SUCCESS;
  
@@ -1692,7 +1771,7 @@ index eadd15ccf..770578fab 100644
    switch (GetFileSignature(path)) {
      case FileSignatureType::XEX0:
      case FileSignatureType::XEXQ:
-@@ -1680,8 +1710,10 @@ X_STATUS Emulator::CompleteLaunch(const std::filesystem::path& path,
+@@ -1680,8 +1775,10 @@ X_STATUS Emulator::CompleteLaunch(const std::filesystem::path& path,
        XELOGI("Title name: {}", title_name_);
  
        // Show achievments data
@@ -1704,7 +1783,7 @@ index eadd15ccf..770578fab 100644
        table.add_row({"ID", "Title", "Description", "Type", "Gamerscore"});
  
        const std::vector<kernel::util::GameInfoDatabase::Achievement>
-@@ -1696,7 +1728,7 @@ X_STATUS Emulator::CompleteLaunch(const std::filesystem::path& path,
+@@ -1696,7 +1793,7 @@ X_STATUS Emulator::CompleteLaunch(const std::filesystem::path& path,
                         fmt::format("{}", entry.gamerscore)});
        }
        XELOGI("\n-------------------- ACHIEVEMENTS --------------------\n{}",
@@ -1713,7 +1792,7 @@ index eadd15ccf..770578fab 100644
  
        const std::vector<kernel::util::GameInfoDatabase::Property>
            properties_list = game_info_database_->GetProperties();
-@@ -1706,7 +1738,7 @@ X_STATUS Emulator::CompleteLaunch(const std::filesystem::path& path,
+@@ -1706,7 +1803,7 @@ X_STATUS Emulator::CompleteLaunch(const std::filesystem::path& path,
            properties_list | std::views::take(150);
  
        table = tabulate::Table();
@@ -1722,7 +1801,7 @@ index eadd15ccf..770578fab 100644
        table.add_row({"ID", "Name", "Matchmaking", "Data Size"});
  
        for (const kernel::util::GameInfoDatabase::Property& entry :
-@@ -1728,13 +1760,13 @@ X_STATUS Emulator::CompleteLaunch(const std::filesystem::path& path,
+@@ -1728,13 +1825,13 @@ X_STATUS Emulator::CompleteLaunch(const std::filesystem::path& path,
        }
  
        XELOGI("\n-------------------- PROPERTIES --------------------{}\n{}",
@@ -1738,7 +1817,7 @@ index eadd15ccf..770578fab 100644
        table.add_row(
            {"ID", "Name", "Matchmaking", "Default Value", "Max Value"});
  
-@@ -1749,7 +1781,7 @@ X_STATUS Emulator::CompleteLaunch(const std::filesystem::path& path,
+@@ -1749,7 +1846,7 @@ X_STATUS Emulator::CompleteLaunch(const std::filesystem::path& path,
                         fmt::format("{}", entry.max_value)});
        }
        XELOGI("\n-------------------- CONTEXTS --------------------\n{}",
@@ -1747,7 +1826,7 @@ index eadd15ccf..770578fab 100644
  
        const std::vector<kernel::util::GameInfoDatabase::StatsView> stats_views =
            game_info_database_->GetStatsViews();
-@@ -1758,7 +1790,7 @@ X_STATUS Emulator::CompleteLaunch(const std::filesystem::path& path,
+@@ -1758,7 +1855,7 @@ X_STATUS Emulator::CompleteLaunch(const std::filesystem::path& path,
        const auto stats_views_limit = stats_views | std::views::take(100);
  
        table = tabulate::Table();
@@ -1756,7 +1835,7 @@ index eadd15ccf..770578fab 100644
        table.add_row({"ID", "View Type", "Name", "Skilled", "Arbitrated",
                       "Hidden", "Team View", "Online Only"});
  
-@@ -1785,13 +1817,13 @@ X_STATUS Emulator::CompleteLaunch(const std::filesystem::path& path,
+@@ -1785,13 +1882,13 @@ X_STATUS Emulator::CompleteLaunch(const std::filesystem::path& path,
              "\nViews: {}/{}", stats_views_limit.size(), stats_views.size());
        }
        XELOGI("\n-------------------- STATS VIEWS --------------------{}\n{}",
@@ -1772,7 +1851,7 @@ index eadd15ccf..770578fab 100644
        table.add_row({"Context Value", "Contexts Count", "Properties Count"});
  
        for (const kernel::util::GameInfoDatabase::PresenceMode& entry :
-@@ -1802,7 +1834,7 @@ X_STATUS Emulator::CompleteLaunch(const std::filesystem::path& path,
+@@ -1802,7 +1899,7 @@ X_STATUS Emulator::CompleteLaunch(const std::filesystem::path& path,
               fmt::format("{}", entry.property_bag.properties.size())});
        }
        XELOGI("\n-------------------- PRESENCE MODES --------------------\n{}",
@@ -3408,236 +3487,6 @@ index e50200848..76a3e7d13 100644
    emulator_->on_patch_apply();
    if (module->xex_module()) {
      module->xex_module()->Precompile();
-diff --git a/src/xenia/kernel/util/ldi_decompressor.cc b/src/xenia/kernel/util/ldi_decompressor.cc
-new file mode 100644
-index 000000000..b6a4f1997
---- /dev/null
-+++ b/src/xenia/kernel/util/ldi_decompressor.cc
-@@ -0,0 +1,158 @@
-+/**
-+ ******************************************************************************
-+ * Xenia : Xbox 360 Emulator Research Project                                 *
-+ ******************************************************************************
-+ * Copyright 2026 Xenia Canary. All rights reserved.                          *
-+ * Released under the BSD license - see LICENSE in the root for more details. *
-+ ******************************************************************************
-+ */
-+
-+#include "xenia/kernel/util/ldi_decompressor.h"
-+
-+#include <algorithm>
-+#include <cstdlib>
-+#include <cstring>
-+
-+#include "xenia/base/math.h"
-+
-+#include "third_party/mspack/mspack.h"
-+// lzx.h needs off_t, which mspack.h includes.
-+#include "third_party/mspack/lzx.h"
-+
-+namespace xe {
-+namespace kernel {
-+namespace util {
-+
-+namespace {
-+
-+constexpr uint32_t kMinWindowBits = 15;
-+constexpr uint32_t kMaxWindowBits = 21;
-+
-+// One direction of lzxd I/O: a span of memory that is replaced before every
-+// call. mspack_system hands these back to the callbacks as mspack_file*.
-+struct LdiBuffer {
-+  uint8_t* data;
-+  size_t size;
-+  size_t offset;
-+};
-+
-+int LdiRead(mspack_file* file, void* buffer, int bytes) {
-+  auto ldi_buffer = reinterpret_cast<LdiBuffer*>(file);
-+  const size_t count = std::min(static_cast<size_t>(bytes),
-+                                ldi_buffer->size - ldi_buffer->offset);
-+  std::memcpy(buffer, ldi_buffer->data + ldi_buffer->offset, count);
-+  ldi_buffer->offset += count;
-+  return static_cast<int>(count);
-+}
-+
-+int LdiWrite(mspack_file* file, void* buffer, int bytes) {
-+  auto ldi_buffer = reinterpret_cast<LdiBuffer*>(file);
-+  const size_t count = std::min(static_cast<size_t>(bytes),
-+                                ldi_buffer->size - ldi_buffer->offset);
-+  std::memcpy(ldi_buffer->data + ldi_buffer->offset, buffer, count);
-+  ldi_buffer->offset += count;
-+  return static_cast<int>(count);
-+}
-+
-+void* LdiAlloc(mspack_system* system, size_t bytes) {
-+  return std::calloc(bytes, 1);
-+}
-+
-+void LdiFree(void* pointer) { std::free(pointer); }
-+
-+void LdiCopy(void* source, void* destination, size_t bytes) {
-+  std::memcpy(destination, source, bytes);
-+}
-+
-+void LdiMessage(mspack_file* file, const char* format, ...) {}
-+
-+}  // namespace
-+
-+struct LdiDecompressor::State {
-+  uint32_t window_bits;
-+  mspack_system system = {};
-+  LdiBuffer input = {};
-+  LdiBuffer output = {};
-+  lzxd_stream* stream = nullptr;
-+};
-+
-+std::unique_ptr<LdiDecompressor> LdiDecompressor::Create(uint32_t window_size) {
-+  uint32_t window_bits;
-+  if (!xe::is_pow2(window_size) ||
-+      !xe::bit_scan_forward(window_size, &window_bits) ||
-+      window_bits < kMinWindowBits || window_bits > kMaxWindowBits) {
-+    return nullptr;
-+  }
-+  std::unique_ptr<LdiDecompressor> decompressor(
-+      new LdiDecompressor(window_bits));
-+  if (!decompressor->Reset()) {
-+    return nullptr;
-+  }
-+  return decompressor;
-+}
-+
-+LdiDecompressor::LdiDecompressor(uint32_t window_bits)
-+    : state_(std::make_unique<State>()) {
-+  state_->window_bits = window_bits;
-+  mspack_system& system = state_->system;
-+  system.read = LdiRead;
-+  system.write = LdiWrite;
-+  system.alloc = LdiAlloc;
-+  system.free = LdiFree;
-+  system.copy = LdiCopy;
-+  system.message = LdiMessage;
-+}
-+
-+LdiDecompressor::~LdiDecompressor() { Free(); }
-+
-+bool LdiDecompressor::Reset() {
-+  Free();
-+  // No reset interval, a frame sized input buffer and the output length set
-+  // per frame.
-+  state_->stream =
-+      lzxd_init(&state_->system, reinterpret_cast<mspack_file*>(&state_->input),
-+                reinterpret_cast<mspack_file*>(&state_->output),
-+                state_->window_bits, 0, kFrameSize, 0, 0);
-+  return state_->stream != nullptr;
-+}
-+
-+bool LdiDecompressor::Decompress(uint8_t* source, size_t source_size,
-+                                 uint8_t* destination,
-+                                 uint32_t& destination_size) {
-+  lzxd_stream* stream = state_->stream;
-+  if (!stream || !destination_size || destination_size > kFrameSize) {
-+    return false;
-+  }
-+
-+  state_->input = {source, source_size, 0};
-+  state_->output = {destination, destination_size, 0};
-+
-+  // lzxd reads padding past the end of a frame; drop its buffered input so
-+  // the next block starts with a clean bit reader.
-+  stream->i_ptr = stream->i_end = stream->inbuf;
-+  stream->bit_buffer = 0;
-+  stream->bits_left = 0;
-+  stream->input_end = 0;
-+  lzxd_set_output_length(stream, stream->offset + destination_size);
-+
-+  // Ending exactly on a frame boundary makes lzxd decode the next frame, so
-+  // decode one byte less first, then the last byte.
-+  int result = lzxd_decompress(stream, destination_size - 1);
-+  if (result == MSPACK_ERR_OK) {
-+    result = lzxd_decompress(stream, 1);
-+  }
-+
-+  destination_size = static_cast<uint32_t>(state_->output.offset);
-+  return result == MSPACK_ERR_OK;
-+}
-+
-+void LdiDecompressor::Free() {
-+  if (state_->stream) {
-+    lzxd_free(state_->stream);
-+    state_->stream = nullptr;
-+  }
-+}
-+
-+}  // namespace util
-+}  // namespace kernel
-+}  // namespace xe
-diff --git a/src/xenia/kernel/util/ldi_decompressor.h b/src/xenia/kernel/util/ldi_decompressor.h
-new file mode 100644
-index 000000000..819b273b9
---- /dev/null
-+++ b/src/xenia/kernel/util/ldi_decompressor.h
-@@ -0,0 +1,60 @@
-+/**
-+ ******************************************************************************
-+ * Xenia : Xbox 360 Emulator Research Project                                 *
-+ ******************************************************************************
-+ * Copyright 2026 Xenia Canary. All rights reserved.                          *
-+ * Released under the BSD license - see LICENSE in the root for more details. *
-+ ******************************************************************************
-+ */
-+
-+#ifndef XENIA_KERNEL_UTIL_LDI_DECOMPRESSOR_H_
-+#define XENIA_KERNEL_UTIL_LDI_DECOMPRESSOR_H_
-+
-+#include <cstddef>
-+#include <cstdint>
-+#include <memory>
-+
-+namespace xe {
-+namespace kernel {
-+namespace util {
-+
-+// Block based LZX decompression on top of libmspack's lzxd, as used by the LDI
-+// exports: one frame per call, sharing the window between calls.
-+class LdiDecompressor {
-+ public:
-+  static constexpr uint32_t kFrameSize = 0x8000;
-+  // Maximum growth of a compressed frame, as in libmspack (CAB_INPUTMAX).
-+  static constexpr uint32_t kMaxFrameGrowth = 6144;
-+  static constexpr uint32_t kMaxCompressedFrameSize =
-+      kFrameSize + kMaxFrameGrowth;
-+
-+  // Returns nullptr if window_size isn't a supported LZX window size.
-+  static std::unique_ptr<LdiDecompressor> Create(uint32_t window_size);
-+  ~LdiDecompressor();
-+
-+  LdiDecompressor(const LdiDecompressor&) = delete;
-+  LdiDecompressor& operator=(const LdiDecompressor&) = delete;
-+
-+  // Starts a new stream. Returns false if lzxd can't be set up again.
-+  bool Reset();
-+
-+  // destination_size is the expected frame size on input and the number of
-+  // bytes written on output.
-+  bool Decompress(uint8_t* source, size_t source_size, uint8_t* destination,
-+                  uint32_t& destination_size);
-+
-+ private:
-+  // libmspack state, kept out of this header.
-+  struct State;
-+
-+  explicit LdiDecompressor(uint32_t window_bits);
-+  void Free();
-+
-+  std::unique_ptr<State> state_;
-+};
-+
-+}  // namespace util
-+}  // namespace kernel
-+}  // namespace xe
-+
-+#endif  // XENIA_KERNEL_UTIL_LDI_DECOMPRESSOR_H_
 diff --git a/src/xenia/kernel/util/shim_utils.h b/src/xenia/kernel/util/shim_utils.h
 index 4a243539f..de4b75840 100644
 --- a/src/xenia/kernel/util/shim_utils.h
@@ -4057,6 +3906,63 @@ index 13535802a..448c273ea 100644
    X_RESULT CloseContent(const std::string_view root_name);
    X_RESULT CloseContentByDeviceName(const std::string_view device_name);
    X_RESULT GetContentThumbnail(const uint64_t xuid,
+diff --git a/src/xenia/kernel/xam/profile_manager.cc b/src/xenia/kernel/xam/profile_manager.cc
+index 6696f8b4d..ea3a31b52 100644
+--- a/src/xenia/kernel/xam/profile_manager.cc
++++ b/src/xenia/kernel/xam/profile_manager.cc
+@@ -621,6 +621,39 @@ void ProfileManager::UpdateConfig(const uint64_t xuid, const uint8_t slot) {
+   return;
+ }
+ 
++bool ProfileManager::ArchiveProfile(const uint64_t xuid) {
++  if (!accounts_.count(xuid)) return false;
++  const auto root = kernel_state_->emulator()->content_root().lexically_normal();
++  const auto source = GetProfileContentPath(xuid).lexically_normal();
++  const auto backup = root / "removed-profiles";
++  std::error_code error;
++  if (source.parent_path() != root || std::filesystem::is_symlink(source, error) ||
++      !std::filesystem::is_directory(source, error)) return false;
++  error.clear();
++  if (std::filesystem::is_symlink(backup, error)) return false;
++  error.clear();
++  std::filesystem::create_directories(backup, error);
++  if (error) return false;
++  auto destination = backup / fmt::format("{:016X}", xuid);
++  for (unsigned n = 1; std::filesystem::exists(destination, error) && !error; ++n) {
++    if (n > 1024) return false;
++    destination = backup / fmt::format("{:016X}-{}", xuid, n);
++  }
++  if (error || destination.parent_path() != backup) return false;
++  const uint8_t slot = GetUserIndexAssignedToProfile(xuid);
++  if (slot < XUserMaxUserCount) Logout(slot, false);
++  else DismountProfile(xuid);
++  std::filesystem::rename(source, destination, error);
++  if (error) {
++    if (slot < XUserMaxUserCount) Login(xuid, slot, false);
++    XELOGE("Cannot archive profile: {}", error.message());
++    return false;
++  }
++  accounts_.erase(xuid);
++  XELOGW("Profile removed; recoverable data retained in {}", destination.string());
++  return true;
++}
++
+ bool ProfileManager::DeleteProfile(const uint64_t xuid) {
+   const uint8_t user_index = GetUserIndexAssignedToProfile(xuid);
+ 
+diff --git a/src/xenia/kernel/xam/profile_manager.h b/src/xenia/kernel/xam/profile_manager.h
+index 6d8825af2..ea66d50c3 100644
+--- a/src/xenia/kernel/xam/profile_manager.h
++++ b/src/xenia/kernel/xam/profile_manager.h
+@@ -76,6 +76,8 @@ class ProfileManager {
+   bool CreateProfile(const X_XAMACCOUNTINFO* account_info, uint64_t xuid);
+ 
+   bool DeleteProfile(const uint64_t xuid);
++  // Remove from the account list while retaining all data in a backup folder.
++  bool ArchiveProfile(const uint64_t xuid);
+ 
+   bool MountProfile(const uint64_t xuid, std::string mount_path = "");
+   bool DismountProfile(const uint64_t xuid);
 diff --git a/src/xenia/kernel/xam/xam_content.cc b/src/xenia/kernel/xam/xam_content.cc
 index 9ed9f97d8..48b750a5f 100644
 --- a/src/xenia/kernel/xam/xam_content.cc
@@ -4854,196 +4760,6 @@ index 2e6ecf539..87a3a5b68 100644
  }  // namespace xboxkrnl
  }  // namespace kernel
  }  // namespace xe
-diff --git a/src/xenia/kernel/xboxkrnl/xboxkrnl_ldi.cc b/src/xenia/kernel/xboxkrnl/xboxkrnl_ldi.cc
-new file mode 100644
-index 000000000..a34341735
---- /dev/null
-+++ b/src/xenia/kernel/xboxkrnl/xboxkrnl_ldi.cc
-@@ -0,0 +1,184 @@
-+/**
-+ ******************************************************************************
-+ * Xenia : Xbox 360 Emulator Research Project                                 *
-+ ******************************************************************************
-+ * Copyright 2026 Xenia Canary. All rights reserved.                          *
-+ * Released under the BSD license - see LICENSE in the root for more details. *
-+ ******************************************************************************
-+ */
-+
-+#include <memory>
-+#include <mutex>
-+#include <unordered_map>
-+
-+#include "xenia/base/logging.h"
-+#include "xenia/kernel/util/ldi_decompressor.h"
-+#include "xenia/kernel/util/shim_utils.h"
-+#include "xenia/kernel/xboxkrnl/xboxkrnl_private.h"
-+#include "xenia/xbox.h"
-+
-+namespace xe {
-+namespace kernel {
-+namespace xboxkrnl {
-+
-+namespace {
-+
-+// TODO(knuckleslee): Find the error codes the console returns.
-+constexpr X_STATUS kLdiError = X_STATUS_UNSUCCESSFUL;
-+
-+std::mutex g_ldi_mutex;
-+std::unordered_map<uint32_t, std::unique_ptr<util::LdiDecompressor>>
-+    g_ldi_contexts;
-+uint32_t g_ldi_next_handle = 1;
-+
-+// Checks that the first and last byte of a guest range are mapped.
-+bool IsGuestRangeValid(uint32_t address, uint32_t size,
-+                       uint32_t access = kMemoryProtectRead) {
-+  if (!size) {
-+    return true;
-+  }
-+  const uint32_t last_address = address + size - 1;
-+  if (!address || last_address < address) return false;
-+  // Xbox360PS5: reserved heaps alone do not imply accessible guest pages.
-+  // Check every 4 KiB page and the final byte before entering the decoder.
-+  uint32_t cursor = address;
-+  for (;;) {
-+    auto* heap = kernel_memory()->LookupHeap(cursor);
-+    uint32_t protect = 0;
-+    if (!heap || !heap->QueryProtect(cursor, &protect) ||
-+        (protect & access) != access) return false;
-+    if (cursor == last_address) return true;
-+    const uint64_t next = (uint64_t(cursor) & ~uint64_t(4095)) + 4096;
-+    cursor = next > last_address ? last_address : uint32_t(next);
-+  }
-+}
-+
-+}  // namespace
-+
-+dword_result_t LDICreateDecompression_entry(
-+    lpdword_t max_block_size_ptr, lpdword_t config_ptr, dword_t alloc_callback,
-+    dword_t free_callback, lpvoid_t unknown_ptr, lpdword_t max_source_size_ptr,
-+    lpdword_t handle_ptr) {
-+  if (!max_block_size_ptr || !config_ptr || !handle_ptr) {
-+    XELOGE(
-+        "LDICreateDecompression: null pointer (max_block_size_ptr {:08X}, "
-+        "config_ptr {:08X}, handle_ptr {:08X})",
-+        max_block_size_ptr.guest_address(), config_ptr.guest_address(),
-+        handle_ptr.guest_address());
-+    return kLdiError;
-+  }
-+
-+  if (!IsGuestRangeValid(max_block_size_ptr.guest_address(), 4) ||
-+      !IsGuestRangeValid(config_ptr.guest_address(), 4) ||
-+      !IsGuestRangeValid(handle_ptr.guest_address(), 4, kMemoryProtectWrite) ||
-+      (max_source_size_ptr && !IsGuestRangeValid(max_source_size_ptr.guest_address(), 4, kMemoryProtectWrite))) return kLdiError;
-+  const uint32_t max_block_size = *max_block_size_ptr;
-+  if (!max_block_size || max_block_size > util::LdiDecompressor::kFrameSize) {
-+    XELOGE("LDICreateDecompression: unsupported max block size {:08X}",
-+           max_block_size);
-+    return kLdiError;
-+  }
-+
-+  const uint32_t window_size = config_ptr[0];
-+  auto context = util::LdiDecompressor::Create(window_size);
-+  if (!context) {
-+    XELOGE("LDICreateDecompression: unsupported window size {:08X}",
-+           window_size);
-+    return kLdiError;
-+  }
-+
-+  if (max_source_size_ptr) {
-+    *max_source_size_ptr = util::LdiDecompressor::kMaxCompressedFrameSize;
-+  }
-+
-+  std::lock_guard<std::mutex> lock(g_ldi_mutex);
-+  if (g_ldi_contexts.size() >= 32 || !g_ldi_next_handle) return kLdiError;
-+  const uint32_t handle = g_ldi_next_handle++;
-+  g_ldi_contexts.emplace(handle, std::move(context));
-+  *handle_ptr = handle;
-+  return X_STATUS_SUCCESS;
-+}
-+DECLARE_XBOXKRNL_EXPORT1(LDICreateDecompression, kNone, kSketchy);
-+
-+dword_result_t LDIDecompress_entry(dword_t handle, lpvoid_t source_ptr,
-+                                   dword_t source_size,
-+                                   lpvoid_t destination_ptr,
-+                                   lpdword_t destination_size_ptr) {
-+  if (!source_ptr || !destination_ptr || !destination_size_ptr) {
-+    XELOGE(
-+        "LDIDecompress: null pointer (source_ptr {:08X}, destination_ptr "
-+        "{:08X}, destination_size_ptr {:08X})",
-+        source_ptr.guest_address(), destination_ptr.guest_address(),
-+        destination_size_ptr.guest_address());
-+    return kLdiError;
-+  }
-+  if (!source_size || source_size > util::LdiDecompressor::kMaxCompressedFrameSize ||
-+      !IsGuestRangeValid(destination_size_ptr.guest_address(), 4,
-+                         kMemoryProtectRead | kMemoryProtectWrite)) {
-+    XELOGE("LDIDecompress: source_size is 0");
-+    return kLdiError;
-+  }
-+
-+  std::lock_guard<std::mutex> lock(g_ldi_mutex);
-+  auto it = g_ldi_contexts.find(handle);
-+  if (it == g_ldi_contexts.end()) {
-+    XELOGE("LDIDecompress: invalid handle {:08X}", handle.value());
-+    return kLdiError;
-+  }
-+
-+  uint32_t destination_size = *destination_size_ptr;
-+  if (!IsGuestRangeValid(source_ptr.guest_address(), source_size) ||
-+      !IsGuestRangeValid(destination_ptr.guest_address(), destination_size, kMemoryProtectWrite)) {
-+    XELOGE(
-+        "LDIDecompress: invalid range (source {:08X} size {:08X}, destination "
-+        "{:08X} size {:08X})",
-+        source_ptr.guest_address(), source_size.value(),
-+        destination_ptr.guest_address(), destination_size);
-+    return kLdiError;
-+  }
-+
-+  const bool succeeded =
-+      it->second->Decompress(source_ptr.as<uint8_t*>(), source_size,
-+                             destination_ptr.as<uint8_t*>(), destination_size);
-+  *destination_size_ptr = destination_size;
-+  if (!succeeded) {
-+    XELOGE("LDIDecompress: failed (source size {}, output size {})",
-+           source_size.value(), destination_size);
-+    return kLdiError;
-+  }
-+  return X_STATUS_SUCCESS;
-+}
-+DECLARE_XBOXKRNL_EXPORT1(LDIDecompress, kNone, kSketchy);
-+
-+dword_result_t LDIResetDecompression_entry(dword_t handle) {
-+  std::lock_guard<std::mutex> lock(g_ldi_mutex);
-+  auto it = g_ldi_contexts.find(handle);
-+  if (it == g_ldi_contexts.end()) {
-+    XELOGE("LDIResetDecompression: invalid handle {:08X}", handle.value());
-+    return kLdiError;
-+  }
-+
-+  if (!it->second->Reset()) {
-+    XELOGE("LDIResetDecompression: lzxd_init failed for handle {:08X}",
-+           handle.value());
-+    return kLdiError;
-+  }
-+  return X_STATUS_SUCCESS;
-+}
-+DECLARE_XBOXKRNL_EXPORT1(LDIResetDecompression, kNone, kSketchy);
-+
-+dword_result_t LDIDestroyDecompression_entry(dword_t handle) {
-+  std::lock_guard<std::mutex> lock(g_ldi_mutex);
-+  if (!g_ldi_contexts.erase(handle)) {
-+    XELOGE("LDIDestroyDecompression: invalid handle {:08X}", handle.value());
-+    return kLdiError;
-+  }
-+  return X_STATUS_SUCCESS;
-+}
-+DECLARE_XBOXKRNL_EXPORT1(LDIDestroyDecompression, kNone, kSketchy);
-+
-+}  // namespace xboxkrnl
-+}  // namespace kernel
-+}  // namespace xe
-+
-+DECLARE_XBOXKRNL_EMPTY_REGISTER_EXPORTS(Ldi);
 diff --git a/src/xenia/kernel/xboxkrnl/xboxkrnl_module.cc b/src/xenia/kernel/xboxkrnl/xboxkrnl_module.cc
 index ad1f27131..d398d9342 100644
 --- a/src/xenia/kernel/xboxkrnl/xboxkrnl_module.cc
@@ -5088,925 +4804,6 @@ index 379577176..683655e2d 100644
  }  // namespace xboxkrnl
  }  // namespace kernel
  }  // namespace xe
-diff --git a/src/xenia/kernel/xboxkrnl/xboxkrnl_pscam.cc b/src/xenia/kernel/xboxkrnl/xboxkrnl_pscam.cc
-new file mode 100644
-index 000000000..d5bef04aa
---- /dev/null
-+++ b/src/xenia/kernel/xboxkrnl/xboxkrnl_pscam.cc
-@@ -0,0 +1,913 @@
-+/**
-+ ******************************************************************************
-+ * Xenia : Xbox 360 Emulator Research Project                                 *
-+ ******************************************************************************
-+ * Copyright 2026 Xenia Canary. All rights reserved.                          *
-+ * Released under the BSD license - see LICENSE in the root for more details. *
-+ ******************************************************************************
-+ */
-+
-+// PsCam ABI adapted from knuckleslee Xenia Canary PR 1274 (BSD).
-+// PS5 research source rasterizes estimated poses; no USB camera is used.
-+// Original calibration math reference is libfreenect
-+// (src/registration.c, Apache-2.0).
-+
-+#include <algorithm>
-+#include <atomic>
-+#include <chrono>
-+#include <cstdint>
-+#include <cstdlib>
-+#include <cstring>
-+#include <deque>
-+#include <memory>
-+#include <mutex>
-+#include <set>
-+#include <vector>
-+
-+#include "xenia/base/cvar.h"
-+#include "xenia/base/logging.h"
-+#include "xenia/base/memory.h"
-+#include "xenia/base/mutex.h"
-+#include "xenia/base/threading.h"
-+#include "xenia/cpu/function.h"
-+#include "xenia/cpu/processor.h"
-+#include "xenia/cpu/xex_module.h"
-+#if !XE_PLATFORM_PS5
-+#include "xenia/cpu/raw_module.h"
-+#endif
-+#include "xbox360ps5/virtual_depth_camera.hpp"
-+#include "xbox360ps5/virtual_skeleton.hpp"
-+#include "xenia/kernel/kernel_state.h"
-+#include "xenia/kernel/user_module.h"
-+#include "xenia/kernel/util/shim_utils.h"
-+#include "xenia/kernel/xboxkrnl/xboxkrnl_private.h"
-+#include "xenia/kernel/xthread.h"
-+#include "xenia/xbox.h"
-+
-+namespace xe {
-+namespace kernel {
-+namespace xboxkrnl {
-+
-+namespace {
-+
-+enum class CameraRequestCode : uint32_t {
-+  kGetState = 0,
-+  kStop = 2,
-+  kReadFrame = 5,
-+  kVersion = 13,
-+  kRegistration = 14,
-+  kTimeSync = 15,
-+  kDepthTable = 24,
-+  kTiming = 25,
-+  kConfigure = 27,
-+  kUnknown33 = 33,
-+  kSetControls = 35,
-+  kGetControls = 36,
-+};
-+
-+enum class CameraStream : uint32_t {
-+  kColor = 2,
-+  kDepth = 4,
-+};
-+
-+// Device states reported through code 0.
-+constexpr uint32_t kDeviceStateAbsent = 0;
-+constexpr uint32_t kDeviceStateStreaming = 2;
-+constexpr uint32_t kDeviceStateReady = 4;
-+constexpr uint32_t kNoCompletionRoutine = 0xFFFFFFFF;
-+constexpr uint32_t kFrameWidth = 640;
-+constexpr uint32_t kFrameHeight = 480;
-+constexpr uint32_t kDepthFrameBytes = kFrameWidth * kFrameHeight * 2;
-+constexpr uint32_t kColorFrameBytes = kFrameWidth * kFrameHeight;
-+constexpr uint32_t kDepthTableEntries = 8192;
-+constexpr uint16_t kNoDepthRaw = 2047;
-+// Frame period in microseconds, returned for both streams by code 25.
-+constexpr uint32_t kFramePeriodUs = 33333;
-+// Host-side choices, not console values.
-+constexpr uint32_t kWorkerStackSize = 128 * 1024;
-+constexpr auto kWorkerWaitTimeout = std::chrono::milliseconds(33);
-+// Reported through code 13; 5.1 or later selects the registration request.
-+constexpr uint8_t kDriverVersionMajor = 5;
-+constexpr uint8_t kDriverVersionMinor = 1;
-+
-+// libfreenect registration constants (src/registration.c).
-+constexpr uint16_t kShiftToDepthPixelConst = 10;
-+constexpr double kShiftToDepthConstOffset = 0.375;
-+constexpr double kParameterCoefficient = 4.0;
-+constexpr double kShiftScale = 10.0;
-+constexpr double kMaxDepthMillimetres = 10000.0;
-+
-+// Request header. Codes 14 and 25 reuse +0x08 onwards for their replies.
-+struct X_PSCAM_REQUEST {
-+  xe::be<uint32_t> code;
-+  xe::be<uint32_t> unknown_04[3];
-+  xe::be<uint32_t> context;
-+  // Called with (request, status, bytes), 0 or kNoCompletionRoutine for none.
-+  xe::be<uint32_t> completion_routine;
-+};
-+static_assert_size(X_PSCAM_REQUEST, 0x18);
-+
-+struct X_PSCAM_STATE_REQUEST {
-+  xe::be<uint32_t> code;
-+  xe::be<uint32_t> state;
-+};
-+static_assert_size(X_PSCAM_STATE_REQUEST, 0x8);
-+
-+struct X_PSCAM_READ_FRAME_REQUEST {
-+  X_PSCAM_REQUEST header;
-+  xe::be<uint32_t> stream;
-+  xe::be<uint32_t> buffer_ptr;
-+  xe::be<uint32_t> buffer_size;
-+  xe::be<uint32_t> unknown_24;
-+  xe::be<uint32_t> frame_counter_ptr;
-+  // Color frames only.
-+  uint8_t settings_generation;
-+  uint8_t unknown_2D[3];
-+};
-+static_assert_size(X_PSCAM_READ_FRAME_REQUEST, 0x30);
-+
-+struct X_PSCAM_CONTROLS_REQUEST {
-+  X_PSCAM_REQUEST header;
-+  xe::be<uint32_t> settings_generation;
-+};
-+static_assert_size(X_PSCAM_CONTROLS_REQUEST, 0x1C);
-+
-+struct X_PSCAM_VERSION_REQUEST {
-+  xe::be<uint32_t> code;
-+  uint8_t major;
-+  uint8_t minor;
-+  uint8_t unknown_06[2];
-+};
-+static_assert_size(X_PSCAM_VERSION_REQUEST, 0x8);
-+
-+struct X_PSCAM_REGISTRATION_REQUEST {
-+  xe::be<uint32_t> code;
-+  xe::be<uint32_t> unknown_04;
-+  xe::be<uint32_t> registration[29];
-+  uint8_t unknown_7C[0x100C];
-+  // Depth-to-color shift parameters, used like libfreenect's
-+  // freenect_init_depth_to_rgb.
-+  xe::be<double> reference_distance;
-+  xe::be<double> reference_pixel_size;
-+  // The title divides by this; libfreenect's equivalent factor is 1.
-+  xe::be<uint16_t> frame_width;
-+  xe::be<uint16_t> shift_to_depth_pixel_const;
-+  uint8_t unknown_109C[4];
-+  xe::be<double> shift_to_depth_const_offset;
-+  xe::be<double> dcmos_rcmos_distance;
-+};
-+static_assert_size(X_PSCAM_REGISTRATION_REQUEST, 0x10B0);
-+
-+struct X_PSCAM_DEPTH_TABLE_REQUEST {
-+  xe::be<uint32_t> code;
-+  xe::be<uint32_t> unknown_04;
-+  xe::be<uint32_t> table_ptr;
-+  xe::be<uint32_t> entry_count;
-+};
-+static_assert_size(X_PSCAM_DEPTH_TABLE_REQUEST, 0x10);
-+
-+struct X_PSCAM_TIMING_REQUEST {
-+  xe::be<uint32_t> code;
-+  // Microseconds.
-+  xe::be<uint32_t> depth_frame_period;
-+  xe::be<uint32_t> unknown_08[4];
-+  // Microseconds.
-+  xe::be<uint32_t> color_frame_period;
-+  xe::be<uint32_t> unknown_1C[2];
-+  // 0 disables time sync (code 15).
-+  xe::be<uint32_t> time_sync;
-+  xe::be<uint32_t> unknown_28[5];
-+};
-+static_assert_size(X_PSCAM_TIMING_REQUEST, 0x3C);
-+
-+// Checks that every page of a guest range is readable, and writable when asked.
-+// TODO(knuckleslee): Find whether the console validates request ranges.
-+// X_STATUS_INVALID_PARAMETER is returned for bad ones here.
-+bool IsGuestRangeMapped(Memory* memory, uint32_t address, size_t size,
-+                        bool write) {
-+  if (!address || !size || size > UINT32_MAX) {
-+    return false;
-+  }
-+  if (uint64_t(address) + size > 0x100000000ull) return false;
-+  for (uint64_t at = address; at < uint64_t(address) + size;
-+       at = (at & ~uint64_t(4095)) + 4096) {
-+    auto* heap = memory->LookupHeap(uint32_t(at));
-+    uint32_t protection = 0;
-+    if (!heap || !heap->QueryProtect(uint32_t(at), &protection) ||
-+        !(protection & kMemoryProtectRead) ||
-+        (write && !(protection & kMemoryProtectWrite))) {
-+      return false;
-+    }
-+  }
-+  return true;
-+}
-+
-+struct PendingRequest {
-+  uint32_t request_ptr = 0;
-+  // Read at request time, the title may overwrite the field afterwards. 0 for
-+  // none.
-+  uint32_t completion = 0;
-+  X_STATUS status = X_STATUS_SUCCESS;
-+  uint32_t bytes = 0;
-+  // Camera settings request that sets this generation once completed.
-+  bool new_settings = false;
-+  uint8_t generation = 0;
-+  // Frame reads that were queued when streaming was stopped (code 2), completed
-+  // as cancelled before this request.
-+  std::vector<PendingRequest> cancelled_reads;
-+};
-+
-+class CameraDevice {
-+ public:
-+  explicit CameraDevice(KernelState* kernel_state)
-+      : kernel_state_(kernel_state), memory_(kernel_state->memory()) {
-+    if (!xbox360ps5::motion::enabled.load()) {
-+      return;
-+    }
-+    camera_ = xbox360ps5::motion::VirtualDepthCamera::Open(false,
-+                                           [this]() { Notify(); });
-+    if (!camera_) {
-+      XELOGI("PsCamDeviceRequest: no Kinect camera found");
-+      return;
-+    }
-+    worker_thread_ = object_ref<XHostThread>(new XHostThread(
-+        kernel_state, kWorkerStackSize, 0,
-+        [this]() {
-+          WorkerMain();
-+          return 0;
-+        },
-+        kernel_state->GetSystemProcess()));
-+    worker_thread_->set_can_debugger_suspend(true);
-+    worker_thread_->set_name("Camera Worker");
-+    if (XFAILED(worker_thread_->Create())) {worker_thread_.reset();camera_.reset();return;}
-+    xbox360ps5::motion::guest_camera_open=true;
-+    XELOGW("Virtual Kinect: pose-derived depth frame backend opened (research)");
-+  }
-+
-+  ~CameraDevice() {
-+    xbox360ps5::motion::guest_camera_open=false;
-+    worker_running_ = false;
-+    Notify();
-+    if (worker_thread_) {
-+      worker_thread_->Wait(0, 0, 0, nullptr);
-+      worker_thread_.reset();
-+    }
-+    // Closing the camera stops its streams and returns it to its driver.
-+    camera_.reset();
-+  }
-+
-+  X_STATUS Request(uint32_t request_ptr) {
-+    if (!IsGuestRange(request_ptr, 8)) return X_STATUS_INVALID_PARAMETER;
-+    const auto first_code = static_cast<CameraRequestCode>(uint32_t(*Guest<xe::be<uint32_t>>(request_ptr)));
-+    xbox360ps5::motion::guest_last_request=uint32_t(first_code);
-+    {static std::mutex trace_mutex;static std::set<uint32_t> seen;std::lock_guard trace_lock(trace_mutex);
-+      if(seen.size()<48 && seen.insert(uint32_t(first_code)).second)XELOGW("Virtual Kinect: request code {}",uint32_t(first_code));}
-+    // These driver queries have their own synchronous reply layouts. Their
-+    // +0x14 bytes are data, not the asynchronous completion header.
-+    if (first_code == CameraRequestCode::kGetState ||
-+        first_code == CameraRequestCode::kVersion ||
-+        first_code == CameraRequestCode::kRegistration ||
-+        first_code == CameraRequestCode::kDepthTable ||
-+        first_code == CameraRequestCode::kTiming) {
-+      if (!IsGuestRange(request_ptr, GetRequestSize(first_code)))
-+        return X_STATUS_INVALID_PARAMETER;
-+      if (!camera_ && first_code != CameraRequestCode::kGetState)
-+        return X_STATUS_UNSUCCESSFUL;
-+      uint32_t bytes = 0;
-+      const auto status = Handle(first_code, request_ptr, bytes);
-+      if (first_code == CameraRequestCode::kGetState) {
-+        static std::atomic<bool> reported{false};
-+        if (!reported.exchange(true)) {
-+          auto* state = cpu::ThreadState::Get();
-+          auto* context = state ? state->context() : nullptr;
-+          const uint32_t sp = context ? uint32_t(context->r[1]) : 0;
-+          const uint32_t caller = IsGuestRange(sp+0x68,4,false) ? uint32_t(*Guest<xe::be<uint32_t>>(sp+0x68)) : 0;
-+          XELOGW("Virtual Kinect: state {} status {:08X}, caller {:08X}, sp {:08X}",
-+                 uint32_t(Guest<X_PSCAM_STATE_REQUEST>(request_ptr)->state), status, caller, sp);
-+        }
-+      }
-+      return status;
-+    }
-+    if (!IsGuestRange(request_ptr, sizeof(X_PSCAM_REQUEST))) {
-+      return X_STATUS_INVALID_PARAMETER;
-+    }
-+    auto request = Guest<X_PSCAM_REQUEST>(request_ptr);
-+    const auto code = static_cast<CameraRequestCode>(uint32_t(request->code));
-+    if (!IsGuestRange(request_ptr, GetRequestSize(code))) {
-+      return X_STATUS_INVALID_PARAMETER;
-+    }
-+    uint32_t completion = request->completion_routine;
-+    if (completion && completion != kNoCompletionRoutine && ((completion&3)||!IsGuestRange(completion,4,false))) return X_STATUS_INVALID_PARAMETER;
-+    if (completion == kNoCompletionRoutine) {
-+      completion = 0;
-+    }
-+
-+    if (!camera_) {
-+      if (code == CameraRequestCode::kGetState) {
-+        uint32_t bytes = 0;
-+        return Handle(code, request_ptr, bytes);
-+      }
-+      // TODO(knuckleslee): Find the status the console returns without a
-+      // camera.
-+      return X_STATUS_UNSUCCESSFUL;
-+    }
-+
-+    if (code == CameraRequestCode::kReadFrame) {
-+      auto read = Guest<X_PSCAM_READ_FRAME_REQUEST>(request_ptr);
-+      const auto stream = static_cast<CameraStream>(uint32_t(read->stream));
-+      const uint32_t counter_ptr = read->frame_counter_ptr;
-+      if (!completion ||
-+          (stream != CameraStream::kDepth && stream != CameraStream::kColor) ||
-+          (counter_ptr && !IsGuestRange(counter_ptr, sizeof(uint32_t)))) {
-+        return X_STATUS_INVALID_PARAMETER;
-+      }
-+      PendingRequest pending;
-+      pending.request_ptr = request_ptr;
-+      pending.completion = completion;
-+      {
-+        std::lock_guard<xe_mutex> lock(mutex_);
-+        if (depth_reads_.size()+color_reads_.size() >= 16) return X_STATUS_INSUFFICIENT_RESOURCES;
-+        streaming_ = true;
-+        (stream == CameraStream::kDepth ? depth_reads_ : color_reads_)
-+            .push_back(pending);
-+      }
-+      Notify();
-+      return X_STATUS_PENDING;
-+    }
-+
-+    uint32_t bytes = 0;
-+    const X_STATUS status = Handle(code, request_ptr, bytes);
-+    PendingRequest pending;
-+    pending.request_ptr = request_ptr;
-+    pending.completion = completion;
-+    pending.status = status;
-+    pending.bytes = bytes;
-+    pending.new_settings =
-+        code == CameraRequestCode::kSetControls && XSUCCEEDED(status);
-+    pending.generation = requested_generation_;
-+    {
-+      std::lock_guard<xe_mutex> lock(mutex_);
-+      if (code == CameraRequestCode::kStop) {
-+        // TODO(knuckleslee): Find how the console completes queued reads on a
-+        // stop. They are completed with X_STATUS_UNSUCCESSFUL here.
-+        pending.cancelled_reads.assign(depth_reads_.begin(),
-+                                       depth_reads_.end());
-+        pending.cancelled_reads.insert(pending.cancelled_reads.end(),
-+                                       color_reads_.begin(),
-+                                       color_reads_.end());
-+        depth_reads_.clear();
-+        color_reads_.clear();
-+        streaming_ = false;
-+        ++stop_count_;
-+      }
-+      if (!completion && pending.cancelled_reads.empty()) {
-+        return status;
-+      }
-+      completions_.push_back(std::move(pending));
-+    }
-+    Notify();
-+    return completion ? X_STATUS_PENDING : status;
-+  }
-+
-+ private:
-+  template <typename T>
-+  T* Guest(uint32_t address) const {
-+    return memory_->TranslateVirtual<T*>(address);
-+  }
-+
-+  bool IsGuestRange(uint32_t address, size_t size, bool write = true) const {
-+    return IsGuestRangeMapped(memory_, address, size, write);
-+  }
-+
-+  static size_t GetRequestSize(CameraRequestCode code) {
-+    size_t size = 0;
-+    switch (code) {
-+      case CameraRequestCode::kGetState:
-+        size = sizeof(X_PSCAM_STATE_REQUEST);
-+        break;
-+      case CameraRequestCode::kReadFrame:
-+        size = sizeof(X_PSCAM_READ_FRAME_REQUEST);
-+        break;
-+      case CameraRequestCode::kVersion:
-+        size = sizeof(X_PSCAM_VERSION_REQUEST);
-+        break;
-+      case CameraRequestCode::kRegistration:
-+        size = sizeof(X_PSCAM_REGISTRATION_REQUEST);
-+        break;
-+      case CameraRequestCode::kDepthTable:
-+        size = sizeof(X_PSCAM_DEPTH_TABLE_REQUEST);
-+        break;
-+      case CameraRequestCode::kTiming:
-+        size = sizeof(X_PSCAM_TIMING_REQUEST);
-+        break;
-+      case CameraRequestCode::kSetControls:
-+      case CameraRequestCode::kGetControls:
-+        size = sizeof(X_PSCAM_CONTROLS_REQUEST);
-+        break;
-+      default:
-+        break;
-+    }
-+    return size ? size : sizeof(X_PSCAM_REQUEST);
-+  }
-+
-+  // Wakes the worker for a new request or camera frame.
-+  void Notify() { work_event_->Set(); }
-+
-+  X_STATUS Handle(CameraRequestCode code, uint32_t request_ptr,
-+                  uint32_t& bytes) {
-+    switch (code) {
-+      case CameraRequestCode::kGetState:
-+        Guest<X_PSCAM_STATE_REQUEST>(request_ptr)->state =
-+            !camera_     ? kDeviceStateAbsent
-+            : streaming_ ? kDeviceStateStreaming
-+                         : kDeviceStateReady;
-+#if !XE_PLATFORM_PS5
-+        // Host-only contract probe; never used by a console build.
-+        if (const char* probe = std::getenv("XBOX360PS5_CAMERA_STATE_PROBE")) {
-+          const int value = std::atoi(probe);
-+          if (value >= 0 && value <= 5)
-+            Guest<X_PSCAM_STATE_REQUEST>(request_ptr)->state = value;
-+        }
-+#endif
-+        return X_STATUS_SUCCESS;
-+      case CameraRequestCode::kSetControls:
-+        // Color frames carry the generation once this request has completed
-+        // (see Complete).
-+        // TODO(knuckleslee): The settings are not applied to the sensor.
-+        Guest<X_PSCAM_CONTROLS_REQUEST>(request_ptr)->settings_generation =
-+            ++requested_generation_;
-+        return X_STATUS_SUCCESS;
-+      case CameraRequestCode::kStop:
-+      case CameraRequestCode::kConfigure:
-+      case CameraRequestCode::kUnknown33:
-+      case CameraRequestCode::kGetControls:
-+      case CameraRequestCode::kTimeSync:
-+        return X_STATUS_SUCCESS;
-+      case CameraRequestCode::kVersion: {
-+        auto version = Guest<X_PSCAM_VERSION_REQUEST>(request_ptr);
-+        version->major = kDriverVersionMajor;
-+        version->minor = kDriverVersionMinor;
-+        return X_STATUS_SUCCESS;
-+      }
-+      case CameraRequestCode::kRegistration:
-+        WriteRegistration(request_ptr);
-+        return X_STATUS_SUCCESS;
-+      case CameraRequestCode::kDepthTable:
-+        return WriteDepthTable(request_ptr);
-+      case CameraRequestCode::kTiming: {
-+        auto timing = Guest<X_PSCAM_TIMING_REQUEST>(request_ptr);
-+        timing->depth_frame_period = kFramePeriodUs;
-+        std::memset(timing->unknown_08, 0, sizeof(timing->unknown_08));
-+        timing->color_frame_period = kFramePeriodUs;
-+        std::memset(timing->unknown_1C, 0, sizeof(timing->unknown_1C));
-+        timing->time_sync = 0;
-+        std::memset(timing->unknown_28, 0, sizeof(timing->unknown_28));
-+        return X_STATUS_SUCCESS;
-+      }
-+      default:
-+        XELOGE("PsCamDeviceRequest: unsupported code {}",
-+               static_cast<uint32_t>(code));
-+        return X_STATUS_NOT_SUPPORTED;
-+    }
-+  }
-+
-+  void WriteRegistration(uint32_t request_ptr) {
-+    const xbox360ps5::motion::VirtualDepthCalibration& calibration =
-+        camera_->calibration();
-+    auto request = Guest<X_PSCAM_REGISTRATION_REQUEST>(request_ptr);
-+    std::memset(request->unknown_7C,0,sizeof(request->unknown_7C));
-+    std::memset(request->unknown_109C,0,sizeof(request->unknown_109C));
-+    static_assert(sizeof(request->registration) ==
-+                  sizeof(calibration.registration));
-+    for (size_t i = 0; i < xe::countof(request->registration); ++i) {
-+      request->registration[i] =
-+          xe::load<uint32_t>(calibration.registration.data() + i * 4);
-+    }
-+    request->reference_distance = calibration.reference_distance;
-+    request->reference_pixel_size = calibration.reference_pixel_size;
-+    request->frame_width = static_cast<uint16_t>(kFrameWidth);
-+    request->shift_to_depth_pixel_const = kShiftToDepthPixelConst;
-+    request->shift_to_depth_const_offset = kShiftToDepthConstOffset;
-+    request->dcmos_rcmos_distance = calibration.dcmos_rcmos_distance;
-+  }
-+
-+  X_STATUS WriteDepthTable(uint32_t request_ptr) {
-+    auto request = Guest<X_PSCAM_DEPTH_TABLE_REQUEST>(request_ptr);
-+    const uint32_t table_ptr = request->table_ptr;
-+    const uint32_t entries = request->entry_count;
-+    if (entries != kDepthTableEntries ||
-+        !IsGuestRange(table_ptr, entries * sizeof(uint16_t))) {
-+      return X_STATUS_INVALID_PARAMETER;
-+    }
-+    auto table = Guest<xe::be<uint16_t>>(table_ptr);
-+    for (uint32_t raw=0;raw<entries;++raw) table[raw] = raw && raw<2047 ? uint16_t(raw*4) : 0;
-+    return X_STATUS_SUCCESS;
-+  }
-+
-+  // Unpacks big-endian 11-bit samples into big-endian 16-bit words.
-+  static void UnpackDepth(const std::vector<uint8_t>& packed, uint8_t* out,
-+                          size_t pixels) {
-+    uint32_t bits = 0;
-+    int bit_count = 0;
-+    size_t in = 0;
-+    for (size_t i = 0; i < pixels; ++i) {
-+      while (bit_count < 11) {
-+        bits = (bits << 8) | packed[in++];
-+        bit_count += 8;
-+      }
-+      bit_count -= 11;
-+      uint16_t raw = static_cast<uint16_t>((bits >> bit_count) & 0x7FF);
-+      // Pixels without depth are passed as 0 rather than 2047.
-+      // TODO(knuckleslee): Verify what the console's camera driver returns.
-+      if (raw == kNoDepthRaw) {
-+        raw = 0;
-+      }
-+      xe::store_and_swap<uint16_t>(out + i * 2, raw);
-+    }
-+  }
-+
-+  bool CompleteFrame(const PendingRequest& read, bool depth) {
-+    const uint32_t frame_bytes = depth ? kDepthFrameBytes : kColorFrameBytes;
-+    uint32_t& last_sequence = depth ? depth_sequence_ : color_sequence_;
-+    const uint32_t sequence =
-+        depth ? camera_->CopyDepthFrame(last_sequence, frame_)
-+              : camera_->CopyColorFrame(last_sequence, frame_);
-+    if (!sequence) {
-+      return false;
-+    }
-+    const size_t expected = depth ? xbox360ps5::motion::VirtualDepthCamera::kDepthFrameBytes : kColorFrameBytes;
-+    if (frame_.size()!=expected) return false;
-+    last_sequence = sequence;
-+
-+    PendingRequest done = read;
-+    if (!IsGuestRange(read.request_ptr,sizeof(X_PSCAM_READ_FRAME_REQUEST))) {done.status=X_STATUS_INVALID_PARAMETER;Complete(done);return true;}
-+    auto request = Guest<X_PSCAM_READ_FRAME_REQUEST>(read.request_ptr);
-+    const uint32_t buffer = request->buffer_ptr;
-+    if (request->buffer_size < frame_bytes ||
-+        !IsGuestRange(buffer, frame_bytes)) {
-+      done.status = X_STATUS_INVALID_PARAMETER;
-+      Complete(done);
-+      return true;
-+    }
-+    if (depth) {
-+      UnpackDepth(frame_, Guest<uint8_t>(buffer), frame_bytes / 2);
-+      ++xbox360ps5::motion::guest_depth_frames;
-+    } else {
-+      std::memcpy(Guest<uint8_t>(buffer), frame_.data(), frame_bytes);
-+      request->settings_generation = settings_generation_;
-+      ++xbox360ps5::motion::guest_color_frames;
-+    }
-+    const uint32_t counter_ptr = request->frame_counter_ptr;
-+    if (counter_ptr && IsGuestRange(counter_ptr,4)) {
-+      *Guest<xe::be<uint32_t>>(counter_ptr) = sequence;
-+    }
-+    done.bytes = frame_bytes;
-+    Complete(done);
-+    return true;
-+  }
-+
-+  // Does not read the request, which the title may have reused.
-+  void Complete(const PendingRequest& request) {
-+    if (request.completion) {
-+      uint64_t args[] = {request.request_ptr,
-+                         static_cast<uint32_t>(request.status), request.bytes};
-+      kernel_state_->processor()->Execute(worker_thread_->thread_state(),
-+                                          request.completion, args,
-+                                          xe::countof(args));
-+      ++xbox360ps5::motion::guest_completed_requests;
-+    }
-+    if (request.new_settings) {
-+      settings_generation_ = request.generation;
-+    }
-+  }
-+
-+  void WorkerMain() {
-+    while (worker_running_) {
-+      std::deque<PendingRequest> completions;
-+      PendingRequest depth_read;
-+      PendingRequest color_read;
-+      uint32_t stop_count;
-+      xe::threading::Wait(work_event_.get(), false, kWorkerWaitTimeout);
-+      {
-+        std::lock_guard<xe_mutex> lock(mutex_);
-+        completions.swap(completions_);
-+        // Taken out of the queues so that a stop can't cancel them meanwhile.
-+        if (!depth_reads_.empty()) {
-+          depth_read = depth_reads_.front();
-+          depth_reads_.pop_front();
-+        }
-+        if (!color_reads_.empty()) {
-+          color_read = color_reads_.front();
-+          color_reads_.pop_front();
-+        }
-+        stop_count = stop_count_;
-+      }
-+      for (PendingRequest& request : completions) {
-+        for (PendingRequest& read : request.cancelled_reads) {
-+          read.status = X_STATUS_UNSUCCESSFUL;
-+          Complete(read);
-+        }
-+        if (request.completion) {
-+          Complete(request);
-+        }
-+      }
-+      for (bool depth : {true, false}) {
-+        PendingRequest& read = depth ? depth_read : color_read;
-+        if (!read.request_ptr || CompleteFrame(read, depth)) {
-+          continue;
-+        }
-+        // No new frame yet: requeue, unless streaming was stopped meanwhile.
-+        bool cancelled;
-+        {
-+          std::lock_guard<xe_mutex> lock(mutex_);
-+          cancelled = stop_count != stop_count_;
-+          if (!cancelled) {
-+            (depth ? depth_reads_ : color_reads_).push_front(read);
-+          }
-+        }
-+        if (cancelled) {
-+          read.status = X_STATUS_UNSUCCESSFUL;
-+          Complete(read);
-+        }
-+      }
-+    }
-+  }
-+
-+  KernelState* kernel_state_;
-+  Memory* memory_;
-+  xe_mutex mutex_;
-+  std::unique_ptr<xe::threading::Event> work_event_ =
-+      xe::threading::Event::CreateAutoResetEvent(false);
-+  std::deque<PendingRequest> completions_;
-+  // Incremented by every stop (code 2).
-+  uint32_t stop_count_ = 0;
-+  std::deque<PendingRequest> depth_reads_;
-+  std::deque<PendingRequest> color_reads_;
-+  std::unique_ptr<xbox360ps5::motion::VirtualDepthCamera> camera_;
-+  object_ref<XHostThread> worker_thread_;
-+  std::atomic<bool> worker_running_ = true;
-+  uint32_t depth_sequence_ = 0;
-+  uint32_t color_sequence_ = 0;
-+  std::atomic<bool> streaming_ = false;
-+  // Generation of the latest camera settings request, and of the latest one
-+  // whose completion has run, which color frames are tagged with.
-+  uint8_t requested_generation_ = 0;
-+  std::atomic<uint8_t> settings_generation_ = 0;
-+  std::vector<uint8_t> frame_;
-+};
-+
-+xe_mutex g_camera_device_mutex;
-+std::unique_ptr<CameraDevice> g_camera_device;
-+
-+CameraDevice* GetCameraDevice() {
-+  std::lock_guard<xe_mutex> lock(g_camera_device_mutex);
-+  if (!g_camera_device) {
-+    g_camera_device = std::make_unique<CameraDevice>(kernel_state());
-+  }
-+  return g_camera_device.get();
-+}
-+
-+// Xbox360PS5: skeleton frames for the title, from the estimated pose.
-+// The title's NUI library finds bodies with GPU passes that end in copy
-+// commands the emulator does not have (copy command 2 and whole lists of
-+// rectangles), so the frames it builds never hold a body, whatever the depth
-+// picture shows. The title's NuiSkeletonGetNextFrame is answered here instead,
-+// one frame per sensor period.
-+constexpr uint32_t kSkeletonPeriodMs = 33;
-+// The library's own limit for a wait.
-+constexpr uint32_t kSkeletonLongestWaitMs = 8000;
-+constexpr X_HRESULT kSkeletonInvalidArgument = 0x80070057;
-+// What the library returns when its wait for a frame ends without one.
-+constexpr X_HRESULT kSkeletonNoFrameYet = 0x8000000A;
-+
-+struct SkeletonSource {
-+  std::mutex mutex;
-+  std::chrono::steady_clock::time_point start =
-+      std::chrono::steady_clock::now();
-+  uint32_t delivered_period = 0;
-+  // Names the body in the frames. A body that comes back after being lost is
-+  // a new one for the title, as with the sensor.
-+  uint32_t tracking_id = 0;
-+  bool tracked = false;
-+};
-+SkeletonSource g_skeleton_source;
-+
-+X_HRESULT SkeletonGetNextFrame(KernelState* kernel_state, uint32_t wait_ms,
-+                               uint32_t frame_ptr) {
-+  using clock = std::chrono::steady_clock;
-+  Memory* memory = kernel_state->memory();
-+  if (!IsGuestRangeMapped(memory, frame_ptr,
-+                          xbox360ps5::motion::kSkeletonFrameBytes, true)) {
-+    return kSkeletonInvalidArgument;
-+  }
-+  SkeletonSource& source = g_skeleton_source;
-+  const auto period_now = [&source] {
-+    return uint32_t(std::chrono::duration_cast<std::chrono::milliseconds>(
-+                        clock::now() - source.start)
-+                        .count() /
-+                    kSkeletonPeriodMs) +
-+           1;
-+  };
-+  const auto deadline =
-+      clock::now() + std::chrono::milliseconds(
-+                         std::min(wait_ms, kSkeletonLongestWaitMs));
-+  std::unique_lock<std::mutex> lock(source.mutex);
-+  uint32_t period = period_now();
-+  // A second request within one period waits for the next frame.
-+  while (period == source.delivered_period) {
-+    if (clock::now() >= deadline) {
-+      return kSkeletonNoFrameYet;
-+    }
-+    lock.unlock();
-+    xe::threading::Sleep(std::chrono::milliseconds(1));
-+    lock.lock();
-+    period = period_now();
-+  }
-+  source.delivered_period = period;
-+  const xbox360ps5::motion::Frame pose = xbox360ps5::motion::Snapshot();
-+  if (pose.tracked && !source.tracked && !++source.tracking_id) {
-+    source.tracking_id = 1;
-+  }
-+  source.tracked = pose.tracked;
-+  xbox360ps5::motion::WriteSkeletonFrame(
-+      memory->TranslateVirtual(frame_ptr), pose, period,
-+      uint64_t(period) * kSkeletonPeriodMs,
-+      pose.tracked ? source.tracking_id : 0);
-+  ++xbox360ps5::motion::guest_skeleton_frames;
-+  if (pose.tracked) {
-+    ++xbox360ps5::motion::guest_skeleton_bodies;
-+  }
-+  return X_E_SUCCESS;
-+}
-+
-+void SkeletonGetNextFrameHandler(cpu::ppc::PPCContext* ppc_context,
-+                                 KernelState* kernel_state) {
-+  ppc_context->r[3] = uint32_t(SkeletonGetNextFrame(
-+      kernel_state, uint32_t(ppc_context->r[3]), uint32_t(ppc_context->r[4])));
-+}
-+
-+// Finds the title's NuiSkeletonGetNextFrame and has the guest run the handler
-+// above in its place, the way an import is bound: "sc 2; blr" at its start and
-+// an extern handler on the function. Done once, at the title's first camera
-+// request, which is before it can have asked for a skeleton frame.
-+void BindSkeletonSource(KernelState* kernel_state) {
-+  static std::atomic<bool> tried{false};
-+  if (tried.exchange(true)) {
-+    return;
-+  }
-+  auto module = kernel_state->GetExecutableModule();
-+  cpu::XexModule* xex = module ? module->xex_module() : nullptr;
-+  if (!xex) {
-+    return;
-+  }
-+  Memory* memory = kernel_state->memory();
-+  const uint32_t base = xex->base_address();
-+  const uint32_t size = xex->image_size();
-+  if (!IsGuestRangeMapped(memory, base, size, false)) {
-+    XELOGW("Virtual Kinect: the title's image is not all readable; its own "
-+           "body tracking is kept");
-+    return;
-+  }
-+  const std::vector<uint32_t> found =
-+      xbox360ps5::motion::FindSkeletonGetNextFrame(
-+          memory->TranslateVirtual(base), size, base);
-+  if (found.size() != 1) {
-+    XELOGW("Virtual Kinect: the skeleton frame function was not identified "
-+           "({} candidates); the title keeps its own body tracking",
-+           found.size());
-+    return;
-+  }
-+  const uint32_t address = found[0];
-+  cpu::Function* function = nullptr;
-+  const cpu::Symbol::Status status = xex->DeclareFunction(address, &function);
-+  if (!function || (status != cpu::Symbol::Status::kNew &&
-+                    status != cpu::Symbol::Status::kDeclared)) {
-+    XELOGW("Virtual Kinect: the skeleton frame function at {:08X} is already "
-+           "compiled; the title keeps its own body tracking",
-+           address);
-+    return;
-+  }
-+  auto* heap = memory->LookupHeap(address);
-+  uint32_t protection = 0;
-+  const bool writable =
-+      heap && heap->QueryProtect(address, &protection) &&
-+      heap->Protect(address, 8, kMemoryProtectRead | kMemoryProtectWrite);
-+  if (writable) {
-+    // The handler is in place before the code that calls it can be compiled.
-+    static_cast<cpu::GuestFunction*>(function)->SetupExtern(
-+        SkeletonGetNextFrameHandler);
-+    uint8_t* code = memory->TranslateVirtual(address);
-+    xe::store_and_swap<uint32_t>(code + 0, 0x44000042);  // sc 2
-+    xe::store_and_swap<uint32_t>(code + 4, 0x4E800020);  // blr
-+    heap->Protect(address, 8, protection);
-+    function->set_end_address(address + 4);
-+  }
-+  if (status == cpu::Symbol::Status::kNew) {
-+    function->set_status(cpu::Symbol::Status::kDeclared);
-+  }
-+  if (!writable) {
-+    XELOGW("Virtual Kinect: the skeleton frame function at {:08X} could not "
-+           "be bound; the title keeps its own body tracking",
-+           address);
-+    return;
-+  }
-+  xbox360ps5::motion::guest_skeleton_bound = true;
-+  XELOGW("Virtual Kinect: skeleton frames of the title come from the "
-+         "estimated pose (function at {:08X})",
-+         address);
-+}
-+
-+}  // namespace
-+
-+void ShutdownCameraDevice() {
-+  std::unique_ptr<CameraDevice> camera_device;
-+  {
-+    std::lock_guard<xe_mutex> lock(g_camera_device_mutex);
-+    camera_device = std::move(g_camera_device);
-+  }
-+  // Destroyed unlocked, as its worker may still be completing a request.
-+  camera_device.reset();
-+}
-+
-+#if !XE_PLATFORM_PS5
-+// Host-only ABI regression: runs an actual PowerPC completion routine, rather
-+// than substituting a host callback. No game code or camera recording is used.
-+bool CheckVirtualCameraAbi(KernelState* kernel) {
-+  auto* memory = kernel->memory();
-+  const uint32_t storage = memory->SystemHeapAlloc(0xB0000);
-+  if (!storage) return false;
-+  auto* words = memory->TranslateVirtual<xe::be<uint32_t>*>(storage);
-+  std::memset(words, 0, 0xB0000);
-+  bool ok = true;
-+  {
-+    CameraDevice device(kernel);
-+    ok &= device.Request(0) == X_STATUS_INVALID_PARAMETER;
-+    ok &= device.Request(0xFFFFFFFC) == X_STATUS_INVALID_PARAMETER;
-+    words[0] = 0;
-+    ok &= device.Request(storage) == X_STATUS_SUCCESS && words[1] == 4;
-+    words[0] = 13;
-+    ok &= device.Request(storage) == X_STATUS_SUCCESS;
-+    const auto* version = memory->TranslateVirtual<X_PSCAM_VERSION_REQUEST*>(storage);
-+    ok &= version->major == 5 && version->minor == 1;
-+    words[0] = 24; words[2] = storage + 0x2000; words[3] = 8192;
-+    ok &= device.Request(storage) == X_STATUS_SUCCESS;
-+    auto* table = memory->TranslateVirtual<xe::be<uint16_t>*>(storage+0x2000);
-+    ok &= table[625] == 2500 && table[2047] == 0;
-+    words[2] = 0xFFFFFFF0;
-+    ok &= device.Request(storage) == X_STATUS_INVALID_PARAMETER;
-+
-+    std::memset(words, 0, 0x1000);
-+    const uint32_t results = storage + 0x80, code = 0x81010000;
-+    auto* code_heap = memory->LookupHeap(code);
-+    if (!code_heap || !code_heap->AllocFixed(code, 4096, 4096,
-+        kMemoryAllocationReserve | kMemoryAllocationCommit,
-+        kMemoryProtectRead | kMemoryProtectWrite)) return false;
-+    auto* instructions = memory->TranslateVirtual<xe::be<uint32_t>*>(code);
-+    instructions[0] = 0x3CC00000 | (results >> 16); // lis r6,hi
-+    instructions[1] = 0x60C60000 | (results & 0xFFFF); // ori r6,r6,lo
-+    instructions[2] = 0x90860000; // stw r4,0(r6): status
-+    instructions[3] = 0x90A60004; // stw r5,4(r6): byte count
-+    instructions[4] = 0x4E800020; // blr
-+    auto module = std::make_unique<cpu::RawModule>(kernel->processor());
-+    module->set_name("virtual-camera-abi-check");
-+    module->SetAddressRange(code, 4096);
-+    ok &= kernel->processor()->AddModule(std::move(module));
-+    words[0] = 5; words[5] = code; words[6] = 4;
-+    words[7] = storage + 0x10000; words[8] = kDepthFrameBytes;
-+    words[10] = storage + 0x88;
-+    const auto before = xbox360ps5::motion::guest_completed_requests.load();
-+    ok &= device.Request(storage) == X_STATUS_PENDING;
-+    const auto deadline = std::chrono::steady_clock::now()+std::chrono::seconds(5);
-+    while (xbox360ps5::motion::guest_completed_requests.load()==before &&
-+           std::chrono::steady_clock::now()<deadline)
-+      xe::threading::Sleep(std::chrono::milliseconds(5));
-+    auto* result = memory->TranslateVirtual<xe::be<uint32_t>*>(results);
-+    XELOGW("Camera ABI check: completed {}->{} status {:08X}, bytes {}, counter {}, earlier checks {}",
-+      before, xbox360ps5::motion::guest_completed_requests.load(), uint32_t(result[0]), uint32_t(result[1]), uint32_t(result[2]), ok);
-+    ok &= xbox360ps5::motion::guest_completed_requests.load()>before;
-+    ok &= result[0] == X_STATUS_SUCCESS && result[1] == kDepthFrameBytes && result[2] != 0;
-+    words[0] = 2; words[5] = 0;
-+    ok &= device.Request(storage) == X_STATUS_SUCCESS;
-+    words[0] = 0;
-+    ok &= device.Request(storage) == X_STATUS_SUCCESS && words[1] == 4;
-+  }
-+  memory->SystemHeapFree(storage);
-+  return ok;
-+}
-+#endif
-+
-+dword_result_t PsCamDeviceRequest_entry(dword_t request_ptr) {
-+  if (!request_ptr) {
-+    return X_STATUS_INVALID_PARAMETER;
-+  }
-+  if (!xbox360ps5::motion::enabled.load()) return X_STATUS_UNSUCCESSFUL;
-+  BindSkeletonSource(kernel_state());
-+  return GetCameraDevice()->Request(request_ptr);
-+}
-+DECLARE_XBOXKRNL_EXPORT1(PsCamDeviceRequest, kNone, kSketchy);
-+
-+}  // namespace xboxkrnl
-+}  // namespace kernel
-+}  // namespace xe
-+
-+DECLARE_XBOXKRNL_EMPTY_REGISTER_EXPORTS(PsCam);
 diff --git a/src/xenia/kernel/xboxkrnl/xboxkrnl_threading.cc b/src/xenia/kernel/xboxkrnl/xboxkrnl_threading.cc
 index cea3fbe15..3810c4e61 100644
 --- a/src/xenia/kernel/xboxkrnl/xboxkrnl_threading.cc
@@ -6431,6 +5228,7 @@ index 8dbb6ce53..f728dfb00 100644
  
  uint32_t XSocket::GetLastWSAError() const {
 diff --git a/src/xenia/kernel/xthread.cc b/src/xenia/kernel/xthread.cc
+index 71643901d..96248dcdc 100644
 --- a/src/xenia/kernel/xthread.cc
 +++ b/src/xenia/kernel/xthread.cc
 @@ -8,6 +8,9 @@
@@ -6443,18 +5241,18 @@ diff --git a/src/xenia/kernel/xthread.cc b/src/xenia/kernel/xthread.cc
  
  #if !XE_PLATFORM_WIN32
  #include <signal.h>
-@@ -40,6 +43,10 @@
- 
+@@ -41,6 +44,10 @@ DEFINE_int64(main_xthread_stack_size_multiplier_hack, 1,
  namespace xe {
  namespace kernel {
-+
+ 
 +#if !XE_PLATFORM_WIN32
 +static bool ReenterByJump();
 +#endif
- 
++
  const uint32_t XAPC::kSize;
  const uint32_t XAPC::kDummyKernelRoutine;
-@@ -439,7 +446,12 @@
+ const uint32_t XAPC::kDummyRundownRoutine;
+@@ -439,7 +446,12 @@ X_STATUS XThread::Create() {
      xe::Profiler::ThreadExit();
  
      // Release the self-reference to the thread.
@@ -6467,7 +5265,7 @@ diff --git a/src/xenia/kernel/xthread.cc b/src/xenia/kernel/xthread.cc
    });
  
    if (!thread_) {
-@@ -511,10 +523,15 @@
+@@ -511,10 +523,15 @@ X_STATUS XThread::Exit(int exit_code) {
    xe::Profiler::ThreadExit();
  
    running_ = false;
@@ -6483,7 +5281,7 @@ diff --git a/src/xenia/kernel/xthread.cc b/src/xenia/kernel/xthread.cc
    return X_STATUS_SUCCESS;
  }
  
-@@ -531,8 +548,14 @@
+@@ -531,8 +548,14 @@ X_STATUS XThread::Terminate(int exit_code) {
  
    running_ = false;
    if (XThread::IsInThread(this)) {
@@ -6498,7 +5296,7 @@ diff --git a/src/xenia/kernel/xthread.cc b/src/xenia/kernel/xthread.cc
    } else {
      thread_->Terminate(exit_code);
      ReleaseHandle();
-@@ -581,6 +604,33 @@
+@@ -581,6 +604,33 @@ void XThread::Execute() {
    // stack unwinding which already calls destructors.
    uint32_t next_address;
  #if !XE_PLATFORM_WIN32
@@ -6532,7 +5330,7 @@ diff --git a/src/xenia/kernel/xthread.cc b/src/xenia/kernel/xthread.cc
    try {
      exit_code = static_cast<int>(kernel_state()->processor()->Execute(
          thread_state_, address, args.data(), args.size()));
-@@ -640,11 +690,44 @@
+@@ -640,11 +690,44 @@ void XThread::Execute() {
    Exit(!want_exit_code ? 0 : exit_code);
  }
  
@@ -6577,7 +5375,7 @@ diff --git a/src/xenia/kernel/xthread.cc b/src/xenia/kernel/xthread.cc
    // Throw a C++ exception that unwinds through JIT frames (using DWARF
    // .eh_frame info) and host frames (using compiler-generated DWARF),
    // calling destructors properly along the way.
-@@ -765,6 +848,20 @@
+@@ -765,6 +848,20 @@ void XThread::CheckQuantumAndDecay() {
    quantum_start_ms_ = now;
  }
  
@@ -6598,7 +5396,7 @@ diff --git a/src/xenia/kernel/xthread.cc b/src/xenia/kernel/xthread.cc
  void XThread::BoostOnWake(int32_t increment) {
    if (cvars::ignore_thread_priorities) {
      return;
-@@ -906,7 +1003,6 @@
+@@ -906,7 +1003,6 @@ X_STATUS XThread::Resume(uint32_t* out_suspend_count) {
    }
  #else
    // Use mutex to protect suspend_count access and coordinate with SelfSuspend.
@@ -6606,7 +5404,7 @@ diff --git a/src/xenia/kernel/xthread.cc b/src/xenia/kernel/xthread.cc
    {
      std::lock_guard<std::mutex> lock(suspend_mutex_);
      uint8_t previous = guest_thread->suspend_count;
-@@ -916,14 +1012,12 @@
+@@ -916,14 +1012,12 @@ X_STATUS XThread::Resume(uint32_t* out_suspend_count) {
      if (out_suspend_count) {
        *out_suspend_count = previous;
      }
@@ -6624,11 +5422,10 @@ diff --git a/src/xenia/kernel/xthread.cc b/src/xenia/kernel/xthread.cc
    return X_STATUS_SUCCESS;
  #endif
  }
-@@ -933,6 +1027,17 @@
-   // mode apc that does the actual suspension
+@@ -934,6 +1028,17 @@ X_STATUS XThread::Suspend(uint32_t* out_suspend_count) {
  
    X_KTHREAD* guest_thread = guest_object<X_KTHREAD>();
-+
+ 
 +#if !XE_PLATFORM_WIN32
 +  if (GetCurrentThread() == this) {
 +    const auto previous = SelfSuspend();
@@ -6639,9 +5436,10 @@ diff --git a/src/xenia/kernel/xthread.cc b/src/xenia/kernel/xthread.cc
 +  // can arrive between incrementing the guest count and suspending the host.
 +  std::lock_guard<std::mutex> lock(suspend_mutex_);
 +#endif
- 
++
    uint8_t previous_suspend_count =
        reinterpret_cast<std::atomic_uint8_t*>(&guest_thread->suspend_count)
+           ->fetch_add(1);
 diff --git a/src/xenia/kernel/xthread.h b/src/xenia/kernel/xthread.h
 index 2c1e75856..71151beef 100644
 --- a/src/xenia/kernel/xthread.h
@@ -7587,10 +6385,58 @@ index 1ee035dd1..352f377af 100644
  
  }  // namespace vfs
 diff --git a/src/xenia/vfs/devices/xcontent_devices/svod_container_device.cc b/src/xenia/vfs/devices/xcontent_devices/svod_container_device.cc
-index 5ecf483f9..034ca20c1 100644
+index 5ecf483f9..3c79184d6 100644
 --- a/src/xenia/vfs/devices/xcontent_devices/svod_container_device.cc
 +++ b/src/xenia/vfs/devices/xcontent_devices/svod_container_device.cc
-@@ -58,7 +58,8 @@ SvodContainerDevice::Result SvodContainerDevice::LoadHostFiles(
+@@ -8,6 +8,7 @@
+  */
+ 
+ #include "xenia/vfs/devices/xcontent_devices/svod_container_device.h"
++#include "xbox360ps5/smb_client.hpp"
+ #include "xenia/base/logging.h"
+ #include "xenia/vfs/devices/xcontent_devices/svod_container_entry.h"
+ 
+@@ -33,6 +34,39 @@ SvodContainerDevice::~SvodContainerDevice() {
+ 
+ SvodContainerDevice::Result SvodContainerDevice::LoadHostFiles(
+     const size_t data_file_count) {
++  const std::string host_str = xe::path_to_utf8(host_path_);
++  if (xbox360ps5::IsSmbPath(host_str)) {
++    const std::string data_dir_url = host_str + ".data";
++    std::vector<xbox360ps5::SmbDirEntry> smb_entries;
++    if (!xbox360ps5::SmbListDirectory(data_dir_url, smb_entries)) {
++      XELOGE("SVOD SMB container data directory {} does not exist.",
++             data_dir_url);
++      return Result::kFileMismatch;
++    }
++    std::vector<std::string> frag_names;
++    for (const auto& ent : smb_entries) {
++      if (!ent.is_directory) frag_names.push_back(ent.name);
++    }
++    std::ranges::sort(frag_names);
++    if (frag_names.size() != data_file_count) {
++      XELOGE("SVOD SMB expecting {} data fragments, but {} are present.",
++             data_file_count, frag_names.size());
++      return Result::kFileMismatch;
++    }
++    for (size_t i = 0; i < frag_names.size(); i++) {
++      const std::string frag_url =
++          xbox360ps5::JoinSmbUrl(data_dir_url, frag_names[i]);
++      auto file = MappedMemory::OpenForReading(frag_url);
++      if (!file) {
++        XELOGI("Failed to open SMB SVOD file {}.", frag_url);
++        return Result::kReadError;
++      }
++      files_total_size_ += file->size();
++      files_.emplace(i, std::move(file));
++    }
++    XELOGI("SVOD SMB successfully opened {} files.", frag_names.size());
++    return Result::kSuccess;
++  }
+   std::filesystem::path data_fragment_path = host_path_;
+   data_fragment_path += ".data";
+   if (!std::filesystem::exists(data_fragment_path)) {
+@@ -58,7 +92,8 @@ SvodContainerDevice::Result SvodContainerDevice::LoadHostFiles(
      auto& fragment = fragment_files.at(i);
      auto path = fragment.path / fragment.name;
  
@@ -7600,7 +6446,7 @@ index 5ecf483f9..034ca20c1 100644
  
      if (!file) {
        XELOGI("Failed to map SVOD file {}.", path);
-@@ -97,8 +98,12 @@ XContentContainerDevice::Result SvodContainerDevice::Read() {
+@@ -97,8 +132,12 @@ XContentContainerDevice::Result SvodContainerDevice::Read() {
    };
    static_assert_size(root_data, 0x10);
  
@@ -7615,7 +6461,7 @@ index 5ecf483f9..034ca20c1 100644
    // Parse the root directory
  
    const uint64_t root_creation_timestamp =
-@@ -151,12 +156,15 @@ SvodContainerDevice::Result SvodContainerDevice::ReadEntry(
+@@ -151,12 +190,15 @@ SvodContainerDevice::Result SvodContainerDevice::ReadEntry(
      return Result::kReadError;
    }
  
@@ -7635,7 +6481,7 @@ index 5ecf483f9..034ca20c1 100644
  
    // Filename is stored as Windows-1252, convert it to UTF-8.
    auto ansi_name = std::string(name_buffer.get(), dir_entry.name_length);
-@@ -272,7 +280,8 @@ XContentContainerDevice::Result SvodContainerDevice::SetLayout(
+@@ -272,7 +314,8 @@ XContentContainerDevice::Result SvodContainerDevice::SetLayout(
  XContentContainerDevice::Result SvodContainerDevice::SetEDGFLayout(
      size_t& magic_offset) {
    uint8_t magic_buf[20];
@@ -7645,7 +6491,7 @@ index 5ecf483f9..034ca20c1 100644
  
    if (std::memcmp(magic_buf, MEDIA_MAGIC.data(), countof(magic_buf)) != 0) {
      XELOGE("SVOD uses an EGDF layout, but the magic block was not found.");
-@@ -288,7 +297,8 @@ XContentContainerDevice::Result SvodContainerDevice::SetEDGFLayout(
+@@ -288,7 +331,8 @@ XContentContainerDevice::Result SvodContainerDevice::SetEDGFLayout(
  
  bool SvodContainerDevice::IsXSFLayout() const {
    uint8_t magic_buf[20];
@@ -7655,7 +6501,7 @@ index 5ecf483f9..034ca20c1 100644
    return std::memcmp(magic_buf, MEDIA_MAGIC.data(), countof(magic_buf)) == 0;
  }
  
-@@ -297,7 +307,8 @@ XContentContainerDevice::Result SvodContainerDevice::SetXSFLayout(
+@@ -297,7 +341,8 @@ XContentContainerDevice::Result SvodContainerDevice::SetXSFLayout(
    uint8_t magic_buf[20];
    const char* XSF_MAGIC = "XSF";
  
@@ -7665,7 +6511,7 @@ index 5ecf483f9..034ca20c1 100644
  
    svod_base_offset_ = 0x10000;
    magic_offset = 0x12000;
-@@ -320,7 +331,8 @@ XContentContainerDevice::Result SvodContainerDevice::SetNormalLayout(
+@@ -320,7 +365,8 @@ XContentContainerDevice::Result SvodContainerDevice::SetNormalLayout(
    uint8_t magic_buf[20];
  
    const uint32_t magic_pos = data_file_count_ == 1 ? 0xD000 : 0x2000;
@@ -7690,6 +6536,72 @@ index 33f45f15c..ada150276 100644
  }
  
  }  // namespace vfs
+diff --git a/third_party/FFmpeg b/third_party/FFmpeg
+--- a/third_party/FFmpeg
++++ b/third_party/FFmpeg
+@@ -1 +1 @@
+-Subproject commit d980192e175e6ff95bcd287af77e16fcb6597974
++Subproject commit d980192e175e6ff95bcd287af77e16fcb6597974-dirty
+diff --git a/third_party/FidelityFX-CAS b/third_party/FidelityFX-CAS
+--- a/third_party/FidelityFX-CAS
++++ b/third_party/FidelityFX-CAS
+@@ -1 +1 @@
+-Subproject commit 9fabcc9a2c45f958aff55ddfda337e74ef894b7f
++Subproject commit 9fabcc9a2c45f958aff55ddfda337e74ef894b7f-dirty
+diff --git a/third_party/FidelityFX-FSR b/third_party/FidelityFX-FSR
+--- a/third_party/FidelityFX-FSR
++++ b/third_party/FidelityFX-FSR
+@@ -1 +1 @@
+-Subproject commit a21ffb8f6c13233ba336352bdff293894c706575
++Subproject commit a21ffb8f6c13233ba336352bdff293894c706575-dirty
+diff --git a/third_party/SDL2 b/third_party/SDL2
+--- a/third_party/SDL2
++++ b/third_party/SDL2
+@@ -1 +1 @@
+-Subproject commit e11183ea6caa3ae4895f4bc54cad2bbb0e365417
++Subproject commit e11183ea6caa3ae4895f4bc54cad2bbb0e365417-dirty
+diff --git a/third_party/SPIRV-Tools b/third_party/SPIRV-Tools
+--- a/third_party/SPIRV-Tools
++++ b/third_party/SPIRV-Tools
+@@ -1 +1 @@
+-Subproject commit 33e02568181e3312f49a3cf33df470bf96ef293a
++Subproject commit 33e02568181e3312f49a3cf33df470bf96ef293a-dirty
+diff --git a/third_party/VulkanMemoryAllocator b/third_party/VulkanMemoryAllocator
+--- a/third_party/VulkanMemoryAllocator
++++ b/third_party/VulkanMemoryAllocator
+@@ -1 +1 @@
+-Subproject commit 1d8f600fd424278486eade7ed3e877c99f0846b1
++Subproject commit 1d8f600fd424278486eade7ed3e877c99f0846b1-dirty
+diff --git a/third_party/aes_128 b/third_party/aes_128
+--- a/third_party/aes_128
++++ b/third_party/aes_128
+@@ -1 +1 @@
+-Subproject commit 7e3ac3bb6b478187472b4ac6f1698eb203e8e90b
++Subproject commit 7e3ac3bb6b478187472b4ac6f1698eb203e8e90b-dirty
+diff --git a/third_party/capstone b/third_party/capstone
+--- a/third_party/capstone
++++ b/third_party/capstone
+@@ -1 +1 @@
+-Subproject commit 66b08439abd988e87b4542389b4937ce13bd0063
++Subproject commit 66b08439abd988e87b4542389b4937ce13bd0063-dirty
+diff --git a/third_party/cxxopts b/third_party/cxxopts
+--- a/third_party/cxxopts
++++ b/third_party/cxxopts
+@@ -1 +1 @@
+-Subproject commit f029892dab60526184ee42ae63a7f6d19a6b0e49
++Subproject commit f029892dab60526184ee42ae63a7f6d19a6b0e49-dirty
+diff --git a/third_party/discord-rpc b/third_party/discord-rpc
+--- a/third_party/discord-rpc
++++ b/third_party/discord-rpc
+@@ -1 +1 @@
+-Subproject commit 963aa9f3e5ce81a4682c6ca3d136cddda614db33
++Subproject commit 963aa9f3e5ce81a4682c6ca3d136cddda614db33-dirty
+diff --git a/third_party/disruptorplus b/third_party/disruptorplus
+--- a/third_party/disruptorplus
++++ b/third_party/disruptorplus
+@@ -1 +1 @@
+-Subproject commit bf9c70c0cc92b6435f7edec75e12751ea37e5c2f
++Subproject commit bf9c70c0cc92b6435f7edec75e12751ea37e5c2f-dirty
 diff --git a/third_party/ffmpeg-xenia/config.h b/third_party/ffmpeg-xenia/config.h
 index 3df8db9e5..8a23c840a 100644
 --- a/third_party/ffmpeg-xenia/config.h
@@ -7712,58 +6624,57 @@ index 3df8db9e5..8a23c840a 100644
  #define HAVE_MALLOC_H 0
  #else
  #define HAVE_MALLOC_H 1
-diff --git a/src/xenia/kernel/xam/profile_manager.cc b/src/xenia/kernel/xam/profile_manager.cc
---- a/src/xenia/kernel/xam/profile_manager.cc
-+++ b/src/xenia/kernel/xam/profile_manager.cc
-@@ -621,6 +621,39 @@
-   return;
- }
- 
-+bool ProfileManager::ArchiveProfile(const uint64_t xuid) {
-+  if (!accounts_.count(xuid)) return false;
-+  const auto root = kernel_state_->emulator()->content_root().lexically_normal();
-+  const auto source = GetProfileContentPath(xuid).lexically_normal();
-+  const auto backup = root / "removed-profiles";
-+  std::error_code error;
-+  if (source.parent_path() != root || std::filesystem::is_symlink(source, error) ||
-+      !std::filesystem::is_directory(source, error)) return false;
-+  error.clear();
-+  if (std::filesystem::is_symlink(backup, error)) return false;
-+  error.clear();
-+  std::filesystem::create_directories(backup, error);
-+  if (error) return false;
-+  auto destination = backup / fmt::format("{:016X}", xuid);
-+  for (unsigned n = 1; std::filesystem::exists(destination, error) && !error; ++n) {
-+    if (n > 1024) return false;
-+    destination = backup / fmt::format("{:016X}-{}", xuid, n);
-+  }
-+  if (error || destination.parent_path() != backup) return false;
-+  const uint8_t slot = GetUserIndexAssignedToProfile(xuid);
-+  if (slot < XUserMaxUserCount) Logout(slot, false);
-+  else DismountProfile(xuid);
-+  std::filesystem::rename(source, destination, error);
-+  if (error) {
-+    if (slot < XUserMaxUserCount) Login(xuid, slot, false);
-+    XELOGE("Cannot archive profile: {}", error.message());
-+    return false;
-+  }
-+  accounts_.erase(xuid);
-+  XELOGW("Profile removed; recoverable data retained in {}", destination.string());
-+  return true;
-+}
-+
- bool ProfileManager::DeleteProfile(const uint64_t xuid) {
-   const uint8_t user_index = GetUserIndexAssignedToProfile(xuid);
- 
-diff --git a/src/xenia/kernel/xam/profile_manager.h b/src/xenia/kernel/xam/profile_manager.h
---- a/src/xenia/kernel/xam/profile_manager.h
-+++ b/src/xenia/kernel/xam/profile_manager.h
-@@ -76,6 +76,8 @@
-   bool CreateProfile(const X_XAMACCOUNTINFO* account_info, uint64_t xuid);
- 
-   bool DeleteProfile(const uint64_t xuid);
-+  // Remove from the account list while retaining all data in a backup folder.
-+  bool ArchiveProfile(const uint64_t xuid);
- 
-   bool MountProfile(const uint64_t xuid, std::string mount_path = "");
-   bool DismountProfile(const uint64_t xuid);
+diff --git a/third_party/fmt b/third_party/fmt
+--- a/third_party/fmt
++++ b/third_party/fmt
+@@ -1 +1 @@
+-Subproject commit 407c905e45ad75fc29bf0f9bb7c5c2fd3475976f
++Subproject commit 407c905e45ad75fc29bf0f9bb7c5c2fd3475976f-dirty
+diff --git a/third_party/libusb b/third_party/libusb
+--- a/third_party/libusb
++++ b/third_party/libusb
+@@ -1 +1 @@
+-Subproject commit a61afe5f75d969c4561a1d0ad753aa23cee6329a
++Subproject commit a61afe5f75d969c4561a1d0ad753aa23cee6329a-dirty
+diff --git a/third_party/pugixml b/third_party/pugixml
+--- a/third_party/pugixml
++++ b/third_party/pugixml
+@@ -1 +1 @@
+-Subproject commit b2b466403084667c90a0f0cc4e960405cfc8117a
++Subproject commit b2b466403084667c90a0f0cc4e960405cfc8117a-dirty
+diff --git a/third_party/rapidcsv b/third_party/rapidcsv
+--- a/third_party/rapidcsv
++++ b/third_party/rapidcsv
+@@ -1 +1 @@
+-Subproject commit a98b85e663114b8fdc9c0dc03abf22c296f38241
++Subproject commit a98b85e663114b8fdc9c0dc03abf22c296f38241-dirty
+diff --git a/third_party/tabulate b/third_party/tabulate
+--- a/third_party/tabulate
++++ b/third_party/tabulate
+@@ -1 +1 @@
+-Subproject commit 3a58301067bbc03da89ae5a51b3e05b7da719d38
++Subproject commit 3a58301067bbc03da89ae5a51b3e05b7da719d38-dirty
+diff --git a/third_party/utfcpp b/third_party/utfcpp
+--- a/third_party/utfcpp
++++ b/third_party/utfcpp
+@@ -1 +1 @@
+-Subproject commit 65701fe00700577f9f4e9b96d682bd7cfcc0b76e
++Subproject commit 65701fe00700577f9f4e9b96d682bd7cfcc0b76e-dirty
+diff --git a/third_party/xbyak b/third_party/xbyak
+--- a/third_party/xbyak
++++ b/third_party/xbyak
+@@ -1 +1 @@
+-Subproject commit 4e44f4614ddbf038f2a6296f5b906d5c72691e0f
++Subproject commit 4e44f4614ddbf038f2a6296f5b906d5c72691e0f-dirty
+diff --git a/third_party/xbyak_aarch64 b/third_party/xbyak_aarch64
+--- a/third_party/xbyak_aarch64
++++ b/third_party/xbyak_aarch64
+@@ -1 +1 @@
+-Subproject commit 59c6a7e7368cd2dbb07c46abe83239ace4d58849
++Subproject commit 59c6a7e7368cd2dbb07c46abe83239ace4d58849-dirty
+diff --git a/third_party/zarchive b/third_party/zarchive
+--- a/third_party/zarchive
++++ b/third_party/zarchive
+@@ -1 +1 @@
+-Subproject commit b467f7aa342895e66a1a003377ed63b3c1be3de3
++Subproject commit b467f7aa342895e66a1a003377ed63b3c1be3de3-dirty

@@ -26,6 +26,7 @@
 #include "xbox360ps5/achievement_hook.hpp"
 #include "xbox360ps5/notify.hpp"
 #include "xbox360ps5/web_settings.hpp"
+#include "xbox360ps5/smb_client.hpp"
 #include "xbox360ps5/save_storage.hpp"
 #include "xbox360ps5/game_patches.hpp"
 #include "xbox360ps5/patch_runtime.hpp"
@@ -914,7 +915,8 @@ int main(int argc, char** argv) {
     if (std::getline(input, line)) { if (!line.empty() && line.back() == '\r') line.pop_back(); game = line; }
   }
   // An explicit path starts that game at once; otherwise the library opens.
-  if (!game.empty() && !std::filesystem::is_regular_file(game, error)) {
+  if (!game.empty() && !xbox360ps5::IsSmbPath(game) &&
+      !std::filesystem::is_regular_file(game, error)) {
     XELOGE("Configured game {} does not exist; opening the library", game.string());
     game.clear();
   }
@@ -1337,6 +1339,11 @@ int main(int argc, char** argv) {
               xbox360ps5::Notify({"PS5X360", Tr("Avisos de conquista ligados"), "", true});
             toasts_were = global.achievement_toasts;
             if (apply_web(false) || ++web_tick % 90 == 0) { show_web_address(); publish_web("", ""); }
+			if (xbox360ps5::TakeWebPathsChanged()) {
+              xbox360ps5::SmbCloseIdleSessions();
+              global.Load();
+              launcher.RefreshLibrary(false);
+            }
             context.Tick(); window.Paint();
           }
           if (restart || context.HasQuitFromUIThread()) { dialog->Dismiss(); break; }

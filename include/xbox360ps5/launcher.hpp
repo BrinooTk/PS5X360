@@ -204,7 +204,7 @@ class Launcher {
   void RecordLaunch(const GameEntry& game, uint32_t title_id, const std::string& title_name,
                     const std::vector<uint8_t>& icon, uint64_t hash);
  private:
-  enum class Mode { shelf, game, settings, options, profiles, name, paths, folders, saves };
+  enum class Mode { shelf, game, settings, options, profiles, name, paths, folders, saves, smb };
   struct PatchRow { size_t file, patch; };
   void SelectionChanged();
   void ApplyFilter();
@@ -212,7 +212,9 @@ class Launcher {
   void StartCoverDownload(bool automatic = false);
   // Builds the shelf again and says what changed: in the settings row when
   // the user asked, as a notice on the shelf when the folders changed.
+public:
   void RefreshLibrary(bool automatic);
+private:
   const GameEntry* Selected() const;
   void OpenGameSheet(int tab = 0);
   void FillGameRows();
@@ -243,6 +245,7 @@ class Launcher {
   void RefreshProfiles();
   void DrawPaths(Canvas& c);
   void DrawFolders(Canvas& c);
+  void DrawSmbSheet(Canvas& c);
   void RefreshFolders();
   int LoadCover(const std::vector<uint8_t>& bytes);
   Fonts fonts_;
@@ -297,6 +300,9 @@ class Launcher {
   std::filesystem::path browser_path_ = "/mnt";
   std::vector<std::filesystem::path> browser_folders_;
   std::string path_error_;
+  int smb_field_ = 0, smb_key_row_ = 0, smb_key_col_ = 0, smb_edit_index_ = -1;
+  bool smb_upper_ = false, force_rescan_ = false;
+  std::string smb_host_, smb_share_, smb_user_, smb_pass_, smb_status_;
 };
 class LauncherDialog final : public xe::ui::ImGuiDialog {
  public:

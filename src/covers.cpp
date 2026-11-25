@@ -1,3 +1,4 @@
+#include "xenia/base/mapped_memory.h"
 // SPDX-License-Identifier: MIT
 #include "xbox360ps5/i18n.hpp"
 #include "xbox360ps5/covers.hpp"
@@ -218,58 +219,131 @@ std::string ChooseCover(const std::string& json) {
 }
 }
 
-std::string ReadXexTitleId(const fs::path& xex) {
-  std::FILE* file = std::fopen(xex.c_str(), "rb");
-  if (!file) return "";
-  std::vector<uint8_t> header;
-  std::string id;
-  if (ReadAt(file, 0, 24, header)) {
-    const uint32_t size = std::min<uint32_t>(BE32(&header[8]), 1u << 20);
-    if (ReadAt(file, 0, std::max<uint32_t>(size, 24), header)) id = TitleIdFromHeader(header);
-  }
-  std::fclose(file);
-  return id;
+namespace {
+
+uint32_t ReadBE32(const uint8_t* p) {
+  return (uint32_t(p[0]) << 24) | (uint32_t(p[1]) << 16) |
+         (uint32_t(p[2]) << 8) | uint32_t(p[3]);
 }
 
-std::string ReadIsoTitleId(const fs::path& iso) {
-  std::FILE* file = std::fopen(iso.c_str(), "rb");
-  if (!file) return "";
-  std::string id;
-  std::vector<uint8_t> sector;
-  // The game partition starts at one of these offsets (plain XDVDFS, XGD1, XGD2, XGD3).
-  for (const uint64_t base : {0ull, 0x18300000ull, 0xFD90000ull, 0x2080000ull}) {
-    if (!ReadAt(file, base + 32 * 2048, 2048, sector) || std::memcmp(sector.data(), "MICROSOFT*XBOX*MEDIA", 20)) continue;
-    const uint32_t root = LE32(&sector[20]), root_size = LE32(&sector[24]);
-    std::vector<uint8_t> table;
-    if (!root_size || root_size > (1u << 20) || !ReadAt(file, base + uint64_t(root) * 2048, root_size, table)) break;
-    // Directory entries form a binary tree; walk all of it.
-    std::vector<uint32_t> pending{0};
-    for (int visited = 0; !pending.empty() && visited < 4096; ++visited) {
-      const uint32_t at = pending.back();
-      pending.pop_back();
-      if (at + 14 > table.size()) continue;
-      const uint16_t left = LE16(&table[at]), right = LE16(&table[at + 2]);
-      if (left == 0xFFFF) continue;
-      const uint8_t length = table[at + 13];
-      if (at + 14 + length > table.size()) continue;
-      std::string name(table.begin() + at + 14, table.begin() + at + 14 + length);
-      std::transform(name.begin(), name.end(), name.begin(), [](unsigned char c) { return char(std::tolower(c)); });
-      if (name == "default.xex") {
-        std::vector<uint8_t> header;
-        const uint64_t start = base + uint64_t(LE32(&table[at + 4])) * 2048;
-        if (ReadAt(file, start, 24, header)) {
-          const uint32_t size = std::min<uint32_t>(BE32(&header[8]), 1u << 20);
-          if (ReadAt(file, start, std::max<uint32_t>(size, 24), header)) id = TitleIdFromHeader(header);
+uint32_t ReadLE32(const uint8_t* p) {
+  return uint32_t(p[0]) | (uint32_t(p[1]) << 8) |
+         (uint32_t(p[2]) << 16) | (uint32_t(p[3]) << 24);
+}
+
+uint16_t ReadLE16(const uint8_t* p) {
+  return uint16_t(p[0]) | (uint16_t(p[1]) << 8);
+}
+
+// Parses a XEX2 header from any MappedMemory (local or SMB2) to extract the 8-hex-digit Title ID.
+std::string ParseXexTitleIdFromMemory(const xe::MappedMemory& mem, size_t base_offset = 0) {
+  uint8_t header[24] = {};
+  if (!mem.ReadAt(base_offset, header, sizeof(header))) return {};
+  if (std::memcmp(header, "XEX2", 4) != 0) return {};
+
+  const uint32_t cert_offset = ReadBE32(header + 16);
+  const uint32_t header_count = ReadBE32(header + 20);
+  if (header_count == 0 || header_count > 128) return {};
+
+  // Optional headers sit immediately after the 24-byte XEX2 header (8 bytes each: key + value/offset).
+  std::vector<uint8_t> opt_table(size_t(header_count) * 8);
+  if (!mem.ReadAt(base_offset + 24, opt_table.data(), opt_table.size())) return {};
+
+  for (uint32_t i = 0; i < header_count; ++i) {
+    const uint32_t key = ReadBE32(&opt_table[i * 8]);
+    const uint32_t val = ReadBE32(&opt_table[i * 8 + 4]);
+    // Key 0x00040006 = XEX_HEADER_EXECUTION_INFO (24 bytes; Title ID is at offset +12).
+    if (key == 0x00040006 && val >= 24 && val < cert_offset + 0x10000) {
+      uint8_t exec_info[24] = {};
+      if (mem.ReadAt(base_offset + val, exec_info, sizeof(exec_info))) {
+        const uint32_t title_id = ReadBE32(exec_info + 12);
+        if (title_id != 0) {
+          char text[12];
+          std::snprintf(text, sizeof(text), "%08X", title_id);
+          return text;
         }
-        break;
       }
-      if (left) pending.push_back(uint32_t(left) * 4);
-      if (right) pending.push_back(uint32_t(right) * 4);
     }
-    break;
   }
-  std::fclose(file);
-  return id;
+  return {};
+}
+
+// Recursively traverses an XGD/XISO GDFX directory binary tree for "default.xex".
+bool FindDefaultXexInGdfx(const xe::MappedMemory& mem, size_t game_offset,
+                          const std::vector<uint8_t>& dir_buf, uint16_t ordinal,
+                          uint64_t& out_xex_offset, int depth = 0) {
+  if (depth > 64) return false;
+  const size_t pos = size_t(ordinal) * 4;
+  if (pos + 14 > dir_buf.size()) return false;
+
+  const uint16_t left = ReadLE16(&dir_buf[pos + 0]);
+  const uint16_t right = ReadLE16(&dir_buf[pos + 2]);
+  const uint32_t sector = ReadLE32(&dir_buf[pos + 4]);
+  const uint32_t size = ReadLE32(&dir_buf[pos + 8]);
+  const uint8_t attr = dir_buf[pos + 12];
+  const uint8_t name_len = dir_buf[pos + 13];
+  if (pos + 14 + name_len > dir_buf.size()) return false;
+
+  if (left && FindDefaultXexInGdfx(mem, game_offset, dir_buf, left, out_xex_offset, depth + 1)) {
+    return true;
+  }
+
+  if (!(attr & 0x10) && name_len == 11) {
+    char name[12] = {};
+    for (int i = 0; i < 11; ++i) {
+      name[i] = static_cast<char>(std::tolower(static_cast<unsigned char>(dir_buf[pos + 14 + i])));
+    }
+    if (std::strcmp(name, "default.xex") == 0 && size >= 24) {
+      out_xex_offset = game_offset + uint64_t(sector) * 2048;
+      return true;
+    }
+  }
+
+  if (right && FindDefaultXexInGdfx(mem, game_offset, dir_buf, right, out_xex_offset, depth + 1)) {
+    return true;
+  }
+  return false;
+}
+
+}  // namespace
+
+std::string ReadXexTitleId(const std::filesystem::path& path) {
+  auto mem = xe::MappedMemory::OpenForReading(path);
+  if (!mem) return {};
+  return ParseXexTitleIdFromMemory(*mem, 0);
+}
+
+std::string ReadIsoTitleId(const std::filesystem::path& path) {
+  auto mem = xe::MappedMemory::OpenForReading(path);
+  if (!mem) return {};
+
+  static constexpr size_t kGameOffsets[] = {
+      0x00000000, 0x0000FB20, 0x00020600, 0x02080000, 0x0FD90000,
+  };
+  constexpr size_t kSectorSize = 2048;
+
+  for (size_t game_offset : kGameOffsets) {
+    uint8_t vol_desc[32] = {};
+    if (!mem->ReadAt(game_offset + 32 * kSectorSize, vol_desc, sizeof(vol_desc))) continue;
+    if (std::memcmp(vol_desc, "MICROSOFT*XBOX*MEDIA", 20) != 0) continue;
+
+    const uint32_t root_sector = ReadLE32(vol_desc + 20);
+    const uint32_t root_size = ReadLE32(vol_desc + 24);
+    if (root_size == 0 || root_size > (4u << 20)) return {};
+
+    std::vector<uint8_t> root_dir(root_size);
+    if (!mem->ReadAt(game_offset + uint64_t(root_sector) * kSectorSize,
+                     root_dir.data(), root_dir.size())) {
+      return {};
+    }
+
+    uint64_t xex_offset = 0;
+    if (FindDefaultXexInGdfx(*mem, game_offset, root_dir, 0, xex_offset)) {
+      return ParseXexTitleIdFromMemory(*mem, static_cast<size_t>(xex_offset));
+    }
+    return {};
+  }
+  return {};
 }
 
 fs::path CoverFile(const std::string& title_id) {
