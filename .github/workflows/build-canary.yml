@@ -49,10 +49,10 @@ jobs:
           mkdir -p .deps/references
 
           git clone --branch canary_experimental --depth 1 --recursive \
-            https://github.com .deps/xenia-canary
+            https://github.com/xenia-canary/xenia-canary .deps/xenia-canary
 
           git clone --branch libsmb2-6.2 --depth 1 \
-            https://github.com .deps/libsmb2
+            https://github.com/sahlberg/libsmb2 .deps/libsmb2
 
           git clone --recursive \
             https://github.com/mihawk-99/PS5_Vulkan .deps/references/PS5_Vulkan
