@@ -3,6 +3,7 @@
 #include "xbox360ps5/build_version.hpp"
 #include "xbox360ps5/cover_geometry.hpp"
 #include "xbox360ps5/launcher.hpp"
+#include "xbox360ps5/smb_client.hpp"
 #include "xbox360ps5/canary_audio.hpp"
 #include "xbox360ps5/gpu_diagnostics.hpp"
 #include "xenia/base/cvar.h"
@@ -129,11 +130,17 @@ uint32_t BE32(const uint8_t* p) { return uint32_t(p[0]) << 24 | uint32_t(p[1]) <
 // carries the display name, the title id and a thumbnail.
 struct Package { std::string name, title_id; std::vector<uint8_t> thumbnail; bool game = false; };
 bool ReadPackage(const fs::path& path, Package& package) {
-  std::FILE* file = std::fopen(path.c_str(), "rb");
-  if (!file) return false;
   std::vector<uint8_t> header(0x971A);
-  const size_t got = std::fread(header.data(), 1, header.size(), file);
-  std::fclose(file);
+  size_t got = 0;
+  const std::string path_str = path.generic_string();
+  if (IsSmbPath(path_str)) {
+    if (!SmbReadAt(path_str, 0, header.data(), header.size(), &got)) return false;
+  } else {
+    std::FILE* file = std::fopen(path.c_str(), "rb");
+    if (!file) return false;
+    got = std::fread(header.data(), 1, header.size(), file);
+    std::fclose(file);
+  }
   if (got < 0x1800) return false;
   if (std::memcmp(header.data(), "LIVE", 4) && std::memcmp(header.data(), "PIRS", 4) &&
       std::memcmp(header.data(), "CON ", 4)) return false;
@@ -543,7 +550,11 @@ uint64_t LibrarySignature(const std::vector<std::string>& roots) {
       }
     }
   };
-  for (const auto& configured : roots) {
+    for (const auto& configured : roots) {
+	if (IsSmbPath(configured)) {
+	  mix(configured, 1);
+	  continue;
+	}
     const fs::path root(configured);
     std::error_code error;
     const auto identity = NormalizeGamePath(root.generic_string());
@@ -552,6 +563,7 @@ uint64_t LibrarySignature(const std::vector<std::string>& roots) {
     mix(identity, visible ? 1 : 0);
     if (visible) look(root, 0, root);
   }
+  
   return hash;
 }
 
@@ -680,7 +692,83 @@ void Launcher::Scan() {
       }
     }
   };
+    const auto smb_folder_name = [](std::string_view url) {
+    const size_t slash = url.find_last_of('/');
+    return slash != std::string_view::npos ? std::string(url.substr(slash + 1)) : std::string(url);
+  };
+  const auto file_extension = [](std::string_view name) {
+    const size_t dot = name.find_last_of('.');
+    return dot != std::string_view::npos ? Lower(std::string(name.substr(dot))) : std::string();
+  };
+  const auto file_stem = [](std::string_view name) {
+    const size_t dot = name.find_last_of('.');
+    return dot != std::string_view::npos ? std::string(name.substr(0, dot)) : std::string(name);
+  };
+
+  const std::function<void(const std::string&, int, const std::string&)> scan_smb =
+      [&](const std::string& dir_url, int depth, const std::string& root_url) {
+    std::vector<SmbDirEntry> entries;
+    if (!SmbListDirectory(dir_url, entries)) {
+      XELOGW("LAUNCHER SMB failed to list {}", dir_url);
+      return;
+    }
+    XELOGI("LAUNCHER SMB directory {} entries {}", dir_url, entries.size());
+
+    // Extracted game folder: default.xex, or a single .xex inside the directory.
+    std::string executable_url;
+    int executables = 0;
+    for (const auto& entry : entries) {
+      if (entry.is_directory || file_extension(entry.name) != ".xex") continue;
+      ++executables;
+      if (Lower(entry.name) == "default.xex") {
+        executable_url = JoinSmbUrl(dir_url, entry.name);
+        executables = 1;
+        break;
+      }
+      executable_url = JoinSmbUrl(dir_url, entry.name);
+    }
+    if (executables == 1) {
+      const std::string folder = smb_folder_name(dir_url);
+      const std::string name = dir_url == root_url ? Tr("Jogo em ") + folder : folder;
+      add({name, fs::path(executable_url), "XEX", dir_url}, {});
+      if (dir_url != root_url) return;  // Nothing below a game is another game.
+    }
+
+    for (const auto& entry : entries) {
+      const std::string child_url = JoinSmbUrl(dir_url, entry.name);
+      const std::string ext = file_extension(entry.name);
+      if (entry.is_directory) {
+        // Skip GOD *.data folders (Data0000, Data0001, ...) sitting beside the header file.
+        if (depth < 6 && ext != ".data") {
+          scan_smb(child_url, depth + 1, root_url);
+        }
+      } else if (ext == ".iso") {
+        GameEntry game{file_stem(entry.name), fs::path(child_url), "ISO", dir_url};
+        game.size = SizeText(entry.size);
+        add(std::move(game), {});
+      } else if (ext.empty() || ext == ".xbla" || ext == ".god") {
+        Package package;
+        if (!ReadPackage(fs::path(child_url), package) || !package.game) continue;
+        GameEntry game{package.name.empty() ? entry.name : package.name,
+                       fs::path(child_url), "GOD/STFS", dir_url};
+        game.title_id = package.title_id;
+        game.size = SizeText(entry.size);
+        add(std::move(game), package.thumbnail);
+      }
+    }
+  };
+
   for (const auto& configured : settings_.game_paths) {
+    if (IsSmbPath(configured)) {
+      const auto identity = NormalizeGamePath(configured);
+      if (identity.empty() || !seen_roots.insert(identity).second) continue;
+      uint64_t sz = 0;
+      bool is_dir = false;
+      const bool visible = SmbStat(identity, sz, is_dir) && is_dir;
+      XELOGI("LAUNCHER SMB root {} {}", identity, visible ? "visible" : "not visible");
+      if (visible) scan_smb(identity, 0, identity);
+      continue;
+    }
     const fs::path root(configured);
     std::error_code error;
     const auto identity = NormalizeGamePath(root.generic_string());
@@ -2111,7 +2199,24 @@ void Launcher::DrawPaths(Canvas& c) {
     if (focused) c.Edge(x + 40, y, 780, 58, kAccent, 0.9f, 8);
     c.Text(settings_.game_paths[size_t(n)], x + 56, y + 5, 20, kText, 1, 0, 744);
     std::error_code error;
-    const bool visible = fs::is_directory(settings_.game_paths[size_t(n)], error);
+    const std::string& raw_path = settings_.game_paths[size_t(n)];
+    std::string shown_path = raw_path;
+    bool visible = false;
+    if (IsSmbPath(raw_path)) {
+      // Mask password in "smb://user:pass@host/share" -> "smb://user:***@host/share"
+      const size_t at = shown_path.find('@');
+      const size_t colon = shown_path.find(':', 6);
+      if (at != std::string::npos && colon != std::string::npos && colon < at) {
+        shown_path.replace(colon + 1, at - colon - 1, "***");
+      }
+      uint64_t sz = 0;
+      bool is_dir = false;
+      visible = SmbStat(raw_path, sz, is_dir) && is_dir;
+    } else {
+      std::error_code error;
+      visible = fs::is_directory(raw_path, error);
+    }
+    c.Text(shown_path, x + 56, y + 5, 20, kText, 1, 0, 744);
     c.Text(visible ? Tr("Disponível") : Tr("Desconectada ou indisponível"), x + 56, y + 31, 20, visible ? kAccent : kMuted);
   }
   if (!count) c.Text(Tr("Nenhuma pasta configurada."), x + 56, 240, 24, kMuted);

@@ -8,7 +8,7 @@ set(VFS_SOURCES
   "${XENIA_SOURCE}/src/xenia/base/filesystem.cc"
   "${XENIA_SOURCE}/src/xenia/base/filesystem_wildcard.cc")
 add_library(xenia_guest_vfs STATIC ${VFS_SOURCES})
-target_link_libraries(xenia_guest_vfs PUBLIC xenia_base_runtime xenia_platform_memory)
+target_link_libraries(xenia_guest_vfs PUBLIC xenia_base_runtime xenia_platform_memory xenia_smb_client)
 target_compile_definitions(xenia_guest_vfs PRIVATE NDEBUG)
 target_compile_options(xenia_guest_vfs PRIVATE -ffunction-sections -fdata-sections -fno-char8_t)
 add_executable(xenia-vfs-contract src/vfs_contract.cpp)

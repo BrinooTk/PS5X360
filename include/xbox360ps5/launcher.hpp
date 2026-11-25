@@ -212,7 +212,9 @@ class Launcher {
   void StartCoverDownload(bool automatic = false);
   // Builds the shelf again and says what changed: in the settings row when
   // the user asked, as a notice on the shelf when the folders changed.
+public:
   void RefreshLibrary(bool automatic);
+private:
   const GameEntry* Selected() const;
   void OpenGameSheet(int tab = 0);
   void FillGameRows();

@@ -28,6 +28,7 @@ std::string WebSettingsPlainAddress();
 std::string WebSettingsKey();
 void PublishWebState(std::string json);
 std::vector<WebChange> TakeWebChanges();
+bool TakeWebPathsChanged();
 // Text inside a JSON string, quotes included.
 std::string JsonText(const std::string& text);
 }

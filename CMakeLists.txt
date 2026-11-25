@@ -137,6 +137,8 @@ if(NOT CMAKE_CROSSCOMPILING)
   target_link_libraries(xenia-atomic-smoke PRIVATE pthread)
 endif()
 
+include(cmake/Smb.cmake)
+
 if(XBOX360PS5_BUILD_RUNTIME)
   include(cmake/Runtime.cmake)
 endif()

@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 WORKSPACE = ROOT.parent
 RUNTIME = WORKSPACE / "Castation/native-ps5"
 BOILERPLATE = WORKSPACE / ".deps/upstream/ps5-native-app-boilerplate"
-RUNTIME_PIN = "94dfef7"
+RUNTIME_PIN = "HEAD"
 BOILERPLATE_PIN = "470695e0c557f99ff2df0e36e4df713c5e636526"
 STAGE = ROOT / "build/native-stage"
 

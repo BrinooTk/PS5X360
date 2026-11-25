@@ -44,5 +44,9 @@
       "third_party/cpplint",
       "third_party/catch"
     ]
+  },
+  "libsmb2": {
+   "url": "https://github.com/sahlberg/libsmb2",
+   "revision": "libsmb2-6.2"
   }
 }
